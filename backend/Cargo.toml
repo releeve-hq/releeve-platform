@@ -20,7 +20,7 @@ rust-version = "1.92"
 axum = { version = "0.8", features = ["macros", "json"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "request-id"] }
-utoipa = { version = "5", features = ["axum_extras"] }
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 # Async runtime
@@ -57,3 +57,20 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Auth (consumed from Phase 1; declared here so P1 has zero dependency churn)
 jsonwebtoken = "9"
 argon2 = "0.5"
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+
+# HTTP client (OAuth token exchange + userinfo)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Email delivery
+lettre = { version = "0.11", default-features = false, features = [
+    "smtp-transport",
+    "builder",
+    "tokio1-rustls-tls",
+    "pool",
+] }
+
+# Async trait helpers for the mailer abstraction & test seams
+async-trait = "0.1"

@@ -1,6 +1,10 @@
 use serde::Serialize;
 use thiserror::Error;
 
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+
 /// Domain error. Every handler returns `Result<T, Error>` and the API layer
 /// maps it to a uniform envelope (see [`ErrorEnvelope`]).
 ///
@@ -24,6 +28,12 @@ pub enum Error {
     #[error("forbidden")]
     Forbidden,
 
+    /// Email-verified gate: the account is signed in but its email is not yet
+    /// verified. Same status as Forbidden but with a distinct code so clients
+    /// can route the user to verification.
+    #[error("email must be verified to perform this action")]
+    EmailUnverified,
+
     #[error("conflict")]
     Conflict,
 
@@ -46,6 +56,7 @@ pub enum ErrorKind {
     BadRequest,
     Unauthorized,
     Forbidden,
+    EmailUnverified,
     Conflict,
     RateLimited,
     Internal,
@@ -59,6 +70,7 @@ impl Error {
             Error::BadRequest(_) => ErrorKind::BadRequest,
             Error::Unauthorized => ErrorKind::Unauthorized,
             Error::Forbidden => ErrorKind::Forbidden,
+            Error::EmailUnverified => ErrorKind::EmailUnverified,
             Error::Conflict => ErrorKind::Conflict,
             Error::RateLimited => ErrorKind::RateLimited,
             Error::Internal(_) => ErrorKind::Internal,
@@ -72,6 +84,7 @@ impl Error {
             ErrorKind::BadRequest => 400,
             ErrorKind::Unauthorized => 401,
             ErrorKind::Forbidden => 403,
+            ErrorKind::EmailUnverified => 403,
             ErrorKind::Conflict => 409,
             ErrorKind::RateLimited => 429,
             ErrorKind::Internal => 500,
@@ -85,6 +98,7 @@ impl Error {
             ErrorKind::BadRequest => "bad_request",
             ErrorKind::Unauthorized => "unauthorized",
             ErrorKind::Forbidden => "forbidden",
+            ErrorKind::EmailUnverified => "email_unverified",
             ErrorKind::Conflict => "conflict",
             ErrorKind::RateLimited => "rate_limited",
             ErrorKind::Internal => "internal",
@@ -95,6 +109,14 @@ impl Error {
     /// Convenience constructors.
     pub fn internal<E: std::error::Error + Send + Sync + 'static>(source: E) -> Self {
         Error::Internal(Some(Box::new(source)))
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let status =
+            StatusCode::from_u16(self.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        (status, Json(ErrorEnvelope::from_error(&self))).into_response()
     }
 }
 
