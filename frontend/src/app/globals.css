@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+html, body {
+  background-color: #09090b;
+  color: #E8E8EA;
+}
+
+body {
+  background-color: #09090b;
+}
+
+.seidar-root {
+  background-color: #09090b;
+}
+
+.bg-white {
+  background-color: #111113;
+}
+
+.bg-gray-50 {
+  background-color: #09090b;
+}
+
+.bg-gray-100 {
+  background-color: #1a1a1e;
+}
+
+.border-gray-200, 
+.border-gray-100, 
+.border-gray-50 {
+  border-color: #27272a;
+}
+
+.text-gray-900 {
+  color: #fafafa;
+}
+
+.text-gray-800,
+.text-gray-700, 
+.text-gray-600, 
+.text-gray-500 {
+  color: #a1a1aa;
+}
+
+.text-gray-400 {
+  color: #71717a;
+}
+
+.hover\:bg-gray-50:hover {
+  background-color: #18181b;
+}
+
+.hover\:bg-gray-100:hover {
+  background-color: #1f1f23;
+}
+
+.text-white {
+  color: #FFFFFF;
+}
+
+.bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.12);
+}
+.text-emerald-700 {
+  color: #34D399;
+}
+.border-emerald-200 {
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+.bg-blue-50 {
+  background-color: rgba(59, 130, 246, 0.12);
+}
+.text-blue-700 {
+  color: #60A5FA;
+}
+.border-blue-200 {
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+.bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.12);
+}
+.text-amber-700 {
+  color: #FBBF24;
+}
+.border-amber-200 {
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+.bg-rose-50 {
+  background-color: rgba(244, 63, 94, 0.12);
+}
+.text-rose-700 {
+  color: #FB7185;
+}
+.border-rose-200 {
+  border-color: rgba(244, 63, 94, 0.25);
+}
+
+.bg-violet-50 {
+  background-color: rgba(91, 61, 245, 0.15);
+}
+.text-violet-700 {
+  color: #A78BFA;
+}
+.border-violet-200 {
+  border-color: rgba(91, 61, 245, 0.3);
+}
+
+input, textarea, select {
+  background-color: #111113;
+  border-color: #27272a;
+  color: #E8E8EA;
+}
+input::placeholder, textarea::placeholder {
+  color: #52525b;
+}
+select option {
+  background-color: #111113;
+  color: #E8E8EA;
+}
+
+.seidar-scrollbar::-webkit-scrollbar-thumb {
+  background: #2E2A3F;
+}
+.seidar-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #413D56;
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #242132;
+  stroke-opacity: 0.6;
+}
+.recharts-cartesian-axis-tick text {
+  fill: #7A7485;
+}
+.recharts-default-tooltip {
+  background-color: #13111C;
+  border: 1px solid #242132;
+  border-radius: 12px;
+  color: #ECE9F2;
+}
+.recharts-tooltip-label {
+  color: #ECE9F2;
+  font-weight: 600;
+}

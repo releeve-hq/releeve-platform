@@ -1,0 +1,17 @@
+# Rust
+/target
+**/target
+
+# Environment
+**/.env
+!**/.env.example
+
+# Node (frontend)
+node_modules
+.next
+out
+
+# Misc
+*.local
+.DS_Store
+Thumbs.db

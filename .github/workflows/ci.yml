@@ -1,0 +1,49 @@
+# Releeve Platform — CI (Phase 0)
+#
+# - `lint`: fmt, clippy (-D warnings), unit tests. No infra needed.
+# - `integration`: the testcontainers-backed suite on a Docker-enabled runner.
+#   Containers are spawned in-process by `releeve-test-support`; no compose
+#   services are booted by CI.
+#
+# Note: `cargo sqlx prepare --check` is intentionally NOT wired yet — Phase 0
+# has no `sqlx::query!` macros (health uses a runtime `query_scalar`), so there
+# is no offline data to generate. It becomes mandatory in Phase 1 when the first
+# compile-time-checked query lands, together with committed `.sqlx/` artifacts.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  lint:
+    name: Lint & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Unit tests
+        run: cargo test --workspace --lib --bins
+
+  integration:
+    name: Integration tests (testcontainers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Integration tests
+        run: cargo test --workspace --test '*'
