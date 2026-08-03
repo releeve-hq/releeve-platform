@@ -74,3 +74,6 @@ lettre = { version = "0.11", default-features = false, features = [
 
 # Async trait helpers for the mailer abstraction & test seams
 async-trait = "0.1"
+
+# Async stream utilities for ingestion pipelines (Phase 2)
+futures = "0.3"

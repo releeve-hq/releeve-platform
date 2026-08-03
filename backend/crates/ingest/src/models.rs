@@ -1,0 +1,106 @@
+//! Normalized domain models produced by decoding Horizon / Soroban-RPC and
+//! written to Postgres. These are the schema-facing types; wire decoding lives
+//! in [`crate::decode`].
+
+use serde::{Deserialize, Serialize};
+
+/// A ledger/block header.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LedgerRecord {
+    pub sequence: i64,
+    pub network: String,
+    pub hash: String,
+    pub parent_hash: Option<String>,
+    pub transaction_count: i64,
+    pub size_bytes: i64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub base_operation_fee: Option<String>,
+    pub base_reserve: Option<String>,
+    pub total_cpu_instructions: Option<i64>,
+    pub resource_limit: Option<i64>,
+}
+
+/// Resource usage metrics dug out of Soroban diagnostic events. Per the
+/// protocol-23 contract, each is OPTIONAL — a node without
+/// `ENABLE_SOROBAN_DIAGNOSTIC_EVENTS` must yield `None`, never a fake 0.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ResourceMetrics {
+    pub cpu_instructions: Option<i64>,
+    pub memory_bytes: Option<i64>,
+    pub invoke_time_nsecs: Option<i64>,
+    pub disk_read_bytes: Option<i64>,
+    pub write_bytes: Option<i64>,
+    pub max_rw_key_byte: Option<i64>,
+    pub max_rw_data_byte: Option<i64>,
+}
+
+/// A single ledger-inclusion transaction with its decoded detail.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TxRecord {
+    pub hash: String,
+    pub network: String,
+    pub ledger_sequence: i64,
+    pub status: TxStatus,
+    pub source_account: String,
+    pub operation_type: String,
+    pub fee_charged: Option<String>,
+    pub sequence_number: Option<String>,
+    pub application_order: i64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub metrics: ResourceMetrics,
+    /// Invocation-API detail, present only for Soroban host-function calls.
+    pub call_tree: Vec<CallTreeNode>,
+    pub state_changes: Vec<StateChange>,
+    pub events: Vec<Event>,
+    pub fund_flow: Vec<FundFlowEdge>,
+    /// Raw XDR retained for forensic debugging / later phases.
+    pub raw_result_meta_xdr: Option<String>,
+    pub raw_envelope_xdr: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TxStatus {
+    Success,
+    Failed,
+}
+
+/// A node in the Soroban call tree (`tx_call_tree_nodes`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CallTreeNode {
+    /// Index of the parent node within the same call tree; `None` for the root.
+    pub parent_index: Option<i64>,
+    pub contract_id: String,
+    pub function_name: String,
+    pub args: serde_json::Value,
+    pub return_value: Option<serde_json::Value>,
+    /// Depth reconstructed by the decoder (root = 0).
+    pub depth: i64,
+}
+
+/// A ledger entry mutated by a Soroban invocation (`tx_state_changes`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StateChange {
+    pub entry_type: String,
+    pub entry_key: String,
+    pub value_before: Option<serde_json::Value>,
+    pub value_after: Option<serde_json::Value>,
+    /// Index of the call-tree node that caused this change, if any.
+    pub caused_by_node: Option<i64>,
+}
+
+/// A Soroban event (`tx_events`). Protocol-23 knows three buckets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Event {
+    pub contract_id: String,
+    pub topics: Vec<String>,
+    pub data: serde_json::Value,
+}
+
+/// A classic payment edge (`tx_fund_flow_edges`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FundFlowEdge {
+    pub from_address: String,
+    pub to_address: String,
+    pub asset: String,
+    pub amount: String,
+}

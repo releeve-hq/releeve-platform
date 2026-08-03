@@ -6,4 +6,21 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+redis = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
 shared = { path = "../shared" }
+
+[dev-dependencies]
+test-support = { path = "../test-support" }
+wiremock = "0.6"
