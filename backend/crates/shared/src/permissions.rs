@@ -17,6 +17,8 @@ const MANAGE_BILLING: i16 = 1 << 5;
 /// Releeve-specific: gates who can run mutating/impersonation simulations.
 /// Present and checkable from Phase 1 but inert until Phase 5.
 const MANAGE_FORK_SESSIONS: i16 = 1 << 6;
+/// Gates monitoring rule and destination management.
+const MANAGE_ALERTS: i16 = 1 << 7;
 
 /// A single toggleable permission. Every variant maps to exactly one bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
@@ -29,6 +31,7 @@ pub enum Permission {
     ManageAccessTokens,
     ManageBilling,
     ManageForkSessions,
+    ManageAlerts,
 }
 
 impl Permission {
@@ -41,6 +44,7 @@ impl Permission {
             Permission::ManageAccessTokens => MANAGE_ACCESS_TOKENS,
             Permission::ManageBilling => MANAGE_BILLING,
             Permission::ManageForkSessions => MANAGE_FORK_SESSIONS,
+            Permission::ManageAlerts => MANAGE_ALERTS,
         }
     }
 
@@ -52,6 +56,7 @@ impl Permission {
         Permission::ManageAccessTokens,
         Permission::ManageBilling,
         Permission::ManageForkSessions,
+        Permission::ManageAlerts,
     ];
 }
 
@@ -73,7 +78,8 @@ impl PermissionSet {
                 | MANAGE_MEMBERS
                 | MANAGE_ACCESS_TOKENS
                 | MANAGE_BILLING
-                | MANAGE_FORK_SESSIONS,
+                | MANAGE_FORK_SESSIONS
+                | MANAGE_ALERTS,
         )
     }
 
@@ -128,6 +134,7 @@ mod tests {
         assert_eq!(bits.len(), Permission::ALL.len(), "bits are unique");
         // Bits must not alias the reserved next bit or collide numerically.
         assert_eq!(Permission::ManageForkSessions.bit(), 1 << 6);
+        assert_eq!(Permission::ManageAlerts.bit(), 1 << 7);
     }
 
     #[test]
@@ -149,7 +156,7 @@ mod tests {
             assert!(set.contains(*p));
         }
         assert_eq!(set.iter().len(), Permission::ALL.len());
-        assert_eq!(set.raw(), (1 << 7) - 1);
+        assert_eq!(set.raw(), (1 << 8) - 1);
     }
 
     #[test]
@@ -169,5 +176,7 @@ mod tests {
 
         let out = serde_json::to_value(Permission::ManageForkSessions).unwrap();
         assert_eq!(out, "manage_fork_sessions");
+        let out = serde_json::to_value(Permission::ManageAlerts).unwrap();
+        assert_eq!(out, "manage_alerts");
     }
 }

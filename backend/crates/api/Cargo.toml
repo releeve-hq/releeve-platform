@@ -31,6 +31,7 @@ tracing-subscriber = { workspace = true }
 dotenvy = { workspace = true }
 shared = { path = "../shared" }
 ingest = { path = "../ingest" }
+alerts = { path = "../alerts" }
 
 [dev-dependencies]
 test-support = { path = "../test-support" }

@@ -61,6 +61,15 @@ async fn openapi_exposes_platform_routes_and_bearer_security() {
         "/api/v1/{org}/{project}/tags/{tag_id}",
         "/api/v1/{org}/{project}/tags/{tag_id}/attach",
         "/api/v1/{org}/{project}/tags/{tag_id}/detach/{entity_id}",
+        "/api/v1/{org}/destinations",
+        "/api/v1/{org}/destinations/{destination_id}",
+        "/api/v1/{org}/destinations/{destination_id}/test",
+        "/api/v1/{org}/{project}/destinations",
+        "/api/v1/{org}/{project}/destinations/{destination_id}",
+        "/api/v1/{org}/{project}/destinations/{destination_id}/test",
+        "/api/v1/{org}/{project}/alerts",
+        "/api/v1/{org}/{project}/alerts/{alert_id}",
+        "/api/v1/{org}/{project}/alerts/{alert_id}/history",
     ] {
         assert!(
             spec["paths"].get(path).is_some(),

@@ -15,6 +15,7 @@ pub mod explorer_detail;
 pub mod extract;
 pub mod health;
 pub mod mailer;
+pub mod monitoring;
 pub mod oauth;
 pub mod orgs;
 pub mod password;
@@ -36,6 +37,7 @@ use crate::auth::{
 use crate::explorer::{recent_ledgers, recent_transactions, top_tokens, transfers};
 use crate::explorer_detail::*;
 use crate::health::{__path_health_check, HealthChecks, HealthResponse, health_check};
+use crate::monitoring::*;
 use crate::orgs::*;
 use crate::state::AppState;
 
@@ -80,7 +82,7 @@ fn add_phase3_path(
 }
 
 fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
-    use utoipa::openapi::path::HttpMethod::{Delete, Get, Post};
+    use utoipa::openapi::path::HttpMethod::{Delete, Get, Patch, Post};
 
     for (path, method, summary) in [
         (
@@ -211,6 +213,73 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             "/api/v1/{org}/{project}/tags/{tag_id}/detach/{entity_id}",
             Delete,
             "Detach tag",
+        ),
+        (
+            "/api/v1/{org}/destinations",
+            Get,
+            "List account destinations",
+        ),
+        (
+            "/api/v1/{org}/destinations",
+            Post,
+            "Create account destination",
+        ),
+        (
+            "/api/v1/{org}/destinations/{destination_id}",
+            Patch,
+            "Update account destination",
+        ),
+        (
+            "/api/v1/{org}/destinations/{destination_id}",
+            Delete,
+            "Delete account destination",
+        ),
+        (
+            "/api/v1/{org}/destinations/{destination_id}/test",
+            Post,
+            "Test account destination",
+        ),
+        (
+            "/api/v1/{org}/{project}/destinations",
+            Get,
+            "List project destinations",
+        ),
+        (
+            "/api/v1/{org}/{project}/destinations",
+            Post,
+            "Create project destination",
+        ),
+        (
+            "/api/v1/{org}/{project}/destinations/{destination_id}",
+            Patch,
+            "Update project destination",
+        ),
+        (
+            "/api/v1/{org}/{project}/destinations/{destination_id}",
+            Delete,
+            "Delete project destination",
+        ),
+        (
+            "/api/v1/{org}/{project}/destinations/{destination_id}/test",
+            Post,
+            "Test project destination",
+        ),
+        ("/api/v1/{org}/{project}/alerts", Get, "List alerts"),
+        ("/api/v1/{org}/{project}/alerts", Post, "Create alert"),
+        (
+            "/api/v1/{org}/{project}/alerts/{alert_id}",
+            Patch,
+            "Update alert",
+        ),
+        (
+            "/api/v1/{org}/{project}/alerts/{alert_id}",
+            Delete,
+            "Delete alert",
+        ),
+        (
+            "/api/v1/{org}/{project}/alerts/{alert_id}/history",
+            Get,
+            "Alert firing history",
         ),
     ] {
         add_phase3_path(openapi, path, method, summary);
@@ -359,6 +428,18 @@ pub fn app(state: AppState) -> Router {
             delete(revoke_access_token),
         )
         .route(
+            "/api/v1/{org}/destinations",
+            get(list_org_destinations).post(create_org_destination),
+        )
+        .route(
+            "/api/v1/{org}/destinations/{destination_id}",
+            patch(patch_org_destination).delete(delete_org_destination),
+        )
+        .route(
+            "/api/v1/{org}/destinations/{destination_id}/test",
+            post(test_org_destination),
+        )
+        .route(
             "/api/v1/{org}/projects",
             get(list_projects).post(create_project),
         )
@@ -373,6 +454,30 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/{org}/{project}/transactions",
             get(project_transactions),
+        )
+        .route(
+            "/api/v1/{org}/{project}/destinations",
+            get(list_project_destinations).post(create_project_destination),
+        )
+        .route(
+            "/api/v1/{org}/{project}/destinations/{destination_id}",
+            patch(patch_project_destination).delete(delete_project_destination),
+        )
+        .route(
+            "/api/v1/{org}/{project}/destinations/{destination_id}/test",
+            post(test_project_destination),
+        )
+        .route(
+            "/api/v1/{org}/{project}/alerts",
+            get(list_alerts).post(create_alert),
+        )
+        .route(
+            "/api/v1/{org}/{project}/alerts/{alert_id}",
+            patch(patch_alert).delete(delete_alert),
+        )
+        .route(
+            "/api/v1/{org}/{project}/alerts/{alert_id}/history",
+            get(alert_history),
         )
         .route(
             "/api/v1/{org}/{project}/transactions/{hash}/comments",

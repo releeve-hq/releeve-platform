@@ -116,6 +116,10 @@ impl TestApp {
         &self.state.db
     }
 
+    pub fn state(&self) -> AppState {
+        self.state.clone()
+    }
+
     /// A fresh Redis connection against the same instance the app uses — lets
     /// tests seed/assert on cache or rate-limit state directly.
     pub async fn redis_conn(&self) -> redis::aio::MultiplexedConnection {

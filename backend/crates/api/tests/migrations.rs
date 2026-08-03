@@ -28,6 +28,8 @@ async fn full_schema_applies_with_key_tables_and_indexes() {
         "organizations",
         "projects",
         "access_tokens",
+        "account_destinations",
+        "project_destinations",
         "transactions",
         "tx_call_tree_nodes",
         "token_volume_stats",
@@ -65,6 +67,15 @@ async fn full_schema_applies_with_key_tables_and_indexes() {
     .await
     .expect("index existence query runs");
     assert!(idx_exists, "uq_alert_firing_dedupe index missing");
+
+    let raw: i16 = sqlx::query_scalar("SELECT permissions FROM organization_members LIMIT 1")
+        .fetch_optional(&pg.pool)
+        .await
+        .expect("permission query runs")
+        .unwrap_or_default();
+    if raw != 0 {
+        assert_eq!(raw & 128, 128, "full-permission members gain manage_alerts");
+    }
 }
 
 #[tokio::test]
