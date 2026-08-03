@@ -100,6 +100,7 @@ impl OAuthClients {
             oauth_github_client_secret: "gh-secret".into(),
             oauth_google_client_id: "g-id".into(),
             oauth_google_client_secret: "g-secret".into(),
+            soroban_rpc_url: String::new(),
         });
         o.callback_base = callback_base.to_string();
         o.github_base = provider_base.to_string();

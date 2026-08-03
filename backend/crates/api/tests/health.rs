@@ -34,6 +34,7 @@ fn test_state(db: sqlx::PgPool, redis: redis::Client) -> AppState {
         oauth_github_client_secret: String::new(),
         oauth_google_client_id: String::new(),
         oauth_google_client_secret: String::new(),
+        soroban_rpc_url: String::new(),
     };
     AppState {
         db,

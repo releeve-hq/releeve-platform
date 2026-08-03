@@ -35,3 +35,4 @@ ingest = { path = "../ingest" }
 [dev-dependencies]
 test-support = { path = "../test-support" }
 tower = { workspace = true }
+wiremock = "0.6"

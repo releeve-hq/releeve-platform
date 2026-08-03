@@ -37,6 +37,9 @@ pub enum Error {
     #[error("conflict")]
     Conflict,
 
+    #[error("signer is not configured for this project")]
+    SignerNotConfigured,
+
     #[error("rate limited")]
     RateLimited,
 
@@ -58,6 +61,7 @@ pub enum ErrorKind {
     Forbidden,
     EmailUnverified,
     Conflict,
+    SignerNotConfigured,
     RateLimited,
     Internal,
     ServiceUnavailable,
@@ -72,6 +76,7 @@ impl Error {
             Error::Forbidden => ErrorKind::Forbidden,
             Error::EmailUnverified => ErrorKind::EmailUnverified,
             Error::Conflict => ErrorKind::Conflict,
+            Error::SignerNotConfigured => ErrorKind::SignerNotConfigured,
             Error::RateLimited => ErrorKind::RateLimited,
             Error::Internal(_) => ErrorKind::Internal,
             Error::ServiceUnavailable(_) => ErrorKind::ServiceUnavailable,
@@ -86,6 +91,7 @@ impl Error {
             ErrorKind::Forbidden => 403,
             ErrorKind::EmailUnverified => 403,
             ErrorKind::Conflict => 409,
+            ErrorKind::SignerNotConfigured => 409,
             ErrorKind::RateLimited => 429,
             ErrorKind::Internal => 500,
             ErrorKind::ServiceUnavailable => 503,
@@ -100,6 +106,7 @@ impl Error {
             ErrorKind::Forbidden => "forbidden",
             ErrorKind::EmailUnverified => "email_unverified",
             ErrorKind::Conflict => "conflict",
+            ErrorKind::SignerNotConfigured => "signer_not_configured",
             ErrorKind::RateLimited => "rate_limited",
             ErrorKind::Internal => "internal",
             ErrorKind::ServiceUnavailable => "service_unavailable",
@@ -158,6 +165,7 @@ mod tests {
         assert_eq!(Error::Unauthorized.status(), 401);
         assert_eq!(Error::Forbidden.status(), 403);
         assert_eq!(Error::Conflict.status(), 409);
+        assert_eq!(Error::SignerNotConfigured.status(), 409);
         assert_eq!(Error::RateLimited.status(), 429);
         assert_eq!(Error::Internal(None).status(), 500);
         assert_eq!(Error::ServiceUnavailable("db".into()).status(), 503);
@@ -166,6 +174,7 @@ mod tests {
     #[test]
     fn code_mapping() {
         assert_eq!(Error::NotFound.code(), "not_found");
+        assert_eq!(Error::SignerNotConfigured.code(), "signer_not_configured");
         assert_eq!(Error::Internal(None).code(), "internal");
         assert_eq!(
             Error::ServiceUnavailable("redis".into()).code(),

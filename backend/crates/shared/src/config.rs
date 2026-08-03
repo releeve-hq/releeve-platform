@@ -32,6 +32,9 @@ pub struct Settings {
     pub oauth_github_client_secret: String,
     pub oauth_google_client_id: String,
     pub oauth_google_client_secret: String,
+
+    // Phase 3 — public explorer contract calls.
+    pub soroban_rpc_url: String,
 }
 
 /// Runtime configuration for the `releeve-ingest` daemon (Phase 2).
@@ -109,6 +112,7 @@ impl Settings {
             .set_default("oauth_github_client_secret", "")?
             .set_default("oauth_google_client_id", "")?
             .set_default("oauth_google_client_secret", "")?
+            .set_default("soroban_rpc_url", "")?
             .add_source(Environment::default())
             .build()?
             .try_deserialize()
@@ -150,6 +154,7 @@ mod tests {
         assert_eq!(s.jwt_secret, "dev-insecure-change-me");
         assert_eq!(s.smtp_host, "", "SMTP_HOST absent → empty");
         assert_eq!(s.oauth_github_client_id, "");
+        assert_eq!(s.soroban_rpc_url, "", "API RPC URL is optional");
     }
 
     #[test]

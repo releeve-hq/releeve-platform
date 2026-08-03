@@ -33,6 +33,7 @@ async fn full_schema_applies_with_key_tables_and_indexes() {
         "token_volume_stats",
         "token_prices",
         "contract_verifications",
+        "project_signers",
         "fork_environments",
         "simulation_runs",
         "simulation_call_tree_nodes",

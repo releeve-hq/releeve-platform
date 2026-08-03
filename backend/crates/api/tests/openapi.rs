@@ -1,5 +1,5 @@
 //! OpenAPI smoke test — the spec served at /api-docs/openapi.json must include
-//! the auth/org routes and Phase 2 explorer feeds, not just health.
+//! auth/org routes and the Phase 2/3 explorer backend surface.
 
 mod common;
 
@@ -36,6 +36,31 @@ async fn openapi_exposes_platform_routes_and_bearer_security() {
         "/api/v1/explorer/{network}/ledgers",
         "/api/v1/explorer/{network}/tokens/top",
         "/api/v1/explorer/{network}/transfers",
+        "/api/v1/explorer/{network}/tx/{hash}",
+        "/api/v1/explorer/{network}/tx/{hash}/search",
+        "/api/v1/explorer/{network}/account/{address}",
+        "/api/v1/explorer/{network}/contract/{address}",
+        "/api/v1/explorer/{network}/ledger/{sequence}",
+        "/api/v1/explorer/{network}/ledger/latest",
+        "/api/v1/{org}/{project}/transactions",
+        "/api/v1/{org}/{project}/transactions/{hash}/comments",
+        "/api/v1/{org}/{project}/transactions/{hash}/priority",
+        "/api/v1/{org}/{project}/accounts",
+        "/api/v1/{org}/{project}/accounts/{address}",
+        "/api/v1/{org}/{project}/accounts/{address}/transactions",
+        "/api/v1/{org}/{project}/contracts",
+        "/api/v1/{org}/{project}/contracts/{address}",
+        "/api/v1/{org}/{project}/contracts/{address}/transactions",
+        "/api/v1/{org}/{project}/contracts/{address}/events",
+        "/api/v1/{org}/{project}/contracts/{address}/source",
+        "/api/v1/{org}/{project}/contracts/{address}/upgrades",
+        "/api/v1/{org}/{project}/contracts/{address}/verify",
+        "/api/v1/{org}/{project}/contracts/{address}/verifications",
+        "/api/v1/{org}/{project}/contracts/{address}/call",
+        "/api/v1/{org}/{project}/tags",
+        "/api/v1/{org}/{project}/tags/{tag_id}",
+        "/api/v1/{org}/{project}/tags/{tag_id}/attach",
+        "/api/v1/{org}/{project}/tags/{tag_id}/detach/{entity_id}",
     ] {
         assert!(
             spec["paths"].get(path).is_some(),

@@ -11,6 +11,7 @@
 pub mod auth;
 pub mod error;
 pub mod explorer;
+pub mod explorer_detail;
 pub mod extract;
 pub mod health;
 pub mod mailer;
@@ -23,6 +24,8 @@ pub mod tokens;
 use axum::Router;
 use axum::routing::{delete, get, patch, post};
 use utoipa::OpenApi;
+use utoipa::openapi::path::Operation;
+use utoipa::openapi::response::Response;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::auth::oauth_routes;
@@ -31,6 +34,7 @@ use crate::auth::{
     resend_verification, reset_password, revoke, signup, update_me, verify,
 };
 use crate::explorer::{recent_ledgers, recent_transactions, top_tokens, transfers};
+use crate::explorer_detail::*;
 use crate::health::{__path_health_check, HealthChecks, HealthResponse, health_check};
 use crate::orgs::*;
 use crate::state::AppState;
@@ -50,6 +54,166 @@ impl utoipa::Modify for SecurityAddon {
                     .build(),
             ),
         );
+        add_phase3_paths(openapi);
+    }
+}
+
+fn phase3_operation(summary: &str) -> Operation {
+    let mut op = Operation::new();
+    op.summary = Some(summary.to_owned());
+    op.tags = Some(vec!["explorer".to_owned()]);
+    op.responses
+        .responses
+        .insert("200".to_owned(), Response::new("OK").into());
+    op
+}
+
+fn add_phase3_path(
+    openapi: &mut utoipa::openapi::OpenApi,
+    path: &'static str,
+    method: utoipa::openapi::path::HttpMethod,
+    summary: &'static str,
+) {
+    openapi
+        .paths
+        .add_path_operation(path, vec![method], phase3_operation(summary));
+}
+
+fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
+    use utoipa::openapi::path::HttpMethod::{Delete, Get, Post};
+
+    for (path, method, summary) in [
+        (
+            "/api/v1/explorer/{network}/tx/{hash}",
+            Get,
+            "Decoded transaction detail",
+        ),
+        (
+            "/api/v1/explorer/{network}/tx/{hash}/search",
+            Get,
+            "Search decoded transaction detail",
+        ),
+        (
+            "/api/v1/explorer/{network}/account/{address}",
+            Get,
+            "Public account lookup",
+        ),
+        (
+            "/api/v1/explorer/{network}/contract/{address}",
+            Get,
+            "Public contract lookup",
+        ),
+        (
+            "/api/v1/explorer/{network}/ledger/{sequence}",
+            Get,
+            "Ledger detail",
+        ),
+        (
+            "/api/v1/explorer/{network}/ledger/latest",
+            Get,
+            "Latest ledger detail",
+        ),
+        (
+            "/api/v1/{org}/{project}/transactions",
+            Get,
+            "Project transaction list",
+        ),
+        (
+            "/api/v1/{org}/{project}/transactions/{hash}/comments",
+            Post,
+            "Create transaction comment",
+        ),
+        (
+            "/api/v1/{org}/{project}/transactions/{hash}/priority",
+            Post,
+            "Set transaction priority",
+        ),
+        (
+            "/api/v1/{org}/{project}/accounts",
+            Get,
+            "List tracked accounts",
+        ),
+        ("/api/v1/{org}/{project}/accounts", Post, "Track account"),
+        (
+            "/api/v1/{org}/{project}/accounts/{address}",
+            Get,
+            "Tracked account detail",
+        ),
+        (
+            "/api/v1/{org}/{project}/accounts/{address}/transactions",
+            Get,
+            "Tracked account transactions",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts",
+            Get,
+            "List tracked contracts",
+        ),
+        ("/api/v1/{org}/{project}/contracts", Post, "Track contract"),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}",
+            Get,
+            "Tracked contract detail",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}/transactions",
+            Get,
+            "Tracked contract transactions",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}/events",
+            Get,
+            "Tracked contract events",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}/source",
+            Get,
+            "Tracked contract source",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}/upgrades",
+            Get,
+            "Tracked contract upgrades",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}/verify",
+            Post,
+            "Submit contract verification",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}/verifications",
+            Get,
+            "Contract verification history",
+        ),
+        (
+            "/api/v1/{org}/{project}/contracts/{address}/call",
+            Post,
+            "Call contract",
+        ),
+        ("/api/v1/{org}/{project}/tags", Get, "List tags"),
+        ("/api/v1/{org}/{project}/tags", Post, "Create tag"),
+        (
+            "/api/v1/{org}/{project}/tags/{tag_id}",
+            utoipa::openapi::path::HttpMethod::Patch,
+            "Update tag",
+        ),
+        (
+            "/api/v1/{org}/{project}/tags/{tag_id}",
+            Delete,
+            "Delete tag",
+        ),
+        (
+            "/api/v1/{org}/{project}/tags/{tag_id}/attach",
+            Post,
+            "Attach tag",
+        ),
+        (
+            "/api/v1/{org}/{project}/tags/{tag_id}/detach/{entity_id}",
+            Delete,
+            "Detach tag",
+        ),
+    ] {
+        add_phase3_path(openapi, path, method, summary);
     }
 }
 
@@ -126,6 +290,30 @@ pub fn app(state: AppState) -> Router {
         .route("/api/v1/explorer/{network}/ledgers", get(recent_ledgers))
         .route("/api/v1/explorer/{network}/tokens/top", get(top_tokens))
         .route("/api/v1/explorer/{network}/transfers", get(transfers))
+        .route(
+            "/api/v1/explorer/{network}/tx/{hash}",
+            get(public_tx_detail),
+        )
+        .route(
+            "/api/v1/explorer/{network}/tx/{hash}/search",
+            get(tx_search),
+        )
+        .route(
+            "/api/v1/explorer/{network}/account/{address}",
+            get(public_account),
+        )
+        .route(
+            "/api/v1/explorer/{network}/contract/{address}",
+            get(public_contract),
+        )
+        .route(
+            "/api/v1/explorer/{network}/ledger/latest",
+            get(latest_ledger),
+        )
+        .route(
+            "/api/v1/explorer/{network}/ledger/{sequence}",
+            get(ledger_detail),
+        )
         .route("/api/v1/auth/signup", post(signup))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/verify", post(verify))
@@ -181,6 +369,82 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/{org}/projects/{project}/transfer",
             post(transfer_project),
+        )
+        .route(
+            "/api/v1/{org}/{project}/transactions",
+            get(project_transactions),
+        )
+        .route(
+            "/api/v1/{org}/{project}/transactions/{hash}/comments",
+            post(add_comment),
+        )
+        .route(
+            "/api/v1/{org}/{project}/transactions/{hash}/priority",
+            post(set_priority),
+        )
+        .route(
+            "/api/v1/{org}/{project}/accounts",
+            get(list_accounts).post(add_account),
+        )
+        .route(
+            "/api/v1/{org}/{project}/accounts/{address}",
+            get(project_account),
+        )
+        .route(
+            "/api/v1/{org}/{project}/accounts/{address}/transactions",
+            get(account_transactions),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts",
+            get(list_contracts).post(add_contract),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}",
+            get(project_contract),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/transactions",
+            get(contract_transactions),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/events",
+            get(contract_events),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/source",
+            get(contract_source),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/upgrades",
+            get(contract_upgrades),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/verify",
+            post(submit_verification),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/verifications",
+            get(verification_history),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/call",
+            post(contract_call),
+        )
+        .route(
+            "/api/v1/{org}/{project}/tags",
+            get(list_tags).post(create_tag),
+        )
+        .route(
+            "/api/v1/{org}/{project}/tags/{tag_id}",
+            patch(update_tag).delete(delete_tag),
+        )
+        .route(
+            "/api/v1/{org}/{project}/tags/{tag_id}/attach",
+            post(attach_tag),
+        )
+        .route(
+            "/api/v1/{org}/{project}/tags/{tag_id}/detach/{entity_id}",
+            delete(detach_tag),
         )
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(state)

@@ -78,7 +78,8 @@ pub async fn spawn_redis() -> RedisInstance {
     RedisInstance { container, url }
 }
 
-/// Apply the full migration set (`backend/migrations`) to a pool.
+/// Apply the full migration set (`backend/migrations`) to a pool, including
+/// phase-specific additions such as Phase 3 project signers.
 pub async fn run_migrations(pool: &PgPool) {
     sqlx::migrate!("../../migrations")
         .run(pool)

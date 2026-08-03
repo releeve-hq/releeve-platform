@@ -49,6 +49,7 @@ pub fn test_settings() -> Settings {
         oauth_github_client_secret: String::new(),
         oauth_google_client_id: String::new(),
         oauth_google_client_secret: String::new(),
+        soroban_rpc_url: String::new(),
     }
 }
 
@@ -58,7 +59,17 @@ impl TestApp {
         run_migrations(&pg.pool).await;
         let redis = spawn_redis().await;
         let url = redis.url.clone();
-        Self::from_parts(pg, url, Some(redis)).await
+        Self::from_parts(pg, url, Some(redis), test_settings()).await
+    }
+
+    pub async fn with_soroban_rpc_url(rpc_url: &str) -> Self {
+        let pg = spawn_postgres().await;
+        run_migrations(&pg.pool).await;
+        let redis = spawn_redis().await;
+        let url = redis.url.clone();
+        let mut settings = test_settings();
+        settings.soroban_rpc_url = rpc_url.to_owned();
+        Self::from_parts(pg, url, Some(redis), settings).await
     }
 
     /// Build the app around a caller-supplied Redis URL (used to exercise the
@@ -67,15 +78,15 @@ impl TestApp {
     pub async fn with_redis_url(redis_url: &str) -> Self {
         let pg = spawn_postgres().await;
         run_migrations(&pg.pool).await;
-        Self::from_parts(pg, redis_url.to_string(), None).await
+        Self::from_parts(pg, redis_url.to_string(), None, test_settings()).await
     }
 
     async fn from_parts(
         pg: PostgresInstance,
         redis_url: String,
         redis: Option<RedisInstance>,
+        settings: Settings,
     ) -> Self {
-        let settings = test_settings();
         let mailer = Arc::new(InMemoryMailer::new());
         let state = AppState {
             db: pg.pool.clone(),
