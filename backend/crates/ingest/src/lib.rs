@@ -10,3 +10,4 @@ pub mod models;
 pub mod rollup;
 pub mod state;
 pub mod sync;
+pub mod upstream;
