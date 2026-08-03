@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod explorer;
 pub mod extract;
 pub mod health;
 pub mod mailer;
@@ -28,6 +29,7 @@ use crate::auth::{
     change_password, forgot_password, login, logout, me, my_organizations, refresh,
     resend_verification, reset_password, revoke, signup, update_me, verify,
 };
+use crate::explorer::{recent_ledgers, recent_transactions, top_tokens, transfers};
 use crate::health::{__path_health_check, HealthChecks, HealthResponse, health_check};
 use crate::orgs::*;
 use crate::state::AppState;
@@ -70,6 +72,10 @@ impl utoipa::Modify for SecurityAddon {
         auth::my_organizations,
         auth::oauth_routes::start,
         auth::oauth_routes::callback,
+        explorer::recent_transactions,
+        explorer::recent_ledgers,
+        explorer::top_tokens,
+        explorer::transfers,
     ),
     components(schemas(
         HealthResponse,
@@ -112,6 +118,13 @@ pub struct ApiDoc;
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_check))
+        .route(
+            "/api/v1/explorer/{network}/transactions/latest",
+            get(recent_transactions),
+        )
+        .route("/api/v1/explorer/{network}/ledgers", get(recent_ledgers))
+        .route("/api/v1/explorer/{network}/tokens/top", get(top_tokens))
+        .route("/api/v1/explorer/{network}/transfers", get(transfers))
         .route("/api/v1/auth/signup", post(signup))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/verify", post(verify))
