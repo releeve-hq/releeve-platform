@@ -9,6 +9,7 @@ const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
 const LANDING_ROUTES = ['/bounties', '/jobs', '/about'];
+const EXPLORER_ENTITY_ROUTES = new Set(['ledger', 'tx', 'account', 'contract']);
 
 function isAuthRoute(pathname: string): boolean {
   if (AUTH_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'))) {
@@ -24,6 +25,11 @@ function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.includes(pathname) || LANDING_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
 }
 
+function isExplorerRoute(pathname: string): boolean {
+  const [, , entity, id] = pathname.split('/');
+  return Boolean(entity && id && EXPLORER_ENTITY_ROUTES.has(entity));
+}
+
 export default function ConditionalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -31,16 +37,25 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
 
   useEffect(() => {
     if (isLoading) return;
-    if (!isAuthRoute(pathname) && !isPublicRoute(pathname) && !isAuthenticated) {
+    if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) return;
+    if (!isAuthRoute(pathname) && !isPublicRoute(pathname) && !isExplorerRoute(pathname) && !isAuthenticated) {
       router.push('/signin');
     }
   }, [isLoading, isAuthenticated, pathname, router]);
+
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+    return <>{children}</>;
+  }
 
   if (isAuthRoute(pathname)) {
     return <>{children}</>;
   }
 
   if (pathname === '/') {
+    return <>{children}</>;
+  }
+
+  if (isExplorerRoute(pathname)) {
     return <>{children}</>;
   }
 
