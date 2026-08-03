@@ -8,7 +8,7 @@ use sqlx::PgConnection;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
-use crate::models::{LedgerRecord, StateChange, TxRecord, TxStatus};
+use crate::models::{EntitySnapshot, LedgerRecord, StateChange, TxRecord, TxStatus};
 
 /// Rehydrated result of persisting a transaction.
 pub struct UpsertOutcome {
@@ -104,6 +104,48 @@ pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sq
         already_present: !new,
         node_ids,
     })
+}
+
+/// Persist entity snapshots from `getLedgerEntries` (idempotent by
+/// `(network, entry_key)`). Returns the number persisted this call.
+pub async fn upsert_snapshots(
+    pool: &PgPool,
+    network: &str,
+    ledger_sequence: Option<i64>,
+    snapshots: &[EntitySnapshot],
+) -> Result<usize, sqlx::Error> {
+    let mut persisted = 0;
+    for s in snapshots {
+        let n = sqlx::query(
+            r#"
+            INSERT INTO entity_snapshots (network, entry_type, entry_key, xdr, value, ledger_sequence, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6, now())
+            ON CONFLICT (network, entry_key) DO UPDATE SET
+                entry_type       = EXCLUDED.entry_type,
+                xdr              = EXCLUDED.xdr,
+                value            = EXCLUDED.value,
+                ledger_sequence  = EXCLUDED.ledger_sequence,
+                updated_at       = now()
+            "#,
+        )
+        .bind(network)
+        .bind(&s.entry_type)
+        .bind(&s.key)
+        .bind(optional_str(&s.value))
+        .bind(&s.value)
+        .bind(ledger_sequence)
+        .execute(pool)
+        .await?;
+        persisted += n.rows_affected() as usize;
+    }
+    Ok(persisted)
+}
+
+fn optional_str(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => None,
+    }
 }
 
 fn status_sql(s: TxStatus) -> &'static str {

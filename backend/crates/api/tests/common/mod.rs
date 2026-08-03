@@ -27,7 +27,7 @@ pub struct TestApp {
     /// Keep the Postgres/Redis containers alive for the lifetime of the app;
     /// dropping them would stop the databases under the pool.
     _postgres: PostgresInstance,
-    _redis: RedisInstance,
+    _redis: Option<RedisInstance>,
 }
 
 pub fn test_settings() -> Settings {
@@ -57,12 +57,29 @@ impl TestApp {
         let pg = spawn_postgres().await;
         run_migrations(&pg.pool).await;
         let redis = spawn_redis().await;
+        let url = redis.url.clone();
+        Self::from_parts(pg, url, Some(redis)).await
+    }
 
+    /// Build the app around a caller-supplied Redis URL (used to exercise the
+    /// rate-limiter's fail-open path when Redis is unreachable). No Redis
+    /// container is kept alive in that case.
+    pub async fn with_redis_url(redis_url: &str) -> Self {
+        let pg = spawn_postgres().await;
+        run_migrations(&pg.pool).await;
+        Self::from_parts(pg, redis_url.to_string(), None).await
+    }
+
+    async fn from_parts(
+        pg: PostgresInstance,
+        redis_url: String,
+        redis: Option<RedisInstance>,
+    ) -> Self {
         let settings = test_settings();
         let mailer = Arc::new(InMemoryMailer::new());
         let state = AppState {
             db: pg.pool.clone(),
-            redis: redis::Client::open(redis.url.clone()).expect("redis url parses"),
+            redis: redis::Client::open(redis_url).expect("redis url parses"),
             oauth: OAuthClients::from_settings(&settings),
             settings,
             jwt: JwtIssuer::new("test-secret".into(), 900),
@@ -86,6 +103,16 @@ impl TestApp {
 
     pub fn db(&self) -> &sqlx::PgPool {
         &self.state.db
+    }
+
+    /// A fresh Redis connection against the same instance the app uses — lets
+    /// tests seed/assert on cache or rate-limit state directly.
+    pub async fn redis_conn(&self) -> redis::aio::MultiplexedConnection {
+        self.state
+            .redis
+            .get_multiplexed_async_connection()
+            .await
+            .expect("redis connects")
     }
 }
 

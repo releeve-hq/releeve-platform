@@ -1532,6 +1532,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "dotenvy",
  "futures",
  "rand 0.8.7",
  "redis",
@@ -1544,6 +1545,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "wiremock",
 ]

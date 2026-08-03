@@ -5,7 +5,8 @@
 //! Phase 1 wires the identity + authorization surface: signup/login/verify/OAuth,
 //! rotating refresh, password reset/change, `/me`, and org-scoped members,
 //! projects, and access tokens behind the flat permission model with the
-//! email-verified gate.
+//! email-verified gate. Phase 2 adds the public explorer feed surface backed by
+//! Postgres + Redis: latest transactions, ledgers, top tokens, and transfers.
 
 pub mod auth;
 pub mod error;
@@ -109,7 +110,7 @@ impl utoipa::Modify for SecurityAddon {
     info(
         title = "Releeve Platform API",
         version = "0.1.0",
-        description = "Identity, organizations, projects, and access tokens — the Phase 1 surface.",
+        description = "Identity, organizations, projects, access tokens, and public explorer feeds.",
     ),
 )]
 pub struct ApiDoc;

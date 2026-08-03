@@ -1,5 +1,5 @@
 //! OpenAPI smoke test — the spec served at /api-docs/openapi.json must include
-//! the Phase 1 auth + org routes, not just health.
+//! the auth/org routes and Phase 2 explorer feeds, not just health.
 
 mod common;
 
@@ -8,7 +8,7 @@ use axum::http::{Method, StatusCode};
 use common::{TestApp, req};
 
 #[tokio::test]
-async fn openapi_exposes_phase1_routes_and_bearer_security() {
+async fn openapi_exposes_platform_routes_and_bearer_security() {
     let app = TestApp::new().await;
     let (status, spec) = req(
         app.router(),
@@ -32,6 +32,10 @@ async fn openapi_exposes_phase1_routes_and_bearer_security() {
         "/api/v1/auth/oauth/{provider}/callback",
         "/api/v1/me",
         "/api/v1/me/organizations",
+        "/api/v1/explorer/{network}/transactions/latest",
+        "/api/v1/explorer/{network}/ledgers",
+        "/api/v1/explorer/{network}/tokens/top",
+        "/api/v1/explorer/{network}/transfers",
     ] {
         assert!(
             spec["paths"].get(path).is_some(),

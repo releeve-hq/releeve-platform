@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::asset::classic_asset;
 use crate::models::{
-    EntitySnapshot, FundFlowEdge, LedgerRecord, ResourceMetrics, TxRecord, TxStatus,
+    EntitySnapshot, Event, FundFlowEdge, LedgerRecord, ResourceMetrics, TxRecord, TxStatus,
 };
 
 /// A decoding failure: a missing field or protocol schema drift. Kept distinct
@@ -174,6 +174,22 @@ fn operations(v: &Value) -> Option<Vec<ClassicOp>> {
     Some(out)
 }
 
+/// True when a Horizon transaction record is a Soroban invocation (an
+/// `invoke_host_function` / `invoke_hf_op` operation). These need RPC
+/// enrichment; classic records decode directly.
+pub fn is_soroban_invocation(v: &Value) -> bool {
+    let op_types: Vec<&str> = v
+        .get("operations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|op| op.get("type").and_then(Value::as_str))
+        .collect();
+    op_types
+        .iter()
+        .any(|t| *t == "invoke_host_function" || *t == "invoke_hf_op")
+}
+
 /// The recognized shape of an RPC `events` payload, mirroring protocol-23.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventShape {
@@ -270,6 +286,109 @@ pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
     })
 }
 
+/// Soroban invocation detail (protocol-23 aware): map the RPC `getTransaction`
+/// result's events and resource metrics into a [`TxRecord`], enriching the
+/// fields that `decode_invoke_tx` leaves empty.
+///
+/// **Contract:** the RPC `events` object is *nested* (P23) — never assume the
+/// flat shape. Best-effort: only buckets whose shape we recognize are consumed;
+/// a flat (pre-P23) shape is tolerated as a fallback; anything else yields no
+/// events (the raw result XDR remains authoritative, not a wrong decode).
+/// Missing metrics are left `None` — a node without
+/// `ENABLE_SOROBAN_DIAGNOSTIC_EVENTS` must not produce fake zeros.
+pub fn decode_invoke_detail(v: &Value, network: &str) -> DecodeResult<TxRecord> {
+    let mut tx = decode_invoke_tx(v, network)?;
+    tx.events = decode_events(v);
+    tx.metrics = decode_metrics(v);
+    Ok(tx)
+}
+
+/// Best-effort flatten of RPC event buckets to the `tx_events` shape. Malformed
+/// entries are skipped (never a hard error); the raw envelope stays authoritative.
+fn decode_events(v: &Value) -> Vec<Event> {
+    let events = match v.get("events") {
+        Some(Value::Array(_)) => v.get("events").cloned(),
+        Some(ev) if ev.is_object() => {
+            let mut out = Vec::new();
+            // Event buckets map to `tx_events`. Diagnostic events are *not*
+            // events in the explorer sense — they carry core metrics, decoded
+            // separately — so they are deliberately excluded here.
+            for key in ["contractEvents", "transactionEvents"] {
+                if let Some(Value::Array(arr)) = ev.get(key) {
+                    out.extend(arr.clone());
+                }
+            }
+            Some(Value::Array(out))
+        }
+        _ => None,
+    };
+    let Some(Value::Array(events)) = events else {
+        return Vec::new();
+    };
+    events.iter().filter_map(event_from_obj).collect()
+}
+
+fn event_from_obj(obj: &Value) -> Option<Event> {
+    let o = obj.as_object()?;
+    let contract_id = o
+        .get("contractId")
+        .or_else(|| o.get("contract_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let topics = o
+        .get("topics")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(topic_to_str).collect::<Vec<String>>())
+        .unwrap_or_default();
+    Some(Event {
+        contract_id,
+        topics,
+        data: o.get("data").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn topic_to_str(t: &Value) -> Option<String> {
+    match t {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(o) => o.get("value").and_then(Value::as_str).map(String::from),
+        _ => None,
+    }
+}
+
+/// Resource metrics from a diagnostic `coreMetrics` object if a diagnostic was
+/// emitted; otherwise all `None`. In the P23 shape metrics live under
+/// `result.events.diagnosticEvents[].coreMetrics`; the flat, pre-P23
+/// `coreMetrics`/`diagnosticEvents` at the top level is kept as a fallback.
+fn decode_metrics(v: &Value) -> ResourceMetrics {
+    let diagnostic = || {
+        v.get("diagnosticEvents")
+            .and_then(Value::as_array)
+            .and_then(|a| a.iter().find_map(|e| e.get("coreMetrics")))
+    };
+    let nested = || {
+        v.get("events")
+            .and_then(Value::as_object)
+            .and_then(|e| e.get("diagnosticEvents"))
+            .and_then(Value::as_array)
+            .and_then(|a| a.iter().find_map(|e| e.get("coreMetrics")))
+    };
+    let m = v.get("coreMetrics").or_else(nested).or_else(diagnostic);
+    let m = match m {
+        None => return ResourceMetrics::default(),
+        Some(m) => m,
+    };
+    ResourceMetrics {
+        cpu_instructions: m.get("cpu_insn").and_then(Value::as_i64),
+        memory_bytes: m.get("mem_byte").and_then(Value::as_i64),
+        invoke_time_nsecs: m.get("invoke_time_nsecs").and_then(Value::as_i64),
+        disk_read_bytes: m.get("disk_read_bytes").and_then(Value::as_i64),
+        write_bytes: m.get("write_bytes").and_then(Value::as_i64),
+        max_rw_key_byte: m.get("max_rw_key_byte").and_then(Value::as_i64),
+        max_rw_data_byte: m.get("max_rw_data_byte").and_then(Value::as_i64),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // getLedgerEntries — entity snapshots ONLY
 // ---------------------------------------------------------------------------
@@ -282,11 +401,14 @@ pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
 /// that stays on Horizon / `getTransaction`. Callers that need heads read
 /// `latest_ledger` here only as a hint.
 pub fn decode_ledger_entries(v: &Value, network: &str) -> DecodeResult<Vec<EntitySnapshot>> {
+    // Accept both the raw RPC envelope (`{result: {entries}}`) and the already
+    // unwrapped `result` (`{entries}`) that the RPC client hands back.
     let entries = v
         .get("result")
         .and_then(|r| r.get("entries"))
+        .or_else(|| v.get("entries"))
         .and_then(Value::as_array)
-        .ok_or(DecodeError::MissingRpcField("result.entries"))?;
+        .ok_or(DecodeError::MissingRpcField("entries"))?;
 
     let mut out = Vec::with_capacity(entries.len());
     for e in entries {
@@ -467,5 +589,109 @@ mod tests {
         let v = json(r#"{"result": {"entries": [{ "key": "c1", "xdr": "zz" }]}}"#);
         let snaps = probe(&v, "net").unwrap();
         assert_eq!(snaps.len(), 1);
+    }
+
+    #[test]
+    fn ledger_entries_accepts_unwrapped_rpc_result() {
+        // The RPC client returns `result` already unwrapped; the decoder must
+        // accept both that and the raw envelope.
+        let v = json(r#"{ "entries": [{ "key": "acc-1", "xdr": "aa" }] }"#);
+        let snaps = decode_ledger_entries(&v, "testnet").unwrap();
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].key, "acc-1");
+        assert_eq!(snaps[0].entry_type, "ledger_entry");
+    }
+
+    #[test]
+    fn invoke_detail_decodes_nested_p23_events() {
+        let v = json(
+            r#"{
+                "hash": "soroban-hash",
+                "status": "SUCCESS",
+                "ledger": 100,
+                "created_at": "2026-08-01T12:00:00Z",
+                "events": {
+                    "contractEvents": [
+                        { "contractId": "C123", "topics": ["transfer", "GALICE"], "data": {"amount": 5} },
+                        { "contractId": "C124", "topics": ["set_authorized"], "data": true }
+                    ],
+                    "transactionEvents": [],
+                    "diagnosticEvents": [
+                        { "coreMetrics": {
+                            "cpu_insn": 27627988,
+                            "mem_byte": 1466596,
+                            "invoke_time_nsecs": 3032477
+                        } }
+                    ]
+                }
+            }"#,
+        );
+        let tx = decode_invoke_detail(&v, "testnet").unwrap();
+        assert_eq!(tx.hash, "soroban-hash");
+        assert_eq!(tx.operation_type, "invoke_host_function");
+        assert_eq!(tx.events.len(), 2);
+        assert_eq!(tx.events[0].contract_id, "C123");
+        assert_eq!(tx.events[0].topics[0], "transfer");
+        assert_eq!(tx.metrics.cpu_instructions, Some(27627988));
+        assert_eq!(tx.metrics.memory_bytes, Some(1466596));
+        assert_eq!(tx.metrics.invoke_time_nsecs, Some(3032477));
+    }
+
+    #[test]
+    fn flat_pre_p23_events_still_decode() {
+        let v = json(
+            r#"{
+                "hash": "h2",
+                "status": "SUCCESS",
+                "events": [
+                    { "contractId": "C9", "topics": ["burn"], "data": null }
+                ]
+            }"#,
+        );
+        let tx = decode_invoke_detail(&v, "testnet").unwrap();
+        assert_eq!(tx.events.len(), 1);
+        assert_eq!(tx.events[0].topics[0], "burn");
+    }
+
+    #[test]
+    fn missing_diagnostic_events_means_null_metrics() {
+        let v = json(r#"{"hash":"h3","status":"SUCCESS"}"#);
+        let tx = decode_invoke_detail(&v, "testnet").unwrap();
+        assert_eq!(tx.metrics.cpu_instructions, None);
+        assert_eq!(tx.metrics.memory_bytes, None);
+        assert_eq!(tx.events.len(), 0);
+    }
+
+    #[test]
+    fn malformed_events_are_skipped_not_errored() {
+        let v = json(
+            r#"{
+                "hash":"h4",
+                "status":"SUCCESS",
+                "events": { "contractEvents": [ "garbage", { "contractId": "C", "topics": [] } ] }
+            }"#,
+        );
+        let tx = decode_invoke_detail(&v, "testnet").unwrap();
+        assert_eq!(tx.events.len(), 1, "garbage entries skipped, valid kept");
+    }
+
+    #[test]
+    fn soroban_invocation_markers_are_detected() {
+        assert!(!is_soroban_invocation(&json(
+            r#"{ "operations": [{ "type": "payment" }] }"#
+        )));
+        let modern = json(r#"{ "operations": [{ "type": "invoke_host_function" }] }"#);
+        assert!(is_soroban_invocation(&modern));
+        let legacy = json(r#"{ "operations": [{ "type": "invoke_hf_op" }] }"#);
+        assert!(is_soroban_invocation(&legacy));
+        let mixed = json(
+            r#"{ "operations": [{ "type": "payment" }, { "type": "invoke_host_function" }] }"#,
+        );
+        assert!(
+            is_soroban_invocation(&mixed),
+            "any invocation op marks the tx"
+        );
+        assert!(!is_soroban_invocation(&json(r#"{}"#)));
+        assert!(!is_soroban_invocation(&json(r#"{ "operations": [] }"#)));
     }
 }

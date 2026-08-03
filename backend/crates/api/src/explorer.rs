@@ -7,9 +7,13 @@
 //! Redis error) falls back correctly, and a rate-limit bucket failure fails
 //! *open* so the public explorer never goes down because of Redis.
 
+use std::future::Future;
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use redis::AsyncCommands;
 use serde::Deserialize;
+use serde_json::Value;
 use shared::Error;
 use utoipa::IntoParams;
 
@@ -62,24 +66,59 @@ fn parse_window(raw: Option<&str>) -> Result<Window, Error> {
     }
 }
 
-/// Reserve a per-key rate-limit slot. Fails open on Redis error; returns 429
-/// when the bucket is over quota.
+fn window_label(window: Window) -> &'static str {
+    match window {
+        Window::H24 => "24h",
+        Window::H7d => "7d",
+        Window::H30d => "30d",
+    }
+}
+
+fn page_tail(limit: i64, cursor: Option<&str>) -> String {
+    format!(":limit={limit}:cursor={}", cursor.unwrap_or(""))
+}
+
+async fn cached_page(
+    state: &AppState,
+    key: &str,
+    ttl_secs: u64,
+    build: impl Future<Output = Result<feeds::Page, sqlx::Error>> + Send,
+) -> Result<Value, Error> {
+    if let Ok(mut conn) = state.redis.get_multiplexed_async_connection().await {
+        let hit: Result<Option<String>, _> = conn.get(key).await;
+        if let Ok(Some(raw)) = hit
+            && let Ok(value) = serde_json::from_str(&raw)
+        {
+            return Ok(value);
+        }
+
+        let page = build.await.map_err(Error::internal)?;
+        let payload = serde_json::to_value(page).map_err(Error::internal)?;
+        let _: Result<(), _> = conn.set_ex(key, payload.to_string(), ttl_secs).await;
+        return Ok(payload);
+    }
+
+    let page = build.await.map_err(Error::internal)?;
+    serde_json::to_value(page).map_err(Error::internal)
+}
+
+/// Reserve a per-key rate-limit slot. Fails open on any Redis unavailability
+/// (connection failure or command error); returns 429 when the bucket is over
+/// quota. A broken limiter must degrade latency, not availability.
 async fn rate_limit(state: &AppState, scope: &str, key: &str) -> Result<(), Error> {
-    let mut conn = state
-        .redis
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(Error::internal)?;
     let bucket = ratelimit::key(scope, key);
-    let allowed = ratelimit::check(
-        &mut conn,
-        &bucket,
-        RATE_LIMIT_PER_WINDOW,
-        RATE_WINDOW_SECS,
-        chrono::Utc::now().timestamp_millis(),
-    )
-    .await
-    .unwrap_or(true); // fail open when Redis is unavailable
+    let allowed = match state.redis.get_multiplexed_async_connection().await {
+        Ok(mut conn) => ratelimit::check(
+            &mut conn,
+            &bucket,
+            RATE_LIMIT_PER_WINDOW,
+            RATE_WINDOW_SECS,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await
+        .unwrap_or(true), // command failure fails open too
+        Err(_) => true, // Redis unreachable → allow through
+    };
     if allowed {
         Ok(())
     } else {
@@ -98,15 +137,23 @@ pub async fn recent_transactions(
     State(state): State<AppState>,
     Path(network): Path<String>,
     Query(p): Query<ListParams>,
-) -> Result<Json<serde_json::Value>, Error> {
+) -> Result<Json<Value>, Error> {
     rate_limit(&state, "explorer", &format!("transactions:{network}")).await?;
 
     let cursor = parse_cursor(p.cursor.as_deref())?;
     let limit = feeds::clamp_limit(p.limit);
-    let page = feeds::latest_transactions(&state.db, &network, limit, cursor, Dir::Next)
-        .await
-        .map_err(Error::internal)?;
-    Ok(Json(serde_json::to_value(page).map_err(Error::internal)?))
+    let key = feeds::feed_key(
+        &network,
+        "transactions",
+        &page_tail(limit, p.cursor.as_deref()),
+    );
+    let db = state.db.clone();
+    let network_for_query = network.clone();
+    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, async move {
+        feeds::latest_transactions(&db, &network_for_query, limit, cursor, Dir::Next).await
+    })
+    .await?;
+    Ok(Json(payload))
 }
 
 /// `GET /api/v1/explorer/{network}/ledgers`
@@ -120,15 +167,19 @@ pub async fn recent_ledgers(
     State(state): State<AppState>,
     Path(network): Path<String>,
     Query(p): Query<ListParams>,
-) -> Result<Json<serde_json::Value>, Error> {
+) -> Result<Json<Value>, Error> {
     rate_limit(&state, "explorer", &format!("ledgers:{network}")).await?;
 
     let cursor = parse_cursor(p.cursor.as_deref())?;
     let limit = feeds::clamp_limit(p.limit);
-    let page = feeds::latest_ledgers(&state.db, &network, limit, cursor, Dir::Next)
-        .await
-        .map_err(Error::internal)?;
-    Ok(Json(serde_json::to_value(page).map_err(Error::internal)?))
+    let key = feeds::feed_key(&network, "ledgers", &page_tail(limit, p.cursor.as_deref()));
+    let db = state.db.clone();
+    let network_for_query = network.clone();
+    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, async move {
+        feeds::latest_ledgers(&db, &network_for_query, limit, cursor, Dir::Next).await
+    })
+    .await?;
+    Ok(Json(payload))
 }
 
 /// `GET /api/v1/explorer/{network}/tokens/top?window=24h|7d|30d`
@@ -142,7 +193,7 @@ pub async fn top_tokens(
     State(state): State<AppState>,
     Path(network): Path<String>,
     Query(p): Query<FeedParams>,
-) -> Result<Json<serde_json::Value>, Error> {
+) -> Result<Json<Value>, Error> {
     let window = parse_window(p.window.as_deref())?;
     rate_limit(
         &state,
@@ -153,10 +204,22 @@ pub async fn top_tokens(
 
     let cursor = parse_cursor(p.cursor.as_deref())?;
     let limit = feeds::clamp_limit(p.limit);
-    let page = feeds::top_tokens(&state.db, &network, window, limit, cursor)
-        .await
-        .map_err(Error::internal)?;
-    Ok(Json(serde_json::to_value(page).map_err(Error::internal)?))
+    let key = feeds::feed_key(
+        &network,
+        "top_tokens",
+        &format!(
+            ":window={}:{}",
+            window_label(window),
+            page_tail(limit, p.cursor.as_deref())
+        ),
+    );
+    let db = state.db.clone();
+    let network_for_query = network.clone();
+    let payload = cached_page(&state, &key, feeds::RANKINGS_TTL_SECS, async move {
+        feeds::top_tokens(&db, &network_for_query, window, limit, cursor).await
+    })
+    .await?;
+    Ok(Json(payload))
 }
 
 /// `GET /api/v1/explorer/{network}/transfers?asset=&window=`
@@ -170,7 +233,7 @@ pub async fn transfers(
     State(state): State<AppState>,
     Path(network): Path<String>,
     Query(p): Query<FeedParams>,
-) -> Result<Json<serde_json::Value>, Error> {
+) -> Result<Json<Value>, Error> {
     let window = parse_window(p.window.as_deref())?;
     rate_limit(
         &state,
@@ -181,15 +244,30 @@ pub async fn transfers(
 
     let cursor = parse_cursor(p.cursor.as_deref())?;
     let limit = feeds::clamp_limit(p.limit);
-    let page = feeds::transfers(
-        &state.db,
+    let key = feeds::feed_key(
         &network,
-        p.asset.as_deref(),
-        window,
-        limit,
-        cursor,
-    )
-    .await
-    .map_err(Error::internal)?;
-    Ok(Json(serde_json::to_value(page).map_err(Error::internal)?))
+        "transfers",
+        &format!(
+            ":window={}:asset={}:{}",
+            window_label(window),
+            p.asset.as_deref().unwrap_or("*"),
+            page_tail(limit, p.cursor.as_deref())
+        ),
+    );
+    let db = state.db.clone();
+    let network_for_query = network.clone();
+    let asset = p.asset.clone();
+    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, async move {
+        feeds::transfers(
+            &db,
+            &network_for_query,
+            asset.as_deref(),
+            window,
+            limit,
+            cursor,
+        )
+        .await
+    })
+    .await?;
+    Ok(Json(payload))
 }

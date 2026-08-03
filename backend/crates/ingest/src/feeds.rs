@@ -208,7 +208,10 @@ pub async fn latest_transactions(
 
     let q = format!(
         r#"
-        SELECT to_jsonb(t.*) AS payload
+        SELECT to_jsonb(t.*) || jsonb_build_object(
+            '_sort', (extract(epoch from t.timestamp)::bigint * 1000),
+            '_tie', t.hash
+        ) AS json
         FROM transactions t
         WHERE network = $1 {predicate}
         ORDER BY timestamp DESC, hash DESC
@@ -275,10 +278,12 @@ pub async fn top_tokens(
     limit: i64,
     cursor: Option<Cursor>,
 ) -> Result<Page, sqlx::Error> {
-    let predicate = match &cursor {
-        Some(c) => format!("(volume, asset) < ({}, '{}')", c.sort, c.tie),
-        None => String::new(),
+    let predicate = if cursor.is_some() {
+        "AND (volume, asset) < ($3::numeric, $4)".to_owned()
+    } else {
+        String::new()
     };
+    let limit_slot = if cursor.is_some() { "$5" } else { "$3" };
     let q = format!(
         r#"
         SELECT jsonb_build_object(
@@ -293,17 +298,16 @@ pub async fn top_tokens(
               SELECT max(window_start) FROM token_volume_stats
               WHERE network = $1 AND window_seconds = $2
           )
-          AND {predicate}
+          {predicate}
         ORDER BY volume DESC, asset DESC
-        LIMIT $3
+        LIMIT {limit_slot}
         "#
     );
-    let rows = sqlx::query(&q)
-        .bind(network)
-        .bind(window.as_seconds())
-        .bind(limit + 1)
-        .fetch_all(pool)
-        .await?;
+    let mut b = sqlx::query(&q).bind(network).bind(window.as_seconds());
+    if let Some(c) = &cursor {
+        b = b.bind(c.sort).bind(&c.tie);
+    }
+    let rows = b.bind(limit + 1).fetch_all(pool).await?;
     let rows: Vec<Value> = rows.iter().map(row_json).collect();
     Ok(make_page(&rows, limit, cursor.is_some()))
 }
@@ -318,40 +322,45 @@ pub async fn transfers(
     limit: i64,
     cursor: Option<Cursor>,
 ) -> Result<Page, sqlx::Error> {
-    let ts_pred = match &cursor {
-        Some(_) => {
-            "AND (extract(epoch from t.timestamp)::bigint * 1000, e.tx_hash) < ($4, $5)".to_owned()
-        }
-        None => String::new(),
-    };
-    let asset_pred = asset.map(|_| "AND e.asset = $5").unwrap_or("");
-    let q = format!(
+    // Placeholder slots are assigned dynamically so the SQL and the bind order
+    // always line up no matter which filters are present.
+    let mut sql = String::from(
         r#"
         SELECT jsonb_build_object(
             'tx_hash', e.tx_hash, 'from_address', e.from_address,
             'to_address', e.to_address, 'asset', e.asset, 'amount', e.amount,
             'timestamp', t.timestamp,
-            '_sort', (extract(epoch from t.timestamp)::bigint * 1000), '_tie', e.tx_hash
+            '_sort', (extract(epoch from t.timestamp)::bigint * 1000), '_tie', e.id::text
         ) AS json
         FROM tx_fund_flow_edges e
         JOIN transactions t ON t.hash = e.tx_hash
         WHERE t.network = $1
-          AND t.timestamp >= now() - ($3::bigint * interval '1 second')
-          {asset_pred}
-          {ts_pred}
-        ORDER BY t.timestamp DESC, e.tx_hash DESC
-        LIMIT $5
-        "#
+          AND t.timestamp >= now() - ($2::bigint * interval '1 second')
+        "#,
     );
+    let mut next: i32 = 3;
+    if asset.is_some() {
+        sql.push_str(&format!(" AND e.asset = ${next}"));
+        next += 1;
+    }
+    if cursor.is_some() {
+        sql.push_str(&format!(
+            " AND (extract(epoch from t.timestamp)::bigint * 1000, e.id::text) < (${next}, ${})",
+            next + 1
+        ));
+        next += 2;
+    }
+    sql.push_str(&format!(
+        " ORDER BY t.timestamp DESC, e.id DESC LIMIT ${next}"
+    ));
 
     let navigated = cursor.is_some();
-    let mut b = sqlx::query(&q).bind(network).bind(window.as_seconds());
+    let mut b = sqlx::query(&sql).bind(network).bind(window.as_seconds());
     if let Some(a) = asset {
         b = b.bind(a);
     }
     if let Some(c) = cursor {
-        let ts = DateTime::from_timestamp_millis(c.sort).unwrap();
-        b = b.bind(ts).bind(c.tie);
+        b = b.bind(c.sort).bind(c.tie);
     }
     let rows = b.bind(limit + 1).fetch_all(pool).await?;
     let rows: Vec<Value> = rows.iter().map(row_json).collect();

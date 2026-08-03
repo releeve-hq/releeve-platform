@@ -11,8 +11,12 @@ use serde_json::Value;
 use shared::Error;
 use sqlx::PgPool;
 
-use crate::decode::{decode_classic_tx, decode_ledger};
-use crate::state::{upsert_ledger, upsert_tx};
+use crate::decode::{
+    decode_classic_tx, decode_invoke_detail, decode_ledger, decode_ledger_entries,
+    is_soroban_invocation,
+};
+use crate::rpc::SorobanRpcClient;
+use crate::state::{upsert_ledger, upsert_snapshots, upsert_tx};
 use crate::sync::{acquire_lock, get_watermark, set_watermark};
 use crate::upstream::{Backoff, CircuitBreaker, FetchError, Reachable, fetch_with_policy};
 
@@ -114,6 +118,11 @@ where
 /// Runs up to `max_ledgers` of forward sync for one network. Returns the number
 /// of ledgers ingested this pass. Idempotent across restarts; a locked network
 /// (another worker active) yields `0` without touching Postgres.
+///
+/// `rpc` is optional: when present, Soroban invocations are enriched with the
+/// invocation detail (`getTransaction` → events/resource metrics); when absent
+/// (or on RPC failure) they fall back to the classic decode, so a down RPC
+/// never drops a row that Horizon already returned.
 pub async fn sync_network(
     client: &mut HorizonClient,
     pool: &PgPool,
@@ -121,6 +130,7 @@ pub async fn sync_network(
     network: &str,
     max_ledgers: u64,
     ttl_secs: u64,
+    mut rpc: Option<&mut SorobanRpcClient>,
 ) -> WorkerResult<u64> {
     // Exactly one writer owns this network.
     if !acquire_lock(redis, network, ttl_secs)
@@ -166,7 +176,9 @@ pub async fn sync_network(
             match client.fetch_transactions(ledger.sequence).await {
                 Ok(txs) => {
                     for tv in txs {
-                        if let Ok(tx) = decode_classic_tx(&tv, network) {
+                        if is_soroban_invocation(&tv) {
+                            enrich_soroban(pool, rpc.as_deref_mut(), network, &tv).await?;
+                        } else if let Ok(tx) = decode_classic_tx(&tv, network) {
                             upsert_tx(pool, &tx).await.map_err(internal)?;
                         }
                     }
@@ -190,4 +202,67 @@ pub async fn sync_network(
     }
 
     Ok(ingested)
+}
+
+/// Persist a Soroban invocation. With an RPC client the full invocation detail
+/// is fetched and decoded; without one (or when RPC is down / the hash is
+/// unknown to the node) the classic decode of the Horizon record is persisted,
+/// so the row is never lost.
+async fn enrich_soroban(
+    pool: &PgPool,
+    rpc: Option<&mut SorobanRpcClient>,
+    network: &str,
+    tv: &Value,
+) -> WorkerResult<()> {
+    let Some(rpc) = rpc else {
+        if let Ok(tx) = decode_classic_tx(tv, network) {
+            upsert_tx(pool, &tx).await.map_err(internal)?;
+        }
+        return Ok(());
+    };
+
+    let hash = tv.get("hash").and_then(Value::as_str).unwrap_or("");
+    // The enriched row is authoritative when RPC returns decodable detail; the
+    // classic row is only the fallback when that path can't produce one
+    // (protocol drift, RPC down, or hash unknown to the node).
+    let enriched = match rpc.get_transaction(hash).await {
+        Ok(detail) => decode_invoke_detail(&detail, network).ok(),
+        Err(_) => None,
+    };
+    match enriched {
+        Some(tx) => {
+            upsert_tx(pool, &tx).await.map_err(internal)?;
+        }
+        None => {
+            if let Ok(tx) = decode_classic_tx(tv, network) {
+                upsert_tx(pool, &tx).await.map_err(internal)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Capture live ledger entries for the requested keys via RPC
+/// `getLedgerEntries` and persist them as entity snapshots (idempotent by
+/// `(network, entry_key)`). Used for the fork-core baseline and lazy profile
+/// enrichment. Returns the number of snapshots persisted.
+///
+/// **Guard:** this is the *only* producer of `entity_snapshots`. It accepts
+/// explicit keys — it never enumerates ledgers or transactions, so block/tx
+/// discovery stays on Horizon/`getTransaction`.
+pub async fn snapshot_entities(
+    rpc: &mut SorobanRpcClient,
+    pool: &PgPool,
+    network: &str,
+    keys: &[&str],
+) -> WorkerResult<usize> {
+    let raw = match rpc.get_ledger_entries(keys).await {
+        Ok(raw) => raw,
+        Err(FetchError::CircuitOpen) | Err(FetchError::Exhausted) => return Ok(0),
+        Err(FetchError::NonRetryable) => return Ok(0),
+    };
+    let snapshots = decode_ledger_entries(&raw, network).map_err(Error::internal)?;
+    upsert_snapshots(pool, network, None, &snapshots)
+        .await
+        .map_err(internal)
 }

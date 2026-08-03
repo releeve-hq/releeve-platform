@@ -34,6 +34,56 @@ pub struct Settings {
     pub oauth_google_client_secret: String,
 }
 
+/// Runtime configuration for the `releeve-ingest` daemon (Phase 2).
+///
+/// Unlike the API settings there is no single required var: everything
+/// defaults to a dev/test-local value so a fresh checkout works out of the
+/// box, and the daemon refuses to start only when pointed at a database URL it
+/// cannot reach.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IngestSettings {
+    pub database_url: String,
+    pub redis_url: String,
+    pub log_filter: String,
+    /// The network label stamped on ingested rows (testnet/pubnet/futurenet).
+    pub network: String,
+    /// Horizon base URL for ledgers + classic transactions.
+    pub horizon_url: String,
+    /// Soroban-RPC base URL for invocation detail + entity snapshots.
+    pub rpc_url: String,
+    /// External USD price source base URL (token feed). Optional: when empty,
+    /// price refresh is skipped and USD figures stay `NULL`.
+    pub price_feed_url: String,
+    /// Seconds between sync passes.
+    pub sync_interval_secs: u64,
+    /// Seconds between rollup + price-refresh passes.
+    pub rollup_interval_secs: u64,
+    /// Max ledgers ingested per sync pass (bounds a single pass's work).
+    pub max_ledgers_per_pass: u64,
+    /// Worker-lock TTL in seconds; re-acquired every pass.
+    pub lock_ttl_secs: u64,
+}
+
+impl IngestSettings {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        Config::builder()
+            .set_default("database_url", "")?
+            .set_default("redis_url", "redis://127.0.0.1:6379")?
+            .set_default("log_filter", "info,ingest=debug")?
+            .set_default("network", "testnet")?
+            .set_default("horizon_url", "https://horizon-testnet.stellar.org")?
+            .set_default("rpc_url", "https://soroban-testnet.stellar.org")?
+            .set_default("price_feed_url", "")?
+            .set_default("sync_interval_secs", 10)?
+            .set_default("rollup_interval_secs", 300)?
+            .set_default("max_ledgers_per_pass", 50)?
+            .set_default("lock_ttl_secs", 120)?
+            .add_source(Environment::with_prefix("INGEST"))
+            .build()?
+            .try_deserialize()
+    }
+}
+
 impl Settings {
     /// Build settings from the process environment.
     ///
@@ -127,5 +177,26 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_env("DATABASE_URL");
         assert!(Settings::from_env().is_err(), "DATABASE_URL is required");
+    }
+
+    #[test]
+    fn ingest_settings_apply_env_and_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_env("DATABASE_URL");
+        clear_env("INGEST_HORIZON_URL");
+        set_env("INGEST_NETWORK", "pubnet");
+        set_env("INGEST_MAX_LEDGERS_PER_PASS", "5");
+        set_env("INGEST_PRICE_FEED_URL", "https://prices.example.test");
+
+        let s = IngestSettings::from_env().expect("parses with defaults");
+        assert_eq!(s.database_url, "", "no required var");
+        assert_eq!(s.network, "pubnet");
+        assert_eq!(s.max_ledgers_per_pass, 5);
+        assert_eq!(
+            s.horizon_url, "https://horizon-testnet.stellar.org",
+            "default horizon"
+        );
+        assert_eq!(s.price_feed_url, "https://prices.example.test");
+        assert_eq!(s.lock_ttl_secs, 120, "default lock ttl");
     }
 }

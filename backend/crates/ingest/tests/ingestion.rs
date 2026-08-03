@@ -364,3 +364,130 @@ async fn rollup_null_usd_when_no_price_and_numeric_math() {
         "missing price => NULL usd_volume, never an error"
     );
 }
+
+#[tokio::test]
+async fn http_price_feed_refreshes_token_prices() {
+    use ingest::prices::HttpPriceFeed;
+    use ingest::rollup::PriceFeed;
+    use wiremock::matchers::{method, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let pg = spawn_postgres().await;
+    run_migrations(&pg.pool).await;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(query_param("assets", "XLM,USDC:GX"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "prices": {
+                "XLM": "0.12",
+                "USDC:GX": "1.0",
+                "UNKNOWN": null
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let feed = HttpPriceFeed::new(server.uri());
+    let quotes = feed
+        .refresh(&pg.pool, "testnet", &["XLM", "USDC:GX"])
+        .await
+        .unwrap();
+    assert_eq!(quotes.len(), 2, "only valid quotes returned");
+
+    let price: String = sqlx::query_scalar(
+        "SELECT price_usd::text FROM token_prices WHERE network='testnet' AND asset='XLM'",
+    )
+    .fetch_one(&pg.pool)
+    .await
+    .unwrap();
+    assert_eq!(price.parse::<f64>().unwrap(), 0.12);
+}
+
+#[tokio::test]
+async fn redis_flush_falls_back_to_postgres_and_repopulates() {
+    use ingest::feeds::{cached_feed, feed_key};
+    use redis::AsyncCommands;
+
+    let pg = spawn_postgres().await;
+    run_migrations(&pg.pool).await;
+    let redis = spawn_redis().await;
+    let mut conn = redis::Client::open(redis.url.clone())
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+
+    // Seed one ledger and two transactions through the real persistence path.
+    upsert_ledger(&pg.pool, &ledger(500, "testnet"))
+        .await
+        .unwrap();
+    let mut t1 = classic_tx("feed-1", 500, "testnet");
+    t1.timestamp = Utc.timestamp_opt(1_700_000_100, 0).unwrap();
+    let mut t2 = classic_tx("feed-2", 500, "testnet");
+    t2.timestamp = Utc.timestamp_opt(1_700_000_200, 0).unwrap();
+    upsert_tx(&pg.pool, &t1).await.unwrap();
+    upsert_tx(&pg.pool, &t2).await.unwrap();
+
+    let key = feed_key("testnet", "transactions", "");
+
+    // First read: cache miss → Postgres → populated cache.
+    let first = cached_feed(&mut conn, &key, 60, feed_rows(&pg.pool))
+        .await
+        .unwrap();
+    assert_eq!(
+        first.as_array().unwrap().len(),
+        2,
+        "miss served from Postgres"
+    );
+    let cached: Option<String> = conn.get(&key).await.unwrap();
+    assert!(cached.is_some(), "cache populated on the miss");
+
+    // Redis flushed mid-flight: the feed must still be served from Postgres
+    // (correctness over speed), then repopulate on the same read.
+    redis::cmd("FLUSHALL")
+        .query_async::<()>(&mut conn)
+        .await
+        .unwrap();
+    let second = cached_feed(&mut conn, &key, 60, feed_rows(&pg.pool))
+        .await
+        .unwrap();
+    assert_eq!(
+        second.as_array().unwrap().len(),
+        2,
+        "flush degrades to Postgres, never an empty/error response"
+    );
+    let repopulated: Option<String> = conn.get(&key).await.unwrap();
+    assert!(repopulated.is_some(), "cache repopulated after the flush");
+}
+
+/// The feed query the cache builds on a miss, as a fresh future per call.
+async fn feed_rows(pool: &PgPool) -> Result<Vec<serde_json::Value>, sqlx::Error> {
+    use ingest::feeds::{Dir, latest_transactions};
+    latest_transactions(pool, "testnet", 20, None, Dir::Next)
+        .await
+        .map(|p| p.data)
+}
+
+#[tokio::test]
+async fn http_price_feed_down_degrades_without_error() {
+    use ingest::prices::HttpPriceFeed;
+    use ingest::rollup::PriceFeed;
+    use wiremock::MockServer;
+
+    let pg = spawn_postgres().await;
+    run_migrations(&pg.pool).await;
+
+    // A wiremock that never matches: every GET is a 404. The adapter must
+    // surface a PriceError (which the scheduler treats as "refresh skipped"),
+    // not panic, and never half-write the DB.
+    let server = MockServer::start().await;
+    let feed = HttpPriceFeed::new(server.uri());
+    let err = feed.refresh(&pg.pool, "testnet", &["XLM"]).await;
+    assert!(err.is_err(), "down upstream is a PriceError, not a panic");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM token_prices")
+        .fetch_one(&pg.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "no rows written when the refresh failed");
+}

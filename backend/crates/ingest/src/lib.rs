@@ -5,11 +5,14 @@
 //! for the public explorer endpoints.
 
 pub mod asset;
+pub mod daemon;
 pub mod decode;
 pub mod feeds;
 pub mod models;
+pub mod prices;
 pub mod ratelimit;
 pub mod rollup;
+pub mod rpc;
 pub mod state;
 pub mod sync;
 pub mod upstream;
