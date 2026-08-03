@@ -104,3 +104,32 @@ pub struct FundFlowEdge {
     pub asset: String,
     pub amount: String,
 }
+
+/// A single live ledger entry returned by Soroban-RPC `getLedgerEntries`.
+///
+/// **Source-of-truth rule:** `getLedgerEntries` returns *specific* ledger
+/// entries (accounts/contracts/trustlines) — it never enumerates ledgers or
+/// transactions. The decoder therefore maps each entry to an entity snapshot
+/// and *never* to a block/transaction record. Used for fork-core snapshots and
+/// lazy profile enrichment only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EntitySnapshot {
+    pub network: String,
+    pub entry_type: String,
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+/// The Soroban-RPC `getLedgerEntries` response, sparse on purpose.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LedgerEntriesResponse {
+    pub entries: Vec<LedgerEntry>,
+    pub latest_ledger: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LedgerEntry {
+    pub key: String,
+    pub xdr: String,
+    pub last_modified_ledger_seq: Option<i64>,
+}

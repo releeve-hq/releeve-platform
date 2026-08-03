@@ -12,7 +12,9 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::asset::classic_asset;
-use crate::models::{FundFlowEdge, LedgerRecord, ResourceMetrics, TxRecord, TxStatus};
+use crate::models::{
+    EntitySnapshot, FundFlowEdge, LedgerRecord, ResourceMetrics, TxRecord, TxStatus,
+};
 
 /// A decoding failure: a missing field or protocol schema drift. Kept distinct
 /// from `shared::Error` because the caller surfaces it loudly in logs/health.
@@ -268,6 +270,41 @@ pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// getLedgerEntries — entity snapshots ONLY
+// ---------------------------------------------------------------------------
+
+/// Decode a Soroban-RPC `getLedgerEntries` response into entity snapshots.
+///
+/// **Guard:** this path yields [`EntitySnapshot`]s, never ledger/transaction
+/// records. `getLedgerEntries` returns *specific* entries (accounts, contracts,
+/// trustlines) and must not be the source of block or transaction discovery —
+/// that stays on Horizon / `getTransaction`. Callers that need heads read
+/// `latest_ledger` here only as a hint.
+pub fn decode_ledger_entries(v: &Value, network: &str) -> DecodeResult<Vec<EntitySnapshot>> {
+    let entries = v
+        .get("result")
+        .and_then(|r| r.get("entries"))
+        .and_then(Value::as_array)
+        .ok_or(DecodeError::MissingRpcField("result.entries"))?;
+
+    let mut out = Vec::with_capacity(entries.len());
+    for e in entries {
+        let key = e
+            .get("key")
+            .and_then(Value::as_str)
+            .ok_or(DecodeError::MissingRpcField("entry.key"))?
+            .to_string();
+        out.push(EntitySnapshot {
+            network: network.to_string(),
+            entry_type: "ledger_entry".to_string(),
+            key: key.clone(),
+            value: e.get("xdr").cloned().unwrap_or(Value::Null),
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,5 +435,37 @@ mod tests {
     fn drift_shape_fails_loudly() {
         let v = json(r#"{"diagnosticEvents": "not-an-array"}"#);
         assert_eq!(event_shape(&v), EventShape::Invalid);
+    }
+
+    #[test]
+    fn get_ledger_entries_decodes_to_entity_snapshots() {
+        let v = json(
+            r#"{
+                "result": {
+                    "latestLedger": 42,
+                    "entries": [
+                        { "key": "account-ga", "xdr": "xxxx", "lastModifiedLedgerSeq": 41 },
+                        { "key": "account-gb", "xdr": "yyyy" }
+                    ]
+                }
+            }"#,
+        );
+        let snaps = decode_ledger_entries(&v, "testnet").unwrap();
+        assert_eq!(snaps.len(), 2);
+        assert_eq!(snaps[0].entry_type, "ledger_entry");
+        assert_eq!(snaps[0].network, "testnet");
+        assert_eq!(snaps[0].key, "account-ga");
+    }
+
+    #[test]
+    fn get_ledger_entries_is_never_tx_or_block_discovery() {
+        // Guard test: an entries-shaped payload produces only EntitySnapshot.
+        // Probe the exact function type: it can only ever return entity
+        // snapshots, never a LedgerRecord/TxRecord, so block/transaction
+        // discovery cannot be routed through getLedgerEntries.
+        let probe: fn(&Value, &str) -> DecodeResult<Vec<EntitySnapshot>> = decode_ledger_entries;
+        let v = json(r#"{"result": {"entries": [{ "key": "c1", "xdr": "zz" }]}}"#);
+        let snaps = probe(&v, "net").unwrap();
+        assert_eq!(snaps.len(), 1);
     }
 }
