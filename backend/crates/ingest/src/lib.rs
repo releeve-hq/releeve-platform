@@ -6,6 +6,7 @@
 
 pub mod asset;
 pub mod decode;
+pub mod feeds;
 pub mod models;
 pub mod rollup;
 pub mod state;
