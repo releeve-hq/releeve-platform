@@ -8,6 +8,7 @@ pub mod asset;
 pub mod decode;
 pub mod feeds;
 pub mod models;
+pub mod ratelimit;
 pub mod rollup;
 pub mod state;
 pub mod sync;

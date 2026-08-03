@@ -55,6 +55,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "hex",
+ "ingest",
  "jsonwebtoken",
  "lettre",
  "rand 0.8.7",

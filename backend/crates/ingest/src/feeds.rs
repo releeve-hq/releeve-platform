@@ -266,6 +266,98 @@ fn row_json(r: &PgRow) -> Value {
     r.try_get::<Value, _>("json").unwrap_or(Value::Null)
 }
 
+/// Top tokens by rolling volume for a window, ordered by `volume` descending,
+/// keyset-paginated on `(volume, asset)`.
+pub async fn top_tokens(
+    pool: &PgPool,
+    network: &str,
+    window: Window,
+    limit: i64,
+    cursor: Option<Cursor>,
+) -> Result<Page, sqlx::Error> {
+    let predicate = match &cursor {
+        Some(c) => format!("(volume, asset) < ({}, '{}')", c.sort, c.tie),
+        None => String::new(),
+    };
+    let q = format!(
+        r#"
+        SELECT jsonb_build_object(
+            'asset', asset, 'volume', volume, 'usd_volume', usd_volume,
+            'tx_count', tx_count, 'active_accounts', active_accounts,
+            '_sort', volume, '_tie', asset
+        ) AS json
+        FROM token_volume_stats
+        WHERE network = $1
+          AND window_seconds = $2
+          AND window_start = (
+              SELECT max(window_start) FROM token_volume_stats
+              WHERE network = $1 AND window_seconds = $2
+          )
+          AND {predicate}
+        ORDER BY volume DESC, asset DESC
+        LIMIT $3
+        "#
+    );
+    let rows = sqlx::query(&q)
+        .bind(network)
+        .bind(window.as_seconds())
+        .bind(limit + 1)
+        .fetch_all(pool)
+        .await?;
+    let rows: Vec<Value> = rows.iter().map(row_json).collect();
+    Ok(make_page(&rows, limit, cursor.is_some()))
+}
+
+/// Token-transfer feed: fund-flow edges (joined to their transactions) filtered
+/// by an optional `asset` and a trailing `window`, newest-first, keyset-paginated.
+pub async fn transfers(
+    pool: &PgPool,
+    network: &str,
+    asset: Option<&str>,
+    window: Window,
+    limit: i64,
+    cursor: Option<Cursor>,
+) -> Result<Page, sqlx::Error> {
+    let ts_pred = match &cursor {
+        Some(_) => {
+            "AND (extract(epoch from t.timestamp)::bigint * 1000, e.tx_hash) < ($4, $5)".to_owned()
+        }
+        None => String::new(),
+    };
+    let asset_pred = asset.map(|_| "AND e.asset = $5").unwrap_or("");
+    let q = format!(
+        r#"
+        SELECT jsonb_build_object(
+            'tx_hash', e.tx_hash, 'from_address', e.from_address,
+            'to_address', e.to_address, 'asset', e.asset, 'amount', e.amount,
+            'timestamp', t.timestamp,
+            '_sort', (extract(epoch from t.timestamp)::bigint * 1000), '_tie', e.tx_hash
+        ) AS json
+        FROM tx_fund_flow_edges e
+        JOIN transactions t ON t.hash = e.tx_hash
+        WHERE t.network = $1
+          AND t.timestamp >= now() - ($3::bigint * interval '1 second')
+          {asset_pred}
+          {ts_pred}
+        ORDER BY t.timestamp DESC, e.tx_hash DESC
+        LIMIT $5
+        "#
+    );
+
+    let navigated = cursor.is_some();
+    let mut b = sqlx::query(&q).bind(network).bind(window.as_seconds());
+    if let Some(a) = asset {
+        b = b.bind(a);
+    }
+    if let Some(c) = cursor {
+        let ts = DateTime::from_timestamp_millis(c.sort).unwrap();
+        b = b.bind(ts).bind(c.tie);
+    }
+    let rows = b.bind(limit + 1).fetch_all(pool).await?;
+    let rows: Vec<Value> = rows.iter().map(row_json).collect();
+    Ok(make_page(&rows, limit, navigated))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
