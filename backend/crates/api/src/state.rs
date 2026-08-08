@@ -18,4 +18,5 @@ pub struct AppState {
     pub jwt: JwtIssuer,
     pub mailer: Arc<dyn Mailer>,
     pub oauth: OAuthClients,
+    pub fork_core: Option<sim::ForkCoreClient>,
 }

@@ -5,6 +5,9 @@ target
 node_modules
 .next
 out
+frontend/.auth
+frontend/test-results
+frontend/playwright-report
 
 # Environment
 .env
@@ -12,5 +15,6 @@ out
 
 # Misc
 *.local
+*.log
 .DS_Store
 Thumbs.db

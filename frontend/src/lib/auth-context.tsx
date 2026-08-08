@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { api, ApiError } from './api';
+import { api, ApiError, clearTokenPair, storeTokenPair } from './api';
 
 export interface User {
   id: string;
@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearError = useCallback(() => setError(null), []);
 
   const loadUser = useCallback(async () => {
-    const userData = await api.get<any>('/api/v1/users/me');
+    const userData = await api.get<any>('/api/v1/me');
     const normalized: User = {
       id: userData.id,
       email: userData.email,
@@ -79,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await loadUser();
       } catch (err: any) {
         if (err instanceof ApiError && err.status === 401) {
-          localStorage.removeItem('access_token');
+          clearTokenPair();
           setAccessToken(null);
         }
       } finally {
@@ -92,12 +92,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string) => {
     setError(null);
     try {
-      const data = await api.post<{ access_token: string; user_id: string }>(
+      const data = await api.post<{ access_token: string; refresh_token: string }>(
         '/api/v1/auth/login',
         { email, password },
         { skipAuth: true }
       );
-      localStorage.setItem('access_token', data.access_token);
+      storeTokenPair(data.access_token, data.refresh_token);
       setAccessToken(data.access_token);
       await loadUser();
     } catch (err) {
@@ -126,11 +126,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
-      await api.post('/api/v1/auth/logout', undefined, { skipAuth: true });
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (refreshToken) {
+        await api.post('/api/v1/auth/logout', { refresh_token: refreshToken }, { skipAuth: true });
+      }
     } catch {
       // Ignore errors on logout
     }
-    localStorage.removeItem('access_token');
+    clearTokenPair();
     setAccessToken(null);
     setUser(null);
   };

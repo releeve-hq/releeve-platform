@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:e2e": "playwright test",
+    "pw:install": "playwright install chromium",
+    "tenderly:auth": "playwright codegen --browser=chromium --save-storage=.auth/tenderly.json https://dashboard.tenderly.co/",
+    "tenderly:open": "playwright open --browser=chromium --load-storage=.auth/tenderly.json https://dashboard.tenderly.co/",
+    "tenderly:chrome": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/open-chrome-remote.ps1",
+    "tenderly:cdp": "node ./scripts/connect-tenderly-cdp.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.43.0",
@@ -17,6 +23,7 @@
     "recharts": "^2.15.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.1.4",
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.12",

@@ -2,8 +2,10 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::response::Redirect;
 use serde::{Deserialize, Serialize};
 use shared::Error;
+use url::Url;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -50,12 +52,13 @@ pub async fn start(
     Json(req): Json<StartRequest>,
 ) -> Result<Json<StartResponse>, Error> {
     let provider = OAuthProvider::parse(&provider)?;
+    let redirect_uri = permitted_redirect_uri(&state, &req.redirect_uri)?;
     let state_raw = crate::tokens::generate_use_token();
 
     // Store the CSRF state + redirect target briefly (Redis; advisory).
-    store_oauth_state(&state, &state_raw, &req.redirect_uri).await?;
+    store_oauth_state(&state, &state_raw, redirect_uri.as_str()).await?;
 
-    let auth_url = state.oauth.auth_url(provider, &state_raw);
+    let auth_url = state.oauth.auth_url(provider, &state_raw)?;
     Ok(Json(StartResponse {
         auth_url,
         state: state_raw,
@@ -79,7 +82,7 @@ pub struct CallbackParams {
         ("state" = String, Query, description = "CSRF state issued by start"),
     ),
     responses(
-        (status = 200, description = "Authenticated pair (new account or linked)", body = crate::auth::PairResponse),
+        (status = 302, description = "Redirects to the approved frontend callback"),
         (status = 400, description = "Missing/invalid CSRF state"),
         (status = 502, description = "Provider token/userinfo exchange failed"),
         (status = 409, description = "Already linked to another account"),
@@ -89,7 +92,7 @@ pub async fn callback(
     State(state): State<AppState>,
     Path(provider): Path<String>,
     Query(params): Query<CallbackParams>,
-) -> Result<Json<serde_json::Value>, Error> {
+) -> Result<Redirect, Error> {
     let provider = OAuthProvider::parse(&provider)?;
 
     // 1. Verify CSRF `state`; recover the saved redirect target (single-use).
@@ -106,12 +109,25 @@ pub async fn callback(
     // 4. Issue the same token pair as login.
     let pair = issue_pair(&state, user_id, None, None).await?;
 
-    Ok(Json(serde_json::json!({
-        "redirect_uri": redirect_uri,
-        "access_token": pair.access_token,
-        "refresh_token": pair.refresh_token,
-        "user_id": user_id,
-    })))
+    let mut callback = Url::parse(&redirect_uri)
+        .map_err(|_| Error::BadRequest("invalid OAuth redirect URI".into()))?;
+    let mut fragment = url::form_urlencoded::Serializer::new(String::new());
+    fragment.append_pair("access_token", &pair.access_token);
+    fragment.append_pair("refresh_token", &pair.refresh_token);
+    callback.set_fragment(Some(&fragment.finish()));
+    Ok(Redirect::to(callback.as_str()))
+}
+
+fn permitted_redirect_uri(state: &AppState, raw: &str) -> Result<Url, Error> {
+    let base = state.settings.app_base_url.trim_end_matches('/');
+    let expected = Url::parse(&format!("{base}/auth/callback"))
+        .map_err(|_| Error::BadRequest("invalid APP_BASE_URL".into()))?;
+    let candidate =
+        Url::parse(raw).map_err(|_| Error::BadRequest("invalid OAuth redirect URI".into()))?;
+    if candidate != expected {
+        return Err(Error::BadRequest("unapproved OAuth redirect URI".into()));
+    }
+    Ok(expected)
 }
 
 async fn store_oauth_state(

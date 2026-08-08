@@ -3,39 +3,36 @@
 import { Suspense } from 'react';
 import { useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { AuthStatusFrame } from '@/components/auth/auth-status-frame';
+import { storeTokenPair } from '@/lib/api';
+import '../../auth.css';
 
 function CallbackContent() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const accessToken = searchParams.get('accessToken');
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const accessToken = fragment.get('access_token') ?? searchParams.get('accessToken');
+    const refreshToken = fragment.get('refresh_token');
     if (accessToken) {
-      localStorage.setItem('access_token', accessToken);
-      // Full page reload so AuthProvider re-initializes with the token
-      window.location.href = '/dashboard';
+      storeTokenPair(accessToken, refreshToken ?? undefined);
+      window.location.replace('/onboarding');
     } else {
-      setTimeout(() => { window.location.href = '/signin'; }, 2000);
+      setTimeout(() => { window.location.replace('/signin'); }, 2000);
     }
   }, [searchParams]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-      <div className="spinner" />
-      <p style={{ color: '#71717a', fontSize: 14 }}>Signing you in...</p>
-    </div>
+    <AuthStatusFrame title="Signing you in." description="Completing your secure sign-in and opening your workspace.">
+      <div className="auth-spinner" aria-label="Signing you in" />
+    </AuthStatusFrame>
   );
 }
 
 export default function AuthCallbackPage() {
   return (
-    <div className="auth-container">
-      <div className="form-panel" style={{ gridColumn: '1 / -1' }}>
-        <div className="auth-card" style={{ textAlign: 'center', paddingTop: 80 }}>
-          <Suspense fallback={<div className="spinner" />}>
-            <CallbackContent />
-          </Suspense>
-        </div>
-      </div>
-    </div>
+    <Suspense fallback={<AuthStatusFrame title="Signing you in." description="Completing your secure sign-in and opening your workspace."><div className="auth-spinner" aria-label="Signing you in" /></AuthStatusFrame>}>
+      <CallbackContent />
+    </Suspense>
   );
 }

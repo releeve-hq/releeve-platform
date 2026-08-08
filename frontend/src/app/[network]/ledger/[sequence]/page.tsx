@@ -1,4 +1,4 @@
-import { LedgerDetailView } from "@/components/explorer/detail-views";
+import { redirect } from 'next/navigation';
 
 export default async function LedgerPage({
   params,
@@ -6,5 +6,5 @@ export default async function LedgerPage({
   params: Promise<{ network: string; sequence: string }>;
 }) {
   const { network, sequence } = await params;
-  return <LedgerDetailView network={network} sequence={decodeURIComponent(sequence)} />;
+  redirect(`/explorer/${encodeURIComponent(network)}/ledger/${encodeURIComponent(sequence)}`);
 }

@@ -17,8 +17,8 @@ use sqlx::Row;
 use sqlx::postgres::{PgPool, PgRow};
 
 /// Allowed page sizes (API doc §Pagination): 20 / 50 / 100.
-pub const ALLOWED_LIMITS: &[i64] = &[20, 50, 100];
-pub const DEFAULT_LIMIT: i64 = 20;
+pub const ALLOWED_LIMITS: &[i64] = &[10, 20, 50, 100];
+pub const DEFAULT_LIMIT: i64 = 10;
 
 /// Feed TTLs (DB doc §11): ledgers/transactions refresh fast, rankings slower.
 pub const FEED_TTL_SECS: u64 = 10;
@@ -51,7 +51,7 @@ impl Window {
     }
 }
 
-/// Clamp `limit` to the nearest allowed value (`20|50|100`).
+/// Clamp `limit` to a supported Explorer page size (`10|20|50|100`).
 pub fn clamp_limit(limit: Option<i64>) -> i64 {
     match limit {
         Some(v) if ALLOWED_LIMITS.contains(&v) => v,
@@ -373,11 +373,12 @@ mod tests {
 
     #[test]
     fn clamp_limit_maps_to_allowed() {
-        assert_eq!(clamp_limit(None), 20);
+        assert_eq!(clamp_limit(None), 10);
+        assert_eq!(clamp_limit(Some(10)), 10);
         assert_eq!(clamp_limit(Some(50)), 50);
         assert_eq!(clamp_limit(Some(100)), 100);
-        assert_eq!(clamp_limit(Some(7)), 20);
-        assert_eq!(clamp_limit(Some(300)), 20);
+        assert_eq!(clamp_limit(Some(7)), 10);
+        assert_eq!(clamp_limit(Some(300)), 10);
     }
 
     #[test]

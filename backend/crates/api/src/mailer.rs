@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use lettre::address::AddressError;
-use lettre::message::header::ContentType;
+use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use shared::Error;
@@ -166,7 +166,7 @@ impl Mailer for SmtpMailer {
 }
 
 fn validate_address(addr: &str) -> std::result::Result<(), AddressError> {
-    addr.parse::<lettre::Address>().map(|_| ())
+    addr.parse::<Mailbox>().map(|_| ())
 }
 
 #[cfg(test)]
@@ -196,5 +196,10 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn accepts_a_display_name_mailbox() {
+        assert!(validate_address("Releeve <no-reply@releeve.dev>").is_ok());
     }
 }

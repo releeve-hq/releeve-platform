@@ -8,7 +8,7 @@ import AppShell from '@/components/layout/app-shell';
 const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'];
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
-const LANDING_ROUTES = ['/bounties', '/jobs', '/about'];
+const LANDING_ROUTES = ['/bounties', '/jobs', '/about', '/terms', '/privacy'];
 const EXPLORER_ENTITY_ROUTES = new Set(['ledger', 'tx', 'account', 'contract']);
 
 function isAuthRoute(pathname: string): boolean {
@@ -26,6 +26,7 @@ function isPublicRoute(pathname: string): boolean {
 }
 
 function isExplorerRoute(pathname: string): boolean {
+  if (pathname === '/explorer' || pathname.startsWith('/explorer/')) return true;
   const [, , entity, id] = pathname.split('/');
   return Boolean(entity && id && EXPLORER_ENTITY_ROUTES.has(entity));
 }
@@ -37,13 +38,22 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
 
   useEffect(() => {
     if (isLoading) return;
-    if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) return;
+    if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+      if (!isAuthenticated) router.replace('/signin?next=/dashboard');
+      return;
+    }
     if (!isAuthRoute(pathname) && !isPublicRoute(pathname) && !isExplorerRoute(pathname) && !isAuthenticated) {
       router.push('/signin');
     }
   }, [isLoading, isAuthenticated, pathname, router]);
 
   if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+    if (isLoading || !isAuthenticated) return null;
+    return <>{children}</>;
+  }
+
+  if (pathname === '/onboarding') {
+    if (isLoading || !isAuthenticated) return null;
     return <>{children}</>;
   }
 

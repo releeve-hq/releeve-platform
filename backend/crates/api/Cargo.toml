@@ -12,6 +12,7 @@ tower-http = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+url = { workspace = true }
 sqlx = { workspace = true }
 redis = { workspace = true }
 uuid = { workspace = true }
@@ -32,6 +33,7 @@ dotenvy = { workspace = true }
 shared = { path = "../shared" }
 ingest = { path = "../ingest" }
 alerts = { path = "../alerts" }
+sim = { path = "../sim" }
 
 [dev-dependencies]
 test-support = { path = "../test-support" }

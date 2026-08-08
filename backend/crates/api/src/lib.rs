@@ -19,11 +19,19 @@ pub mod monitoring;
 pub mod oauth;
 pub mod orgs;
 pub mod password;
+pub mod simulations;
 pub mod state;
 pub mod tokens;
 
-use axum::Router;
 use axum::routing::{delete, get, patch, post};
+use axum::{
+    Router,
+    http::{
+        HeaderValue, Method,
+        header::{AUTHORIZATION, CONTENT_TYPE},
+    },
+};
+use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
 use utoipa::openapi::path::Operation;
 use utoipa::openapi::response::Response;
@@ -39,6 +47,7 @@ use crate::explorer_detail::*;
 use crate::health::{__path_health_check, HealthChecks, HealthResponse, health_check};
 use crate::monitoring::*;
 use crate::orgs::*;
+use crate::simulations::*;
 use crate::state::AppState;
 
 /// Defines the `AuthorizationBearer` HTTP bearer security scheme on the spec.
@@ -350,6 +359,20 @@ pub struct ApiDoc;
 
 /// Build the application router. Owns no state; callers supply it.
 pub fn app(state: AppState) -> Router {
+    let allowed_origin = HeaderValue::from_str(&state.settings.app_base_url)
+        .expect("APP_BASE_URL must be a valid HTTP origin");
+    let cors = CorsLayer::new()
+        .allow_origin(allowed_origin)
+        .allow_credentials(true)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ])
+        .allow_headers([AUTHORIZATION, CONTENT_TYPE]);
+
     Router::new()
         .route("/health", get(health_check))
         .route(
@@ -480,6 +503,14 @@ pub fn app(state: AppState) -> Router {
             get(alert_history),
         )
         .route(
+            "/api/v1/{org}/{project}/simulations",
+            get(list_simulations).post(create_simulation),
+        )
+        .route(
+            "/api/v1/{org}/{project}/simulations/{simulation_id}",
+            get(get_simulation).delete(cancel_simulation),
+        )
+        .route(
             "/api/v1/{org}/{project}/transactions/{hash}/comments",
             post(add_comment),
         )
@@ -552,5 +583,6 @@ pub fn app(state: AppState) -> Router {
             delete(detach_tag),
         )
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .layer(cors)
         .with_state(state)
 }

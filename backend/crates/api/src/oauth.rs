@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use shared::{Error, Settings};
+use url::Url;
 
 /// Supported OAuth providers. `parse` returns `BadRequest` for anything else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +61,7 @@ pub struct OAuthClients {
     google_client_id: String,
     google_client_secret: String,
     google_auth_base: String,
+    google_token_base: String,
     google_userinfo_url: String,
 }
 
@@ -67,14 +69,15 @@ impl OAuthClients {
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
             client: reqwest::Client::new(),
-            callback_base: "http://127.0.0.1:8080".to_string(),
+            callback_base: settings.oauth_callback_base.clone(),
             github_client_id: settings.oauth_github_client_id.clone(),
             github_client_secret: settings.oauth_github_client_secret.clone(),
             github_base: "https://github.com".to_string(),
             github_api_base: "https://api.github.com".to_string(),
             google_client_id: settings.oauth_google_client_id.clone(),
             google_client_secret: settings.oauth_google_client_secret.clone(),
-            google_auth_base: "https://oauth2.googleapis.com".to_string(),
+            google_auth_base: "https://accounts.google.com".to_string(),
+            google_token_base: "https://oauth2.googleapis.com".to_string(),
             google_userinfo_url: "https://openidconnect.googleapis.com/v1/userinfo".to_string(),
         }
     }
@@ -100,27 +103,81 @@ impl OAuthClients {
             oauth_github_client_secret: "gh-secret".into(),
             oauth_google_client_id: "g-id".into(),
             oauth_google_client_secret: "g-secret".into(),
+            oauth_callback_base: "http://127.0.0.1:8080".into(),
             soroban_rpc_url: String::new(),
+            fork_core_url: String::new(),
+            fork_core_signing_key_file: String::new(),
+            fork_core_signing_kid: "test".into(),
+            fork_core_issuer: "releeve-platform".into(),
+            fork_core_audience: "fork-core".into(),
         });
         o.callback_base = callback_base.to_string();
         o.github_base = provider_base.to_string();
         o.github_api_base = provider_base.to_string();
         o.google_auth_base = provider_base.to_string();
+        o.google_token_base = provider_base.to_string();
         o.google_userinfo_url = format!("{provider_base}/userinfo");
         o
     }
 
-    pub fn auth_url(&self, provider: OAuthProvider, state: &str) -> String {
+    pub fn auth_url(&self, provider: OAuthProvider, state: &str) -> Result<String, Error> {
         match provider {
-            OAuthProvider::Github => format!(
-                "{}/login/oauth/authorize?client_id={}&redirect_uri={}/api/v1/auth/oauth/github/callback&scope=user:email&state={}",
-                self.github_base, self.github_client_id, self.callback_base, state
-            ),
-            OAuthProvider::Google => format!(
-                "{}/o/oauth2/v2/auth?client_id={}&redirect_uri={}/api/v1/auth/oauth/google/callback&response_type=code&scope=openid%20email%20profile&state={}",
-                self.google_auth_base, self.google_client_id, self.callback_base, state
-            ),
+            OAuthProvider::Github => {
+                self.ensure_configured(provider)?;
+                let mut url = Url::parse(&format!(
+                    "{}/login/oauth/authorize",
+                    self.github_base.trim_end_matches('/')
+                ))
+                .map_err(Error::internal)?;
+                url.query_pairs_mut()
+                    .append_pair("client_id", &self.github_client_id)
+                    .append_pair(
+                        "redirect_uri",
+                        &format!(
+                            "{}/api/v1/auth/oauth/github/callback",
+                            self.callback_base.trim_end_matches('/')
+                        ),
+                    )
+                    .append_pair("scope", "user:email")
+                    .append_pair("state", state);
+                Ok(url.to_string())
+            }
+            OAuthProvider::Google => {
+                self.ensure_configured(provider)?;
+                let mut url = Url::parse(&format!(
+                    "{}/o/oauth2/v2/auth",
+                    self.google_auth_base.trim_end_matches('/')
+                ))
+                .map_err(Error::internal)?;
+                url.query_pairs_mut()
+                    .append_pair("client_id", &self.google_client_id)
+                    .append_pair(
+                        "redirect_uri",
+                        &format!(
+                            "{}/api/v1/auth/oauth/google/callback",
+                            self.callback_base.trim_end_matches('/')
+                        ),
+                    )
+                    .append_pair("response_type", "code")
+                    .append_pair("scope", "openid email profile")
+                    .append_pair("state", state);
+                Ok(url.to_string())
+            }
         }
+    }
+
+    fn ensure_configured(&self, provider: OAuthProvider) -> Result<(), Error> {
+        let (client_id, client_secret) = match provider {
+            OAuthProvider::Github => (&self.github_client_id, &self.github_client_secret),
+            OAuthProvider::Google => (&self.google_client_id, &self.google_client_secret),
+        };
+        if client_id.trim().is_empty() || client_secret.trim().is_empty() {
+            return Err(Error::ServiceUnavailable(format!(
+                "oauth-{}",
+                provider.as_str()
+            )));
+        }
+        Ok(())
     }
 
     pub async fn exchange_code(
@@ -266,7 +323,7 @@ impl OAuthClients {
         ];
         let resp = self
             .client
-            .post(format!("{}/token", self.google_auth_base))
+            .post(format!("{}/token", self.google_token_base))
             .form(&params)
             .send()
             .await
@@ -320,4 +377,70 @@ struct GoogleUserinfo {
     email: Option<String>,
     name: Option<String>,
     picture: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings() -> Settings {
+        Settings {
+            bind_addr: "127.0.0.1:8080".into(),
+            database_url: String::new(),
+            redis_url: String::new(),
+            log_filter: "info".into(),
+            jwt_secret: "test".into(),
+            jwt_access_ttl: 900,
+            jwt_refresh_ttl: 2592000,
+            app_base_url: "http://localhost:3000".into(),
+            smtp_host: String::new(),
+            smtp_port: 587,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            smtp_from: String::new(),
+            oauth_github_client_id: "github-client".into(),
+            oauth_github_client_secret: "github-secret".into(),
+            oauth_google_client_id: "google-client".into(),
+            oauth_google_client_secret: "google-secret".into(),
+            oauth_callback_base: "http://localhost:8080".into(),
+            soroban_rpc_url: String::new(),
+            fork_core_url: String::new(),
+            fork_core_signing_key_file: String::new(),
+            fork_core_signing_kid: "test".into(),
+            fork_core_issuer: "releeve-platform".into(),
+            fork_core_audience: "fork-core".into(),
+        }
+    }
+
+    #[test]
+    fn google_authorize_url_uses_accounts_host_and_client_id() {
+        let clients = OAuthClients::from_settings(&settings());
+        let auth_url = clients
+            .auth_url(OAuthProvider::Google, "state value")
+            .expect("configured");
+        let parsed = Url::parse(&auth_url).unwrap();
+
+        assert_eq!(parsed.host_str(), Some("accounts.google.com"));
+        assert_eq!(parsed.path(), "/o/oauth2/v2/auth");
+        let params: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        assert_eq!(params.get("client_id").unwrap(), "google-client");
+        assert_eq!(
+            params.get("redirect_uri").unwrap(),
+            "http://localhost:8080/api/v1/auth/oauth/google/callback"
+        );
+        assert_eq!(params.get("scope").unwrap(), "openid email profile");
+    }
+
+    #[test]
+    fn missing_provider_credentials_do_not_emit_broken_redirect() {
+        let mut s = settings();
+        s.oauth_google_client_id.clear();
+        let clients = OAuthClients::from_settings(&s);
+
+        let err = clients
+            .auth_url(OAuthProvider::Google, "state")
+            .expect_err("missing config is rejected");
+        assert_eq!(err.status(), 503);
+        assert_eq!(err.code(), "service_unavailable");
+    }
 }

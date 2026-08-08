@@ -1,4 +1,4 @@
-import { TransactionDetailView } from "@/components/explorer/detail-views";
+import { redirect } from 'next/navigation';
 
 export default async function TransactionPage({
   params,
@@ -6,5 +6,5 @@ export default async function TransactionPage({
   params: Promise<{ network: string; hash: string }>;
 }) {
   const { network, hash } = await params;
-  return <TransactionDetailView network={network} hash={decodeURIComponent(hash)} />;
+  redirect(`/explorer/${encodeURIComponent(network)}/tx/${encodeURIComponent(hash)}`);
 }

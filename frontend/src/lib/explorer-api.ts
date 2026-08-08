@@ -80,9 +80,79 @@ export type ExplorerTxDetail = {
   source_map_status: string;
 };
 
+export type ExplorerLedgerDetail = {
+  sequence: number;
+  hash: string;
+  parent_hash?: string | null;
+  transaction_count?: number | null;
+  size_bytes?: number | null;
+  timestamp: string;
+  base_operation_fee?: string | null;
+  base_reserve?: string | null;
+  aggregate_resource_usage: {
+    total_cpu_instructions?: number | null;
+    resource_limit?: number | null;
+    percent_used?: number | null;
+  };
+};
+
+export type ExplorerAccountDetail = {
+  address: string;
+  network: string;
+  tracked: boolean;
+  xlm_balance?: string | null;
+  usd_value?: string | null;
+  token_holdings: Array<{ asset: string; balance?: string | null; usd_value?: string | null }>;
+};
+
+export type ExplorerContractDetail = {
+  address: string;
+  network: string;
+  tracked: boolean;
+  type: string;
+  current_wasm_hash?: string | null;
+  verification: { status: string; type?: string | null; timestamp?: string | null };
+  toolchain: {
+    rust_version?: string | null;
+    soroban_sdk_version?: string | null;
+    wasm_target?: string | null;
+    opt_level?: string | null;
+    wasm_opt_applied?: boolean | null;
+    debug_symbols_present: boolean;
+  };
+};
+
 export type ExplorerFetchResult<T> = {
   data: T | null;
   error: string | null;
+};
+
+export type ExplorerPage<T> = {
+  limit: number;
+  next_cursor: string | null;
+  prev_cursor: string | null;
+  data: T[];
+};
+
+export type ExplorerFeedTransaction = {
+  hash: string;
+  network: string;
+  ledger_sequence: number | null;
+  status: 'success' | 'failed' | string;
+  source_account: string;
+  operation_type: string;
+  timestamp: string;
+  fee_charged?: string | null;
+};
+
+export type ExplorerFeedLedger = {
+  sequence: number;
+  network: string;
+  hash: string;
+  transaction_count: number | null;
+  timestamp: string;
+  total_cpu_instructions?: number | null;
+  resource_limit?: number | null;
 };
 
 async function publicExplorerGet<T>(path: string): Promise<ExplorerFetchResult<T>> {
@@ -106,5 +176,39 @@ async function publicExplorerGet<T>(path: string): Promise<ExplorerFetchResult<T
 export function getTransactionDetail(network: string, hash: string) {
   return publicExplorerGet<ExplorerTxDetail>(
     `/api/v1/explorer/${encodeURIComponent(network)}/tx/${encodeURIComponent(hash)}`,
+  );
+}
+
+export function getLedgerDetail(network: string, sequence: string) {
+  return publicExplorerGet<ExplorerLedgerDetail>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/ledger/${encodeURIComponent(sequence)}`,
+  );
+}
+
+export function getAccountDetail(network: string, address: string) {
+  return publicExplorerGet<ExplorerAccountDetail>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/account/${encodeURIComponent(address)}`,
+  );
+}
+
+export function getContractDetail(network: string, address: string) {
+  return publicExplorerGet<ExplorerContractDetail>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/contract/${encodeURIComponent(address)}`,
+  );
+}
+
+export function getRecentTransactions(network: string, limit: number, cursor?: string | null) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set('cursor', cursor);
+  return publicExplorerGet<ExplorerPage<ExplorerFeedTransaction>>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/transactions/latest?${query.toString()}`,
+  );
+}
+
+export function getRecentLedgers(network: string, limit: number, cursor?: string | null) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set('cursor', cursor);
+  return publicExplorerGet<ExplorerPage<ExplorerFeedLedger>>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/ledgers?${query.toString()}`,
   );
 }

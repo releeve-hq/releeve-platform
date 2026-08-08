@@ -1,4 +1,16 @@
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
+const ACCESS_TOKEN_KEY = 'access_token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
+
+export function storeTokenPair(accessToken: string, refreshToken?: string) {
+  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+}
+
+export function clearTokenPair() {
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
 
 export class ApiError extends Error {
   status: number;
@@ -10,13 +22,17 @@ export class ApiError extends Error {
 
 async function refreshAccessToken(): Promise<string | null> {
   try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/refresh`, {
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+    if (!refreshToken) return null;
+    const res = await fetch(`${BASE_URL}/api/v1/auth/token/refresh`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
       credentials: 'include',
     });
     if (!res.ok) return null;
     const data = await res.json();
-    localStorage.setItem('access_token', data.access_token);
+    storeTokenPair(data.access_token, data.refresh_token);
     return data.access_token;
   } catch {
     return null;
@@ -37,7 +53,7 @@ async function request<T = any>(
   }
 
   if (!opts?.skipAuth) {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -73,7 +89,11 @@ async function request<T = any>(
   }
 
   if (!res.ok) {
-    throw new ApiError(data.error || data.message || 'Request failed', res.status);
+    const message =
+      typeof data.error === 'string'
+        ? data.error
+        : data.error?.message || data.message || 'Request failed';
+    throw new ApiError(message, res.status);
   }
 
   return data as T;

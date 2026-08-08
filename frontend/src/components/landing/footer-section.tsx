@@ -23,9 +23,9 @@ const footerLinks = {
     { name: "Contribute", href: "#", badge: "Open" },
   ],
   Legal: [
-    { name: "Privacy", href: "#" },
-    { name: "Terms", href: "#" },
-    { name: "Security", href: "#" },
+    { name: "Privacy", href: "/privacy" },
+    { name: "Terms", href: "/terms" },
+    { name: "Security", href: "/privacy" },
   ],
 };
 

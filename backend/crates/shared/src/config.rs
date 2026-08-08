@@ -32,9 +32,16 @@ pub struct Settings {
     pub oauth_github_client_secret: String,
     pub oauth_google_client_id: String,
     pub oauth_google_client_secret: String,
+    /// Public Platform API base used by OAuth providers for their callbacks.
+    pub oauth_callback_base: String,
 
     // Phase 3 — public explorer contract calls.
     pub soroban_rpc_url: String,
+    pub fork_core_url: String,
+    pub fork_core_signing_key_file: String,
+    pub fork_core_signing_kid: String,
+    pub fork_core_issuer: String,
+    pub fork_core_audience: String,
 }
 
 /// Runtime configuration for the `releeve-ingest` daemon (Phase 2).
@@ -69,9 +76,9 @@ pub struct IngestSettings {
 
 impl IngestSettings {
     pub fn from_env() -> Result<Self, ConfigError> {
-        Config::builder()
+        let mut settings: Self = Config::builder()
             .set_default("database_url", "")?
-            .set_default("redis_url", "redis://127.0.0.1:6379")?
+            .set_default("redis_url", "")?
             .set_default("log_filter", "info,ingest=debug")?
             .set_default("network", "testnet")?
             .set_default("horizon_url", "https://horizon-testnet.stellar.org")?
@@ -83,7 +90,18 @@ impl IngestSettings {
             .set_default("lock_ttl_secs", 120)?
             .add_source(Environment::with_prefix("INGEST"))
             .build()?
-            .try_deserialize()
+            .try_deserialize()?;
+
+        // Local deployments share the API's database and Redis by default.
+        // A dedicated worker can still override either value with INGEST_*.
+        if settings.database_url.trim().is_empty() {
+            settings.database_url = std::env::var("DATABASE_URL").unwrap_or_default();
+        }
+        if settings.redis_url.trim().is_empty() {
+            settings.redis_url =
+                std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        }
+        Ok(settings)
     }
 }
 
@@ -112,7 +130,13 @@ impl Settings {
             .set_default("oauth_github_client_secret", "")?
             .set_default("oauth_google_client_id", "")?
             .set_default("oauth_google_client_secret", "")?
+            .set_default("oauth_callback_base", "http://127.0.0.1:8080")?
             .set_default("soroban_rpc_url", "")?
+            .set_default("fork_core_url", "")?
+            .set_default("fork_core_signing_key_file", "")?
+            .set_default("fork_core_signing_kid", "platform-current")?
+            .set_default("fork_core_issuer", "releeve-platform")?
+            .set_default("fork_core_audience", "fork-core")?
             .add_source(Environment::default())
             .build()?
             .try_deserialize()
@@ -203,5 +227,24 @@ mod tests {
         );
         assert_eq!(s.price_feed_url, "https://prices.example.test");
         assert_eq!(s.lock_ttl_secs, 120, "default lock ttl");
+    }
+
+    #[test]
+    fn ingest_settings_fall_back_to_shared_connections() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_env("INGEST_DATABASE_URL");
+        clear_env("INGEST_REDIS_URL");
+        set_env(
+            "DATABASE_URL",
+            "postgres://shared:shared@localhost:5432/releeve",
+        );
+        set_env("REDIS_URL", "redis://localhost:6380");
+
+        let s = IngestSettings::from_env().expect("inherits shared connections");
+        assert_eq!(
+            s.database_url,
+            "postgres://shared:shared@localhost:5432/releeve"
+        );
+        assert_eq!(s.redis_url, "redis://localhost:6380");
     }
 }

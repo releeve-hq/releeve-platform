@@ -4,13 +4,13 @@ export type ExplorerNetwork = string;
 
 export const explorerRoutes = {
   ledger: (network: ExplorerNetwork, sequence: string | number) =>
-    `/${network}/ledger/${encodeURIComponent(String(sequence))}`,
+    `/explorer/${encodeURIComponent(network)}/ledger/${encodeURIComponent(String(sequence))}`,
   tx: (network: ExplorerNetwork, hash: string) =>
-    `/${network}/tx/${encodeURIComponent(hash)}`,
+    `/explorer/${encodeURIComponent(network)}/tx/${encodeURIComponent(hash)}`,
   account: (network: ExplorerNetwork, address: string) =>
-    `/${network}/account/${encodeURIComponent(address)}`,
+    `/explorer/${encodeURIComponent(network)}/account/${encodeURIComponent(address)}`,
   contract: (network: ExplorerNetwork, address: string) =>
-    `/${network}/contract/${encodeURIComponent(address)}`,
+    `/explorer/${encodeURIComponent(network)}/contract/${encodeURIComponent(address)}`,
 };
 
 export function isContractAddress(address: string): boolean {

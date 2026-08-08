@@ -1,4 +1,4 @@
-import { ContractDetailView } from "@/components/explorer/detail-views";
+import { redirect } from 'next/navigation';
 
 export default async function ContractPage({
   params,
@@ -6,5 +6,5 @@ export default async function ContractPage({
   params: Promise<{ network: string; address: string }>;
 }) {
   const { network, address } = await params;
-  return <ContractDetailView network={network} address={decodeURIComponent(address)} />;
+  redirect(`/explorer/${encodeURIComponent(network)}/contract/${encodeURIComponent(address)}`);
 }

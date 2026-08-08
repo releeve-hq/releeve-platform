@@ -4,6 +4,8 @@ import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
+import { AuthStatusFrame } from '@/components/auth/auth-status-frame';
+import '../../auth.css';
 
 function VerifyContent() {
   const searchParams = useSearchParams();
@@ -20,12 +22,8 @@ function VerifyContent() {
 
     const verify = async () => {
       try {
-        const data = await api.get<{ access_token: string; user_id: string }>(
-          `/api/v1/auth/verify?token=${encodeURIComponent(token)}`,
-          { skipAuth: true }
-        );
-        localStorage.setItem('access_token', data.access_token);
-        window.location.href = '/dashboard';
+        await api.post('/api/v1/auth/verify', { token }, { skipAuth: true });
+        window.location.replace('/signin?verified=1');
       } catch (err) {
         const message = err instanceof ApiError ? err.message : 'Verification failed.';
         setStatus(message);
@@ -37,40 +35,23 @@ function VerifyContent() {
 
   if (!status && !error) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-        <div className="spinner" />
-        <p style={{ color: '#71717a', fontSize: 14 }}>Verifying your email...</p>
-      </div>
+      <AuthStatusFrame title="Verifying your email." description="A moment while we confirm your account.">
+        <div className="auth-spinner" aria-label="Verifying your email" />
+      </AuthStatusFrame>
     );
   }
 
   return (
-    <>
-      <p style={{ color: error ? '#f87171' : '#fafafa' }}>{status}</p>
-      {error && (
-        <p style={{ marginTop: 16 }}>
-          <a href="/signin" style={{ color: '#a78bfa', textDecoration: 'underline' }}>Return to sign in</a>
-        </p>
-      )}
-    </>
+    <AuthStatusFrame title="We could not verify that link." description={status || 'Please request a new verification email and try again.'}>
+      <a href="/signin" className="auth-email-button">Return to sign in</a>
+    </AuthStatusFrame>
   );
 }
 
 export default function VerifyEmailPage() {
   return (
-    <div className="auth-container">
-      <div className="form-panel" style={{ gridColumn: '1 / -1' }}>
-        <div className="auth-card" style={{ textAlign: 'center', paddingTop: 80 }}>
-          <Suspense fallback={
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-              <div className="spinner" />
-              <p style={{ color: '#71717a', fontSize: 14 }}>Verifying your email...</p>
-            </div>
-          }>
-            <VerifyContent />
-          </Suspense>
-        </div>
-      </div>
-    </div>
+    <Suspense fallback={<AuthStatusFrame title="Verifying your email." description="A moment while we confirm your account."><div className="auth-spinner" aria-label="Verifying your email" /></AuthStatusFrame>}>
+      <VerifyContent />
+    </Suspense>
   );
 }

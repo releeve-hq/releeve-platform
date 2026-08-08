@@ -5,6 +5,7 @@ import "./landing-theme.css";
 import { AppProvider } from "@/lib/app-context";
 import { AuthProvider } from "@/lib/auth-context";
 import ConditionalShell from "@/components/layout/conditional-shell";
+import CookieConsent from "@/components/layout/cookie-consent";
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' });
@@ -23,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <ConditionalShell>
               {children}
             </ConditionalShell>
+            <CookieConsent />
           </AuthProvider>
         </AppProvider>
       </body>

@@ -80,7 +80,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const token = localStorage.getItem('access_token');
       if (!token) return;
-      const orgs = await api.get('/api/v1/orgs/me');
+      const orgs = await api.get('/api/v1/me/organizations');
       setUserOrgs(Array.isArray(orgs) ? orgs : []);
     } catch { /* not authenticated or no orgs */ }
   }, []);
@@ -125,7 +125,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     name: string; slug: string; contact_name: string; contact_email: string;
     website_url?: string; description?: string;
   }) {
-    const res = await api.post('/api/v1/orgs/create', form);
+    const res = await api.post('/api/v1/organizations', {
+      name: form.name,
+      slug: form.slug || undefined,
+    });
     const palette = ['bg-violet-600', 'bg-blue-600', 'bg-emerald-600', 'bg-amber-500', 'bg-rose-500', 'bg-indigo-600', 'bg-teal-600', 'bg-fuchsia-600'];
     const newProject = {
       id: res.id, name: res.name, initial: (res.name[0] || 'O').toUpperCase(),

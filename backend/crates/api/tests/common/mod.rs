@@ -49,7 +49,13 @@ pub fn test_settings() -> Settings {
         oauth_github_client_secret: String::new(),
         oauth_google_client_id: String::new(),
         oauth_google_client_secret: String::new(),
+        oauth_callback_base: "http://127.0.0.1:8080".into(),
         soroban_rpc_url: String::new(),
+        fork_core_url: String::new(),
+        fork_core_signing_key_file: String::new(),
+        fork_core_signing_kid: "test".into(),
+        fork_core_issuer: "releeve-platform".into(),
+        fork_core_audience: "fork-core".into(),
     }
 }
 
@@ -95,6 +101,7 @@ impl TestApp {
             settings,
             jwt: JwtIssuer::new("test-secret".into(), 900),
             mailer: mailer.clone(),
+            fork_core: None,
         };
         Self {
             state,
