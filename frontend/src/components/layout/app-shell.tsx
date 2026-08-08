@@ -167,7 +167,7 @@ function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobileOpen }: Sidebar
       )}>
         <div className={cx('flex items-center h-14 shrink-0', collapsed ? 'justify-center px-0' : 'px-4 gap-2')}>
           <ReleeveLogo size={28} />
-          {!collapsed && <span className="font-semibold text-[13px] tracking-tight text-gray-900">Releeve</span>}
+          {!collapsed && <span className="font-semibold text-[13px] tracking-tight text-zinc-100">Releeve</span>}
           <button onClick={() => setMobileOpen(false)} className="md:hidden ml-auto text-gray-400 hover:text-gray-700"><X size={18} /></button>
         </div>
 

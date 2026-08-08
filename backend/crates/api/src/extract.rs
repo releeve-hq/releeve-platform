@@ -1,8 +1,8 @@
 //! Middleware / extractors for authenticated and org-scoped requests.
 //!
-//! The `Authorization: Bearer <jwt>` header resolves to an `AuthUser`. Each
-//! handler also consults `shared::Error`-compatible responses via the
-//! `shared` crate's `IntoResponse` impl.
+//! The production browser path resolves an `AuthUser` from the HttpOnly access
+//! cookie. `Authorization: Bearer` remains as a compatibility fallback for
+//! scripts, tests, and emergency admin clients.
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -47,6 +47,10 @@ fn bearer_token(parts: &Parts) -> Option<String> {
         .map(|t| t.to_string())
 }
 
+fn access_cookie(parts: &Parts) -> Option<String> {
+    crate::auth::cookie_value(&parts.headers, crate::auth::ACCESS_COOKIE)
+}
+
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AuthError;
 
@@ -54,7 +58,9 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let token = bearer_token(parts).ok_or(Error::Unauthorized)?;
+        let token = access_cookie(parts)
+            .or_else(|| bearer_token(parts))
+            .ok_or(Error::Unauthorized)?;
         let claims = state.jwt.decode(&token).map_err(|_| Error::Unauthorized)?;
         Ok(Self {
             user_id: claims.sub,

@@ -13,13 +13,26 @@ type Organization = {
   is_personal: boolean;
 };
 
+type Project = {
+  slug: string;
+  name: string;
+  network?: 'mainnet' | 'testnet' | 'futurenet';
+};
+
+type Paged<T> = {
+  data: T[];
+};
+
+const ACTIVE_WORKSPACE_KEY = 'releeve-active-workspace';
+const DEFAULT_NETWORK = 'testnet';
+
 function slugify(value: string) {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrg, setSelectedOrg] = useState('');
   const [newOrg, setNewOrg] = useState(false);
@@ -27,25 +40,51 @@ export default function OnboardingPage() {
   const [orgSlug, setOrgSlug] = useState('');
   const [projectName, setProjectName] = useState('');
   const [projectSlug, setProjectSlug] = useState('');
-  const [network, setNetwork] = useState('testnet');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  async function loadProjects(organizationSlug: string) {
+    const response = await api.get<Paged<Project>>(`/api/v1/${encodeURIComponent(organizationSlug)}/projects?limit=100`);
+    return response.data ?? [];
+  }
+
+  function rememberWorkspace(organizationSlug: string, project: Project) {
+    localStorage.setItem(ACTIVE_WORKSPACE_KEY, JSON.stringify({
+      organization: organizationSlug,
+      project: project.slug,
+      network: project.network ?? DEFAULT_NETWORK,
+    }));
+  }
+
   useEffect(() => {
     let cancelled = false;
-    api.get<Organization[]>('/api/v1/me/organizations')
-      .then((items) => {
+    async function load() {
+      try {
+        const items = await api.get<Organization[]>('/api/v1/me/organizations');
         if (cancelled) return;
         setOrganizations(items);
-        setSelectedOrg(items[0]?.slug ?? '');
-      })
-      .catch((reason) => {
+        const selected = items[0]?.slug ?? '';
+        setSelectedOrg(selected);
+
+        for (const organization of items) {
+          const projects = await loadProjects(organization.slug);
+          if (cancelled) return;
+          if (projects.length > 0) {
+            rememberWorkspace(organization.slug, projects[0]);
+            router.replace('/home');
+            return;
+          }
+        }
+      } catch (reason) {
         if (!cancelled) setError(reason instanceof ApiError ? reason.message : 'Unable to load your workspaces.');
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [router]);
 
   const selected = useMemo(() => organizations.find((org) => org.slug === selectedOrg), [organizations, selectedOrg]);
 
@@ -67,18 +106,31 @@ export default function OnboardingPage() {
     }
 
     setSubmitting(true);
+    let organization: Organization | null = null;
     try {
-      const organization = newOrg
+      organization = newOrg
         ? await api.post<Organization>('/api/v1/organizations', { name: orgName.trim(), slug: orgSlug || undefined })
         : selected!;
       const project = await api.post<{ slug: string }>('/api/v1/' + encodeURIComponent(organization.slug) + '/projects', {
         name: projectName.trim(),
         slug: projectSlug || undefined,
-        network,
       });
-      localStorage.setItem('releeve-active-workspace', JSON.stringify({ organization: organization.slug, project: project.slug, network }));
+      rememberWorkspace(organization.slug, { ...project, name: projectName.trim(), network: DEFAULT_NETWORK });
       router.replace('/home');
     } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 409 && organization) {
+        try {
+          const wantedSlug = projectSlug || slugify(projectName);
+          const existing = (await loadProjects(organization.slug)).find((project) => project.slug === wantedSlug);
+          if (existing) {
+            rememberWorkspace(organization.slug, existing);
+            router.replace('/home');
+            return;
+          }
+        } catch {
+          // Fall through to the original user-safe conflict message.
+        }
+      }
       setError(reason instanceof ApiError ? reason.message : 'Unable to create your workspace.');
     } finally {
       setSubmitting(false);
@@ -90,7 +142,6 @@ export default function OnboardingPage() {
       <section className="onboarding-panel">
         <header className="onboarding-topbar">
           <div className="onboarding-brand"><ReleeveLogo size={28} /><span>Releeve</span></div>
-          <button type="button" onClick={() => logout()} className="onboarding-link">Sign out</button>
         </header>
         <div className="onboarding-content">
           <p className="onboarding-kicker">Welcome{user?.name ? `, ${user.name}` : ''}</p>
@@ -121,7 +172,6 @@ export default function OnboardingPage() {
                 <div className="onboarding-grid">
                   <label>Project name<input value={projectName} onChange={(event) => { setProjectName(event.target.value); if (!projectSlug) setProjectSlug(slugify(event.target.value)); }} placeholder="Protocol workspace" /></label>
                   <label>Project slug<input value={projectSlug} onChange={(event) => setProjectSlug(slugify(event.target.value))} placeholder="protocol-workspace" /></label>
-                  <label>Network<select value={network} onChange={(event) => setNetwork(event.target.value)}><option value="testnet">Testnet</option><option value="mainnet">Mainnet</option><option value="futurenet">Futurenet</option></select></label>
                 </div>
               </fieldset>
 

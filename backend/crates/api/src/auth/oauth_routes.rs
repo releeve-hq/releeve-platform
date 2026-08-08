@@ -2,6 +2,7 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::response::Redirect;
 use serde::{Deserialize, Serialize};
 use shared::Error;
@@ -10,7 +11,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::auth::accounts::{create_user_with_personal_org, rollback_account};
-use crate::auth::sessions::issue_pair;
+use crate::auth::{auth_cookie_headers, sessions::issue_pair};
 use crate::oauth::OAuthProvider;
 use crate::state::AppState;
 
@@ -92,7 +93,7 @@ pub async fn callback(
     State(state): State<AppState>,
     Path(provider): Path<String>,
     Query(params): Query<CallbackParams>,
-) -> Result<Redirect, Error> {
+) -> Result<(HeaderMap, Redirect), Error> {
     let provider = OAuthProvider::parse(&provider)?;
 
     // 1. Verify CSRF `state`; recover the saved redirect target (single-use).
@@ -111,11 +112,11 @@ pub async fn callback(
 
     let mut callback = Url::parse(&redirect_uri)
         .map_err(|_| Error::BadRequest("invalid OAuth redirect URI".into()))?;
-    let mut fragment = url::form_urlencoded::Serializer::new(String::new());
-    fragment.append_pair("access_token", &pair.access_token);
-    fragment.append_pair("refresh_token", &pair.refresh_token);
-    callback.set_fragment(Some(&fragment.finish()));
-    Ok(Redirect::to(callback.as_str()))
+    callback.set_fragment(None);
+    Ok((
+        auth_cookie_headers(&state, &pair)?,
+        Redirect::to(callback.as_str()),
+    ))
 }
 
 fn permitted_redirect_uri(state: &AppState, raw: &str) -> Result<Url, Error> {

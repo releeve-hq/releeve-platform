@@ -78,8 +78,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUserOrgs = useCallback(async () => {
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) return;
       const orgs = await api.get('/api/v1/me/organizations');
       setUserOrgs(Array.isArray(orgs) ? orgs : []);
     } catch { /* not authenticated or no orgs */ }

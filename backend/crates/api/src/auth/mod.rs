@@ -7,8 +7,9 @@ pub mod rate_limit;
 pub mod sessions;
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue, header};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use shared::Error;
@@ -23,6 +24,9 @@ use sessions::{revoke_all_for_user, revoke_one};
 
 // ---- shared response / helpers -----------------------------------------------
 
+pub(crate) const ACCESS_COOKIE: &str = "releeve_access";
+pub(crate) const REFRESH_COOKIE: &str = "releeve_refresh";
+
 #[derive(Serialize, ToSchema)]
 pub struct PairResponse {
     access_token: String,
@@ -34,14 +38,17 @@ async fn pair_response(
     state: &AppState,
     user_id: Uuid,
     user_agent: Option<&str>,
-) -> Result<Json<PairResponse>, Error> {
+) -> Result<(HeaderMap, Json<PairResponse>), Error> {
     let pair = sessions::issue_pair(state, user_id, user_agent, None).await?;
     let profile = load_profile(&state.db, user_id).await?;
-    Ok(Json(PairResponse {
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        user: profile,
-    }))
+    Ok((
+        auth_cookie_headers(state, &pair)?,
+        Json(PairResponse {
+            access_token: pair.access_token,
+            refresh_token: pair.refresh_token,
+            user: profile,
+        }),
+    ))
 }
 
 fn user_agent(headers: &HeaderMap) -> Option<String> {
@@ -57,6 +64,86 @@ fn unique_or_conflict_err(err: sqlx::Error) -> Error {
     } else {
         Error::internal(err)
     }
+}
+
+pub(crate) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
+    raw.split(';').find_map(|part| {
+        let (key, value) = part.trim().split_once('=')?;
+        (key == name).then(|| value.to_string())
+    })
+}
+
+fn cookie_secure_flag(state: &AppState) -> &'static str {
+    if state.settings.app_base_url.starts_with("https://") {
+        "; Secure"
+    } else {
+        ""
+    }
+}
+
+fn cookie_header_value(
+    state: &AppState,
+    name: &str,
+    value: &str,
+    max_age_seconds: i64,
+) -> Result<HeaderValue, Error> {
+    HeaderValue::from_str(&format!(
+        "{name}={value}; Max-Age={max_age_seconds}; Path=/; HttpOnly; SameSite=Lax{}",
+        cookie_secure_flag(state),
+    ))
+    .map_err(Error::internal)
+}
+
+pub(crate) fn auth_cookie_headers(
+    state: &AppState,
+    pair: &sessions::TokenPair,
+) -> Result<HeaderMap, Error> {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        header::SET_COOKIE,
+        cookie_header_value(
+            state,
+            ACCESS_COOKIE,
+            &pair.access_token,
+            state.settings.jwt_access_ttl,
+        )?,
+    );
+    headers.append(
+        header::SET_COOKIE,
+        cookie_header_value(
+            state,
+            REFRESH_COOKIE,
+            &pair.refresh_token,
+            state.settings.jwt_refresh_ttl,
+        )?,
+    );
+    Ok(headers)
+}
+
+fn clear_auth_cookie_headers(state: &AppState) -> Result<HeaderMap, Error> {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        header::SET_COOKIE,
+        cookie_header_value(state, ACCESS_COOKIE, "", 0)?,
+    );
+    headers.append(
+        header::SET_COOKIE,
+        cookie_header_value(state, REFRESH_COOKIE, "", 0)?,
+    );
+    Ok(headers)
+}
+
+fn refresh_token_from(headers: &HeaderMap, body: &[u8]) -> Result<String, Error> {
+    if let Some(token) = cookie_value(headers, REFRESH_COOKIE) {
+        return Ok(token);
+    }
+    if body.is_empty() {
+        return Err(Error::Unauthorized);
+    }
+    serde_json::from_slice::<RefreshBody>(body)
+        .map(|body| body.refresh_token)
+        .map_err(|_| Error::BadRequest("invalid refresh request".into()))
 }
 
 // ---- Signup -------------------------------------------------------------------
@@ -152,7 +239,7 @@ pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<PairResponse>, Error> {
+) -> Result<(HeaderMap, Json<PairResponse>), Error> {
     let email = req.email.trim().to_lowercase();
     let row =
         sqlx::query_as::<_, (Uuid, String)>("SELECT id, password_hash FROM users WHERE email = $1")
@@ -305,17 +392,11 @@ pub async fn resend_verification(
 
 // ---- Refresh / logout / revoke --------------------------------------------------
 
-#[derive(Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RefreshRequest {
-    refresh_token: String,
-}
-
 #[utoipa::path(
     post,
     path = "/api/v1/auth/token/refresh",
     tag = "auth",
-    request_body = RefreshRequest,
+    request_body = RefreshBody,
     responses(
         (status = 200, description = "Rotated token pair", body = PairResponse),
         (status = 401, description = "Invalid, revoked, or reused token"),
@@ -324,21 +405,25 @@ pub struct RefreshRequest {
 pub async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<RefreshRequest>,
-) -> Result<Json<PairResponse>, Error> {
+    body: Bytes,
+) -> Result<(HeaderMap, Json<PairResponse>), Error> {
+    let refresh_token = refresh_token_from(&headers, &body)?;
     let pair = sessions::rotate(
         &state,
-        &req.refresh_token,
+        &refresh_token,
         user_agent(&headers).as_deref(),
         None,
     )
     .await?;
     let profile = load_profile(&state.db, pair.user_id).await?;
-    Ok(Json(PairResponse {
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        user: profile,
-    }))
+    Ok((
+        auth_cookie_headers(&state, &pair)?,
+        Json(PairResponse {
+            access_token: pair.access_token,
+            refresh_token: pair.refresh_token,
+            user: profile,
+        }),
+    ))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -361,12 +446,18 @@ pub struct StatusResponse {
 )]
 pub async fn logout(
     State(state): State<AppState>,
-    Json(req): Json<RefreshBody>,
-) -> Result<Json<StatusResponse>, Error> {
-    revoke_one(&state, &req.refresh_token).await?;
-    Ok(Json(StatusResponse {
-        status: "logged_out".into(),
-    }))
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<(HeaderMap, Json<StatusResponse>), Error> {
+    if let Ok(refresh_token) = refresh_token_from(&headers, &body) {
+        revoke_one(&state, &refresh_token).await?;
+    }
+    Ok((
+        clear_auth_cookie_headers(&state)?,
+        Json(StatusResponse {
+            status: "logged_out".into(),
+        }),
+    ))
 }
 
 #[utoipa::path(
@@ -378,12 +469,17 @@ pub async fn logout(
 )]
 pub async fn revoke(
     State(state): State<AppState>,
-    Json(req): Json<RefreshBody>,
-) -> Result<Json<StatusResponse>, Error> {
-    revoke_one(&state, &req.refresh_token).await?;
-    Ok(Json(StatusResponse {
-        status: "revoked".into(),
-    }))
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<(HeaderMap, Json<StatusResponse>), Error> {
+    let refresh_token = refresh_token_from(&headers, &body)?;
+    revoke_one(&state, &refresh_token).await?;
+    Ok((
+        clear_auth_cookie_headers(&state)?,
+        Json(StatusResponse {
+            status: "revoked".into(),
+        }),
+    ))
 }
 
 // ---- Password forgot / reset / change --------------------------------------------

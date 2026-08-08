@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { api, ApiError, clearTokenPair, storeTokenPair } from './api';
+import { api, ApiError, clearTokenPair } from './api';
 
 export interface User {
   id: string;
@@ -69,18 +69,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const init = async () => {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
-      setAccessToken(token);
       try {
         await loadUser();
+        setAccessToken('cookie');
       } catch (err: any) {
         if (err instanceof ApiError && err.status === 401) {
           clearTokenPair();
           setAccessToken(null);
+          setUser(null);
         }
       } finally {
         setIsLoading(false);
@@ -92,13 +88,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (email: string, password: string) => {
     setError(null);
     try {
-      const data = await api.post<{ access_token: string; refresh_token: string }>(
+      await api.post(
         '/api/v1/auth/login',
         { email, password },
         { skipAuth: true }
       );
-      storeTokenPair(data.access_token, data.refresh_token);
-      setAccessToken(data.access_token);
+      setAccessToken('cookie');
       await loadUser();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Login failed. Please try again.';
@@ -126,10 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
-      const refreshToken = localStorage.getItem('refresh_token');
-      if (refreshToken) {
-        await api.post('/api/v1/auth/logout', { refresh_token: refreshToken }, { skipAuth: true });
-      }
+      await api.post('/api/v1/auth/logout', undefined, { skipAuth: true });
     } catch {
       // Ignore errors on logout
     }

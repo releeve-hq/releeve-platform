@@ -2,11 +2,6 @@ const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 
-export function storeTokenPair(accessToken: string, refreshToken?: string) {
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-}
-
 export function clearTokenPair() {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -22,18 +17,14 @@ export class ApiError extends Error {
 
 async function refreshAccessToken(): Promise<string | null> {
   try {
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-    if (!refreshToken) return null;
     const res = await fetch(`${BASE_URL}/api/v1/auth/token/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
       credentials: 'include',
     });
     if (!res.ok) return null;
-    const data = await res.json();
-    storeTokenPair(data.access_token, data.refresh_token);
-    return data.access_token;
+    await res.json().catch(() => ({}));
+    return 'cookie';
   } catch {
     return null;
   }
@@ -52,13 +43,6 @@ async function request<T = any>(
     headers['Content-Type'] = 'application/json';
   }
 
-  if (!opts?.skipAuth) {
-    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  }
-
   const fetchOptions: RequestInit = {
     method,
     headers,
@@ -72,11 +56,10 @@ async function request<T = any>(
   let res = await fetch(url, fetchOptions);
   let retried = false;
 
-  if (res.status === 401 && !opts?.skipAuth && !retried) {
+  if (res.status === 401 && !opts?.skipAuth && path !== '/api/v1/auth/token/refresh' && !retried) {
     retried = true;
     const newToken = await refreshAccessToken();
     if (newToken) {
-      headers['Authorization'] = `Bearer ${newToken}`;
       res = await fetch(url, { ...fetchOptions, headers });
     }
   }

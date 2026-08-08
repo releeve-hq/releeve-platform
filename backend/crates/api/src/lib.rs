@@ -398,7 +398,6 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
         auth::VerifyResponse,
         auth::ResendRequest,
         auth::ResendResponse,
-        auth::RefreshRequest,
         auth::RefreshBody,
         auth::StatusResponse,
         auth::ForgotRequest,
