@@ -7,6 +7,7 @@ import { truncateEntity } from "@/lib/explorer-routes";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import {
+  AlertsPage as ProjectAlertsPage,
   ContractsPage as ProjectContractsPage,
   SimulatorPage as ProjectSimulatorPage,
   VirtualEnvPage as ProjectVirtualEnvPage,
@@ -341,7 +342,7 @@ function NotifPanel({ id, open, onClose }: { id: string; open: boolean; onClose:
         border: "1px solid var(--border)",
         borderRadius: 12,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
-        zIndex: 150,
+        zIndex: 400,
         overflow: "hidden",
       }}
     >
@@ -447,7 +448,7 @@ function WorkspaceSwitcher({
         border: "1px solid var(--border)",
         borderRadius: 7,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
-        zIndex: 150,
+        zIndex: 400,
         overflow: "hidden",
       }}
     >
@@ -524,7 +525,7 @@ function ProjectSwitcher({
         border: "1px solid var(--border)",
         borderRadius: 7,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
-        zIndex: 150,
+        zIndex: 400,
         overflow: "hidden",
       }}
     >
@@ -591,7 +592,7 @@ function NetworkMenu({
         border: "1px solid var(--border)",
         borderRadius: 12,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
-        zIndex: 160,
+        zIndex: 400,
         overflow: "hidden",
       }}
     >
@@ -2046,7 +2047,10 @@ export default function ReleeveApp() {
 
   /* close all dropdowns on outside click */
   useEffect(() => {
-    const handler = () => {
+    const handler = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-dashboard-popover]")) {
+        return;
+      }
       setWsOpen(false);
       setProjOpen(false);
       setNotifOpen(null);
@@ -2448,10 +2452,10 @@ export default function ReleeveApp() {
         </div>
 
         {/* ── Crumb / account bar ── */}
-        <div className="db-crumbbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", borderBottom: "1px solid var(--border)", gap: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: 1, overflow: "hidden" }}>
+        <div className="db-crumbbar" style={{ position: "relative", zIndex: 300, overflow: "visible", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", borderBottom: "1px solid var(--border)", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: 1, overflow: "visible" }}>
             {/* Workspace switcher */}
-            <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+            <div data-dashboard-popover style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => {
                   setWsOpen((v) => !v);
@@ -2488,7 +2492,7 @@ export default function ReleeveApp() {
             <span style={{ color: "var(--text-faint)", fontSize: 12.5, flexShrink: 0 }}>/</span>
 
             {/* Project switcher */}
-            <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+            <div data-dashboard-popover style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => {
                   setProjOpen((v) => !v);
@@ -2521,7 +2525,7 @@ export default function ReleeveApp() {
 
           {/* Right: network buttons */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <div style={{ position: "relative" }}>
+            <div data-dashboard-popover style={{ position: "relative" }}>
               <button
                 className="db-desktop-only"
                 onClick={(e) => {
@@ -2618,7 +2622,7 @@ export default function ReleeveApp() {
           {page === "simulator" && <ProjectSimulatorPage scope={projectScope} />}
           {page === "virtualenv" && <ProjectVirtualEnvPage scope={projectScope} />}
           {page === "activity" && <ActivityPage />}
-          {page === "alerts" && <AlertsPage />}
+          {page === "alerts" && <ProjectAlertsPage scope={projectScope} />}
           {page === "docs" && <DocsPage />}
           {page === "settings" && <SettingsPage navigate={navigate} />}
           {page === "settings-profile" && <SettingsProfilePage navigate={navigate} />}
