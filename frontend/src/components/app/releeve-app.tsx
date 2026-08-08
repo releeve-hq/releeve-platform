@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { AddressLink, LedgerLink, TxHashLink } from "@/components/explorer/entity-links";
 import { truncateEntity } from "@/lib/explorer-routes";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 import {
   ContractsPage as ProjectContractsPage,
   SimulatorPage as ProjectSimulatorPage,
@@ -53,6 +54,8 @@ type WorkspaceOrganization = {
   slug: string;
   name: string | null;
   is_personal: boolean;
+  // Reserved display slot for the account's uploaded profile photo.
+  avatar_url?: string | null;
 };
 
 type WorkspaceProject = {
@@ -387,6 +390,25 @@ function NotifPanel({ id, open, onClose }: { id: string; open: boolean; onClose:
 }
 
 /* ─── Switch panel (workspace / project) ─── */
+function WorkspaceAvatar({ organization, size = 30, profileAvatarUrl }: { organization: WorkspaceOrganization; size?: number; profileAvatarUrl?: string }) {
+  const label = organization.name || organization.slug || "Workspace";
+  const avatarUrl = organization.is_personal ? profileAvatarUrl || organization.avatar_url : organization.avatar_url;
+  return avatarUrl ? (
+    <img
+      src={avatarUrl}
+      alt=""
+      style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: "var(--panel)" }}
+    />
+  ) : (
+    <span
+      aria-hidden="true"
+      style={{ width: size, height: size, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", background: "#4d443e", color: "#f2efec", fontSize: Math.max(11, Math.round(size * 0.42)), fontWeight: 700, flexShrink: 0 }}
+    >
+      {label.slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
 function WorkspaceSwitcher({
   open,
   onClose,
@@ -394,6 +416,8 @@ function WorkspaceSwitcher({
   activeOrganization,
   onSelect,
   onCreate,
+  onHome,
+  profileAvatarUrl,
 }: {
   open: boolean;
   onClose: () => void;
@@ -401,7 +425,14 @@ function WorkspaceSwitcher({
   activeOrganization: string | null;
   onSelect: (organization: WorkspaceOrganization) => void;
   onCreate: () => void;
+  onHome: () => void;
+  profileAvatarUrl?: string;
 }) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const matches = (organization: WorkspaceOrganization) => !needle || `${organization.name || ""} ${organization.slug}`.toLowerCase().includes(needle);
+  const personalAccounts = organizations.filter((organization) => organization.is_personal && matches(organization));
+  const teams = organizations.filter((organization) => !organization.is_personal && matches(organization));
   if (!open) return null;
   return (
     <div
@@ -410,11 +441,11 @@ function WorkspaceSwitcher({
         position: "absolute",
         top: "calc(100% + 8px)",
         left: 0,
-        width: 280,
+        width: 320,
         maxWidth: "80vw",
         background: "var(--panel)",
         border: "1px solid var(--border)",
-        borderRadius: 12,
+        borderRadius: 7,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
         zIndex: 150,
         overflow: "hidden",
@@ -425,29 +456,36 @@ function WorkspaceSwitcher({
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </Icon>
-        <input
-          placeholder="Find team"
-          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 12.5, fontFamily: "inherit" }}
-        />
+        <input aria-label="Find workspace" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find team" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
       </div>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "12px 14px 6px" }}>
-        Workspaces
-      </div>
-      {organizations.length === 0 && <div style={{ padding: "2px 14px 12px", color: "var(--text-faint)", fontSize: 12 }}>No workspace is available yet.</div>}
-      {organizations.map((organization) => (
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "16px 14px 8px" }}>Personal accounts</div>
+      {personalAccounts.length === 0 && <div style={{ padding: "2px 14px 14px", color: "var(--text-faint)", fontSize: 13 }}>No personal account found.</div>}
+      {personalAccounts.map((organization) => (
         <button
           key={organization.id}
           type="button"
           onClick={() => { onSelect(organization); onClose(); }}
-          style={{ display: "flex", width: "calc(100% - 12px)", alignItems: "center", gap: 9, padding: "9px 8px", margin: "0 6px 6px", border: 0, borderRadius: 8, background: organization.slug === activeOrganization ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
+          style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 10, padding: "10px", margin: "0 8px 8px", border: 0, borderRadius: 7, background: organization.slug === activeOrganization ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
         >
-          <div style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg,#4a4440,#28231f)", flexShrink: 0 }} />
-          <span style={{ fontWeight: 600, fontSize: 12.5, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{organization.name || organization.slug}</span>
-          {organization.is_personal && <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 999 }}>Personal</span>}
+          <WorkspaceAvatar organization={organization} size={34} profileAvatarUrl={profileAvatarUrl} />
+          <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{organization.name || organization.slug}</span>
+          <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999 }}>Free</span>
         </button>
       ))}
       <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
-      <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "11px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 12.5, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "16px 14px 8px" }}>Teams</div>
+      {teams.length === 0 && <div style={{ padding: "4px 14px 18px", color: "var(--text-faint)", fontSize: 14 }}>No teams found</div>}
+      {teams.map((organization) => (
+        <button key={organization.id} type="button" onClick={() => { onSelect(organization); onClose(); }} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 10, padding: "10px", margin: "0 8px 8px", border: 0, borderRadius: 7, background: organization.slug === activeOrganization ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+          <WorkspaceAvatar organization={organization} size={30} />
+          <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{organization.name || organization.slug}</span>
+        </button>
+      ))}
+      <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
+      <button type="button" onClick={() => { onHome(); onClose(); }} style={{ display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
+        <Icon size={16}><path d="M4 11l8-7 8 7M6 10v9h5v-5h2v5h5v-9" /></Icon> Home
+      </button>
+      <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
         <Icon size={15}>
           <path d="M12 5v14M5 12h14" />
         </Icon>{" "}
@@ -470,6 +508,8 @@ function ProjectSwitcher({
   onSelect: (project: WorkspaceProject) => void;
   onCreate: () => void;
 }) {
+  const [query, setQuery] = useState("");
+  const visibleProjects = projects.filter((project) => !query.trim() || `${project.name} ${project.slug}`.toLowerCase().includes(query.trim().toLowerCase()));
   if (!open) return null;
   return (
     <div
@@ -478,11 +518,11 @@ function ProjectSwitcher({
         position: "absolute",
         top: "calc(100% + 8px)",
         left: 0,
-        width: 280,
+        width: 320,
         maxWidth: "80vw",
         background: "var(--panel)",
         border: "1px solid var(--border)",
-        borderRadius: 12,
+        borderRadius: 7,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
         zIndex: 150,
         overflow: "hidden",
@@ -493,23 +533,18 @@ function ProjectSwitcher({
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </Icon>
-        <input
-          placeholder="Find project"
-          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 12.5, fontFamily: "inherit" }}
-        />
+        <input aria-label="Find project" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
       </div>
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "12px 14px 6px" }}>
-        Projects
-      </div>
-      {projects.length === 0 && <div style={{ padding: "2px 14px 12px", color: "var(--text-faint)", fontSize: 12 }}>No project is available yet.</div>}
-      {projects.map((project) => (
-        <button key={project.id} type="button" onClick={() => onSelect(project)} style={{ display: "flex", width: "calc(100% - 12px)", alignItems: "center", gap: 9, padding: "9px 8px", margin: "0 6px 6px", border: 0, borderRadius: 8, background: project.slug === activeProject ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-          <span style={{ fontWeight: 600, fontSize: 12.5, flex: 1 }}>{project.name}</span>
+      {visibleProjects.length === 0 && <div style={{ padding: "16px 14px", color: "var(--text-faint)", fontSize: 13 }}>No project found.</div>}
+      {visibleProjects.map((project) => (
+        <button key={project.id} type="button" onClick={() => onSelect(project)} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 9, padding: "12px 10px", margin: "8px", border: 0, borderRadius: 7, background: project.slug === activeProject ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+          <span style={{ width: 24, height: 24, borderRadius: "50%", background: "#111", color: "#f2efec", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700 }}>{project.name.slice(0, 1).toUpperCase()}</span>
+          <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
           <span style={{ color: "var(--text-faint)", fontSize: 11 }}>{project.network}</span>
         </button>
       ))}
       <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
-      <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "11px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 12.5, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
+      <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "13px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
         <Icon size={15}>
           <path d="M12 5v14M5 12h14" />
         </Icon>{" "}
@@ -522,12 +557,7 @@ function ProjectSwitcher({
 /* ─── Stellar logo + network switcher ─── */
 function StellarLogo({ size = 14 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" style={{ display: "block", flexShrink: 0 }}>
-      <path d="M12 2c.9 2.2 2.5 4.8 5 6-2.5 1.2-4.1 3.8-5 6-.9-2.2-2.5-4.8-5-6 2.5-1.2 4.1-3.8 5-6z" />
-      <path d="M22 12c-2.2-.9-4.8-2.5-6-5-1.2 2.5-3.8 4.1-6 5 2.2.9 4.8 2.5 6 5 1.2-2.5 3.8-4.1 6-5z" />
-      <path d="M12 22c.9-2.2 2.5-4.8 5-6-2.5-1.2-4.1-3.8-5-6-.9 2.2-2.5 4.8-5 6 2.5 1.2 4.1 3.8 5 6z" />
-      <path d="M2 12c2.2.9 4.8 2.5 6 5 1.2-2.5 3.8-4.1 6-5-2.2-.9-4.8-2.5-6-5-1.2 2.5-3.8 4.1-6 5z" />
-    </svg>
+    <img src="/stellar-logo.jpg" alt="Stellar" width={size} height={size} style={{ width: size, height: size, display: "block", flexShrink: 0, objectFit: "cover", mixBlendMode: "screen", filter: "invert(1)" }} />
   );
 }
 
@@ -543,10 +573,9 @@ function NetworkMenu({
   onSelect: (n: "mainnet" | "testnet" | "futurenet") => void;
 }) {
   if (!open) return null;
-  const networks: Array<{ key: "mainnet" | "testnet" | "futurenet"; label: string }> = [
+  const networks: Array<{ key: "mainnet" | "testnet"; label: string }> = [
     { key: "mainnet", label: "Mainnet" },
     { key: "testnet", label: "Testnet" },
-    { key: "futurenet", label: "Futurenet" },
   ];
   return (
     <div
@@ -570,14 +599,20 @@ function NetworkMenu({
         Network
       </div>
       {networks.map((n) => (
-        <div
+        <button
+          type="button"
           key={n.key}
           onClick={() => onSelect(n.key)}
           style={{
             display: "flex",
+            width: "100%",
             alignItems: "center",
             gap: 10,
             padding: "9px 14px",
+            border: 0,
+            background: "transparent",
+            fontFamily: "inherit",
+            textAlign: "left",
             cursor: "pointer",
             fontWeight: network === n.key ? 700 : 400,
             color: network === n.key ? "var(--text)" : "var(--text-dim)",
@@ -591,7 +626,7 @@ function NetworkMenu({
               <path d="M5 13l4 4L19 7" />
             </svg>
           )}
-        </div>
+        </button>
       ))}
     </div>
   );
@@ -1882,6 +1917,7 @@ function SettingsTeamPage({ navigate }: { navigate: (k: PageKey) => void }) {
 export default function ReleeveApp() {
   const router = useRouter();
   const pathname = usePathname();
+  const { user } = useAuth();
   const [page, setPage] = useState<PageKey>(() => PAGE_BY_APP_ROUTE[pathname] ?? "home");
   const [light, setLight] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -2424,11 +2460,11 @@ export default function ReleeveApp() {
                 }}
                 style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "none", border: "none", padding: 0, fontFamily: "inherit", color: "inherit" }}
               >
-                <div style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg,#4a4440,#28231f)", flexShrink: 0 }} />
-                <span style={{ fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>
+                <WorkspaceAvatar organization={organizations.find((organization) => organization.slug === activeOrganization) || { id: "active", slug: activeOrganization || "workspace", name: activeOrganization, is_personal: true }} size={30} profileAvatarUrl={user?.avatar_url} />
+                <span style={{ fontWeight: 650, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 145 }}>
                   {organizations.find((organization) => organization.slug === activeOrganization)?.name || activeOrganization || "Workspace"}
                 </span>
-                <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 999, flexShrink: 0 }}>
+                <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, flexShrink: 0 }}>
                   Free
                 </span>
                 <span style={{ color: "var(--text-faint)", display: "flex" }}>
@@ -2444,6 +2480,8 @@ export default function ReleeveApp() {
                 activeOrganization={activeOrganization}
                 onSelect={selectOrganization}
                 onCreate={() => router.push("/onboarding")}
+                onHome={() => navigate("home")}
+                profileAvatarUrl={user?.avatar_url}
               />
             </div>
 
@@ -2459,7 +2497,7 @@ export default function ReleeveApp() {
                 }}
                 style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "none", border: "none", padding: 0, fontFamily: "inherit", color: "inherit" }}
               >
-                <span style={{ color: "var(--text-dim)", fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 90 }}>
+                <span style={{ color: "var(--text-dim)", fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>
                   {projects.find((project) => project.slug === activeProject)?.name || activeProject || "Project"}
                 </span>
                 <span style={{ color: "var(--text-faint)", display: "flex" }}>
@@ -2517,58 +2555,6 @@ export default function ReleeveApp() {
               <NetworkMenu
                 id="netMenu"
                 open={netOpen === "production"}
-                network={network}
-                onSelect={(n) => {
-                  selectNetwork(n);
-                  setNetOpen(null);
-                }}
-              />
-            </div>
-            <div style={{ position: "relative" }}>
-              <div style={{ display: "flex", alignItems: "stretch", background: "var(--green)", borderRadius: 5, overflow: "hidden", flexShrink: 0 }}>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setNetOpen((v) => (v === "create" ? null : "create"));
-                    setWsOpen(false);
-                    setProjOpen(false);
-                    setNotifOpen(null);
-                  }}
-                  style={{ background: "transparent", color: "#fff", border: "none", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 9px", cursor: "pointer" }}
-                >
-                  <StellarLogo size={14} />
-                  <span className="db-desktop-only" style={{ fontSize: 12.5, fontWeight: 600, marginLeft: 7 }}>
-                    {network[0].toUpperCase() + network.slice(1)}
-                  </span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setNetOpen((v) => (v === "create" ? null : "create"));
-                    setWsOpen(false);
-                    setProjOpen(false);
-                    setNotifOpen(null);
-                  }}
-                  style={{
-                    background: "transparent",
-                    color: "#fff",
-                    border: "none",
-                    borderLeft: "1px solid rgba(255,255,255,0.3)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "6px 7px",
-                    cursor: "pointer",
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none" width={11} height={11}>
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </button>
-              </div>
-              <NetworkMenu
-                id="createMenu"
-                open={netOpen === "create"}
                 network={network}
                 onSelect={(n) => {
                   selectNetwork(n);
