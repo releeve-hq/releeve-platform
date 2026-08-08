@@ -11,8 +11,8 @@ export default function NotFound() {
         <p style={{ color: "#a1a1aa", fontSize: 14, lineHeight: 1.6, margin: "0 0 18px" }}>
           The explorer route may point to an entity that has not been indexed yet.
         </p>
-        <Link href="/dashboard" style={{ color: "#f4f4f5", textDecoration: "underline", textUnderlineOffset: 3 }}>
-          Back to dashboard
+        <Link href="/home" style={{ color: "#f4f4f5", textDecoration: "underline", textUnderlineOffset: 3 }}>
+          Back to home
         </Link>
       </div>
     </main>

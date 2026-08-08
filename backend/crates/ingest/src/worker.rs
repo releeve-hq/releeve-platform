@@ -74,6 +74,14 @@ impl HorizonClient {
         Ok(records(&body))
     }
 
+    /// The current network head. This is deliberately a tiny request used to
+    /// decide whether a newly started low-cost indexer should tail recent
+    /// activity rather than replay an archival-sized backlog.
+    pub async fn fetch_latest_ledger(&mut self) -> Result<Option<Value>, FetchError> {
+        let body = self.get_json("/ledgers?order=desc&limit=1").await?;
+        Ok(records(&body).into_iter().next())
+    }
+
     /// The classic transactions embedded in a ledger.
     pub async fn fetch_transactions(&mut self, seq: i64) -> Result<Vec<Value>, FetchError> {
         let body = self
@@ -96,6 +104,26 @@ fn paging_token(v: &Value) -> Option<String> {
     v.get("paging_token")
         .and_then(Value::as_str)
         .map(String::from)
+}
+
+/// Horizon ledger paging tokens are the ledger sequence shifted left by 32
+/// bits. Persisting a sequence is useful for database queries, but feeding it
+/// back as a raw cursor makes Horizon start near genesis and forces every sync
+/// pass to scan past already-indexed pages. Derive the opaque cursor here so a
+/// resumed daemon asks directly for the ledger after its watermark.
+fn cursor_after_ledger(sequence: i64) -> Option<String> {
+    let sequence = u64::try_from(sequence).ok()?;
+    sequence.checked_shl(32).map(|token| token.to_string())
+}
+
+fn tail_start(start: i64, head: Option<i64>, max_ledgers: u64) -> i64 {
+    let Some(head) = head else { return start };
+    let window = i64::try_from(max_ledgers).unwrap_or(i64::MAX).max(1);
+    if head.saturating_sub(start) >= window {
+        head.saturating_sub(window - 1).max(1)
+    } else {
+        start
+    }
 }
 
 async fn max_sequence(pool: &PgPool, network: &str) -> Result<Option<i64>, sqlx::Error> {
@@ -149,8 +177,16 @@ pub async fn sync_network(
         },
     };
 
+    let head = match client.fetch_latest_ledger().await {
+        Ok(Some(ledger)) => ledger.get("sequence").and_then(Value::as_i64),
+        Ok(None)
+        | Err(FetchError::CircuitOpen)
+        | Err(FetchError::Exhausted)
+        | Err(FetchError::NonRetryable) => None,
+    };
+    let start = tail_start(start, head, max_ledgers);
     let mut ingested = 0u64;
-    let mut cursor: Option<String> = None;
+    let mut cursor = start.checked_sub(1).and_then(cursor_after_ledger);
 
     while ingested < max_ledgers {
         let ledgers = match client.fetch_ledgers(cursor.as_deref()).await {
@@ -202,6 +238,25 @@ pub async fn sync_network(
     }
 
     Ok(ingested)
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::cursor_after_ledger;
+
+    #[test]
+    fn derives_horizon_ledger_paging_cursor() {
+        assert_eq!(cursor_after_ledger(128).as_deref(), Some("549755813888"));
+        assert_eq!(cursor_after_ledger(0).as_deref(), Some("0"));
+        assert_eq!(cursor_after_ledger(-1), None);
+    }
+
+    #[test]
+    fn large_backlog_starts_from_a_bounded_recent_tail() {
+        assert_eq!(super::tail_start(248, Some(4_034_915), 50), 4_034_866);
+        assert_eq!(super::tail_start(4_034_900, Some(4_034_915), 50), 4_034_900);
+        assert_eq!(super::tail_start(1, None, 50), 1);
+    }
 }
 
 /// Persist a Soroban invocation. With an RPC client the full invocation detail

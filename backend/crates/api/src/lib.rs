@@ -9,6 +9,7 @@
 //! Postgres + Redis: latest transactions, ledgers, top tokens, and transfers.
 
 pub mod auth;
+pub mod environments;
 pub mod error;
 pub mod explorer;
 pub mod explorer_detail;
@@ -42,7 +43,8 @@ use crate::auth::{
     change_password, forgot_password, login, logout, me, my_organizations, refresh,
     resend_verification, reset_password, revoke, signup, update_me, verify,
 };
-use crate::explorer::{recent_ledgers, recent_transactions, top_tokens, transfers};
+use crate::environments::*;
+use crate::explorer::{live_feed, recent_ledgers, recent_transactions, top_tokens, transfers};
 use crate::explorer_detail::*;
 use crate::health::{__path_health_check, HealthChecks, HealthResponse, health_check};
 use crate::monitoring::*;
@@ -290,6 +292,71 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             Get,
             "Alert firing history",
         ),
+        (
+            "/api/v1/{org}/{project}/environments",
+            Get,
+            "List Fork Core environments",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments",
+            Post,
+            "Create Fork Core environment",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}",
+            Get,
+            "Get Fork Core environment",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}",
+            Patch,
+            "Update Fork Core environment",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}",
+            Delete,
+            "Delete Fork Core environment",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/simulate",
+            Post,
+            "Queue Fork Core environment simulation",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/overrides",
+            Get,
+            "List Fork Core environment overrides",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/overrides",
+            Post,
+            "Create Fork Core environment override",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/overrides/{override_id}",
+            Delete,
+            "Disable Fork Core environment override",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",
+            Post,
+            "Start Fork Core environment sync",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/stop",
+            Post,
+            "Stop Fork Core environment sync",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/status",
+            Get,
+            "Get Fork Core environment sync status",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/rollback",
+            Post,
+            "Rewind Fork Core environment sync cursor",
+        ),
     ] {
         add_phase3_path(openapi, path, method, summary);
     }
@@ -380,6 +447,7 @@ pub fn app(state: AppState) -> Router {
             get(recent_transactions),
         )
         .route("/api/v1/explorer/{network}/ledgers", get(recent_ledgers))
+        .route("/api/v1/explorer/{network}/live", get(live_feed))
         .route("/api/v1/explorer/{network}/tokens/top", get(top_tokens))
         .route("/api/v1/explorer/{network}/transfers", get(transfers))
         .route(
@@ -509,6 +577,44 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/{org}/{project}/simulations/{simulation_id}",
             get(get_simulation).delete(cancel_simulation),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments",
+            get(list_environments).post(create_environment),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}",
+            get(get_environment)
+                .patch(update_environment)
+                .delete(delete_environment),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/overrides/{override_id}",
+            delete(delete_environment_override),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/overrides",
+            get(list_or_add_environment_overrides).post(list_or_add_environment_overrides),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/simulate",
+            post(environment_simulate),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/rollback",
+            post(environment_rollback),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",
+            post(start_environment_sync),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/stop",
+            post(stop_environment_sync),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/status",
+            get(environment_sync_status),
         )
         .route(
             "/api/v1/{org}/{project}/transactions/{hash}/comments",

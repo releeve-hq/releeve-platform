@@ -10,6 +10,19 @@ const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
 const LANDING_ROUTES = ['/bounties', '/jobs', '/about', '/terms', '/privacy'];
 const EXPLORER_ENTITY_ROUTES = new Set(['ledger', 'tx', 'account', 'contract']);
+const APP_ROUTES = [
+  '/home',
+  '/dashboard',
+  '/simulator',
+  '/virtual-environments',
+  '/activity',
+  '/alerts',
+  '/wallets',
+  '/contracts',
+  '/docs',
+  '/settings',
+  '/onboarding',
+];
 
 function isAuthRoute(pathname: string): boolean {
   if (AUTH_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'))) {
@@ -31,6 +44,10 @@ function isExplorerRoute(pathname: string): boolean {
   return Boolean(entity && id && EXPLORER_ENTITY_ROUTES.has(entity));
 }
 
+function isAppRoute(pathname: string): boolean {
+  return APP_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
+}
+
 export default function ConditionalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -38,8 +55,8 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
 
   useEffect(() => {
     if (isLoading) return;
-    if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
-      if (!isAuthenticated) router.replace('/signin?next=/dashboard');
+    if (isAppRoute(pathname)) {
+      if (!isAuthenticated) router.replace(`/signin?next=${encodeURIComponent(pathname === '/dashboard' ? '/home' : pathname)}`);
       return;
     }
     if (!isAuthRoute(pathname) && !isPublicRoute(pathname) && !isExplorerRoute(pathname) && !isAuthenticated) {
@@ -47,12 +64,7 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
     }
   }, [isLoading, isAuthenticated, pathname, router]);
 
-  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
-    if (isLoading || !isAuthenticated) return null;
-    return <>{children}</>;
-  }
-
-  if (pathname === '/onboarding') {
+  if (isAppRoute(pathname)) {
     if (isLoading || !isAuthenticated) return null;
     return <>{children}</>;
   }

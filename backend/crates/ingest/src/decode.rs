@@ -56,7 +56,10 @@ pub fn decode_ledger(v: &Value, network: &str) -> DecodeResult<LedgerRecord> {
         network: network.to_string(),
         hash: as_str(v, "hash")?.to_string(),
         parent_hash: v.get("prev_hash").and_then(Value::as_str).map(String::from),
-        transaction_count: opt_i64(v, "transaction_count").unwrap_or(0),
+        transaction_count: opt_i64(v, "transaction_count").unwrap_or_else(|| {
+            opt_i64(v, "successful_transaction_count").unwrap_or(0)
+                + opt_i64(v, "failed_transaction_count").unwrap_or(0)
+        }),
         size_bytes: opt_i64(v, "size_bytes").unwrap_or(0),
         timestamp,
         base_operation_fee: opt_i64(v, "base_fee_in_stroops").map(|n| n.to_string()),
@@ -456,6 +459,20 @@ mod tests {
         assert_eq!(l.parent_hash.as_deref(), Some("parent-hash"));
         assert_eq!(l.transaction_count, 7);
         assert_eq!(l.base_operation_fee.as_deref(), Some("100"));
+    }
+
+    #[test]
+    fn horizon_ledger_combines_successful_and_failed_transaction_counts() {
+        let v = json(
+            r#"{
+                "sequence": 101,
+                "hash": "ledger-hash",
+                "closed_at": "2026-08-01T12:00:00Z",
+                "successful_transaction_count": 7,
+                "failed_transaction_count": 2
+            }"#,
+        );
+        assert_eq!(decode_ledger(&v, "testnet").unwrap().transaction_count, 9);
     }
 
     #[test]

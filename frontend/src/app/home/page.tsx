@@ -1,5 +1,5 @@
 import ReleeveApp from "@/components/app/releeve-app";
 
-export default function SettingsPage() {
+export default function HomePage() {
   return <ReleeveApp />;
 }

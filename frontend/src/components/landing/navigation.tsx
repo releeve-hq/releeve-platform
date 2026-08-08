@@ -27,7 +27,7 @@ const navItems: NavItem[] = [
     label: "Platform",
     dropdown: [
       { name: "Simulator", href: "/simulator", icon: Cpu, desc: "Test and simulate blockchain interactions" },
-      { name: "Explorer", href: "/explorer", icon: BarChart3, desc: "Explore transactions and blocks in real-time" },
+      { name: "Explorer", href: "/explorer", icon: BarChart3, desc: "Explore transactions and ledgers in real-time" },
       { name: "Monitor", href: "/monitor", icon: Layers, desc: "Real-time system monitoring and alerts" },
       { name: "Virtual Envs", href: "/virtual-environments", icon: Globe, desc: "Isolated testing and sandbox environments" },
     ],

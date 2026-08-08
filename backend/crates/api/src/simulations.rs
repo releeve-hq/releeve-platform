@@ -72,6 +72,9 @@ fn map_remote(error: sim::Error) -> Error {
         sim::Error::Remote { status, .. } if status.is_client_error() => {
             Error::BadRequest("Fork Core rejected the simulation".into())
         }
+        sim::Error::Remote { status, .. } if status.is_server_error() => {
+            Error::ServiceUnavailable("fork_core".into())
+        }
         sim::Error::Transport(_) => Error::ServiceUnavailable("fork_core".into()),
         other => Error::internal(other),
     }

@@ -134,6 +134,14 @@ export type ExplorerPage<T> = {
   data: T[];
 };
 
+export type ExplorerLiveFeed = {
+  network: string;
+  generated_at: string;
+  transactions: ExplorerPage<ExplorerFeedTransaction>;
+  ledgers: ExplorerPage<ExplorerFeedLedger>;
+  error?: string;
+};
+
 export type ExplorerFeedTransaction = {
   hash: string;
   network: string;
@@ -211,4 +219,8 @@ export function getRecentLedgers(network: string, limit: number, cursor?: string
   return publicExplorerGet<ExplorerPage<ExplorerFeedLedger>>(
     `/api/v1/explorer/${encodeURIComponent(network)}/ledgers?${query.toString()}`,
   );
+}
+
+export function explorerLiveUrl(network: string) {
+  return `${BACKEND_URL}/api/v1/explorer/${encodeURIComponent(network)}/live`;
 }

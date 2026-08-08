@@ -77,7 +77,7 @@ export default function OnboardingPage() {
         network,
       });
       localStorage.setItem('releeve-active-workspace', JSON.stringify({ organization: organization.slug, project: project.slug, network }));
-      router.replace('/dashboard');
+      router.replace('/home');
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : 'Unable to create your workspace.');
     } finally {

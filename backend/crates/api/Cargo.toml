@@ -25,6 +25,7 @@ hex = { workspace = true }
 reqwest = { workspace = true }
 lettre = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 tracing = { workspace = true }

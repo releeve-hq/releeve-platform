@@ -198,12 +198,64 @@ impl ForkCoreClient {
             .await
     }
 
+    pub async fn list_environments(&self, actor: &ServiceActor) -> Result<Value> {
+        self.request(actor, Method::GET, "/v1/environments", None, None)
+            .await
+    }
+
+    pub async fn get_environment(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/environments/{environment_id}"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn update_environment(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::PATCH,
+            &format!("/v1/environments/{environment_id}"),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
+    pub async fn delete_environment(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::DELETE,
+            &format!("/v1/environments/{environment_id}"),
+            None,
+            None,
+        )
+        .await
+    }
+
     pub async fn environment_action(
         &self,
         actor: &ServiceActor,
         environment_id: Uuid,
         action: &str,
         body: Option<&Value>,
+        idempotency_key: Option<&str>,
     ) -> Result<Value> {
         if !matches!(
             action,
@@ -213,7 +265,7 @@ impl ForkCoreClient {
                 "unsupported environment action".into(),
             ));
         }
-        let method = if action == "sync/status" {
+        let method = if matches!(action, "sync/status" | "overrides") && body.is_none() {
             Method::GET
         } else {
             Method::POST
@@ -223,6 +275,22 @@ impl ForkCoreClient {
             method,
             &format!("/v1/environments/{environment_id}/{action}"),
             body,
+            idempotency_key,
+        )
+        .await
+    }
+
+    pub async fn delete_environment_override(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        override_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::DELETE,
+            &format!("/v1/environments/{environment_id}/overrides/{override_id}"),
+            None,
             None,
         )
         .await
@@ -256,8 +324,12 @@ impl ForkCoreClient {
             .bytes()
             .await
             .map_err(|error| Error::Transport(error.to_string()))?;
-        let value: Value = serde_json::from_slice(&bytes)
-            .map_err(|error| Error::InvalidResponse(error.to_string()))?;
+        let value = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes)
+                .map_err(|error| Error::InvalidResponse(error.to_string()))?
+        };
         if !status.is_success() {
             return Err(Error::Remote {
                 status,

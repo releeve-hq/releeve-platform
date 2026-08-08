@@ -7,13 +7,17 @@
 //! Redis error) falls back correctly, and a rate-limit bucket failure fails
 //! *open* so the public explorer never goes down because of Redis.
 
+use std::convert::Infallible;
 use std::future::Future;
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures::Stream;
 use redis::AsyncCommands;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use shared::Error;
 use utoipa::IntoParams;
 
@@ -24,6 +28,10 @@ use ingest::ratelimit;
 /// Sliding-window allowance for a single caller on explorer feeds.
 const RATE_LIMIT_PER_WINDOW: u64 = 120;
 const RATE_WINDOW_SECS: i64 = 60;
+const LIVE_FEED_INTERVAL_SECS: u64 = 60;
+/// Home keeps its compact lists at ten records, but its charts need enough
+/// samples to describe recent activity without inventing any demo values.
+const HOME_CHART_LIMIT: i64 = 20;
 
 /// Shared query-string params for paginated feed endpoints.
 #[derive(Debug, Deserialize, IntoParams)]
@@ -180,6 +188,62 @@ pub async fn recent_ledgers(
     })
     .await?;
     Ok(Json(payload))
+}
+
+async fn live_payload(state: &AppState, network: &str) -> Result<String, Error> {
+    let tx_key = feeds::feed_key(network, "transactions", &page_tail(HOME_CHART_LIMIT, None));
+    let ledger_key = feeds::feed_key(network, "ledgers", &page_tail(HOME_CHART_LIMIT, None));
+    let tx_db = state.db.clone();
+    let tx_network = network.to_owned();
+    let transactions = cached_page(state, &tx_key, feeds::FEED_TTL_SECS, async move {
+        feeds::latest_transactions(&tx_db, &tx_network, HOME_CHART_LIMIT, None, Dir::Next).await
+    })
+    .await?;
+    let ledger_db = state.db.clone();
+    let ledger_network = network.to_owned();
+    let ledgers = cached_page(state, &ledger_key, feeds::FEED_TTL_SECS, async move {
+        feeds::latest_ledgers(
+            &ledger_db,
+            &ledger_network,
+            HOME_CHART_LIMIT,
+            None,
+            Dir::Next,
+        )
+        .await
+    })
+    .await?;
+
+    serde_json::to_string(&json!({
+        "network": network,
+        "generated_at": chrono::Utc::now(),
+        "transactions": transactions,
+        "ledgers": ledgers,
+    }))
+    .map_err(Error::internal)
+}
+
+/// `GET /api/v1/explorer/{network}/live`
+pub async fn live_feed(
+    State(state): State<AppState>,
+    Path(network): Path<String>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, Error> {
+    rate_limit(&state, "explorer", &format!("live:{network}")).await?;
+
+    let stream = futures::stream::unfold(
+        (state, network, true),
+        |(state, network, first)| async move {
+            if !first {
+                tokio::time::sleep(Duration::from_secs(LIVE_FEED_INTERVAL_SECS)).await;
+            }
+            let payload = live_payload(&state, &network)
+                .await
+                .unwrap_or_else(|err| json!({ "error": err.to_string() }).to_string());
+            let event = Event::default().event("explorer.feed").data(payload);
+            Some((Ok(event), (state, network, false)))
+        },
+    );
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// `GET /api/v1/explorer/{network}/tokens/top?window=24h|7d|30d`

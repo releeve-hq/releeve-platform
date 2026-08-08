@@ -32,10 +32,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Compute "route" dynamic state from the pathname to prevent breaking existing code
   const route = useMemo(() => {
-    let page = 'dashboard';
+    let page = 'home';
     let params: any = {};
-    if (pathname === '/dashboard') {
-      page = 'dashboard';
+    if (pathname === '/home' || pathname === '/dashboard') {
+      page = 'home';
     } else if (pathname === '/projects') {
       page = 'projects';
     } else if (pathname.startsWith('/projects/')) {
@@ -88,7 +88,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   function navigate(page: string, params: any = {}) {
     let path = '';
     switch (page) {
-      case 'dashboard': path = '/dashboard'; break;
+      case 'dashboard':
+      case 'home': path = '/home'; break;
       case 'projects': path = '/projects'; break;
       case 'project': path = `/projects/${params.id}`; break;
       case 'project-overview': path = `/projects/${activeContext.id || params.id}/overview`; break;
@@ -99,7 +100,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       case 'wallet': path = '/wallet'; break;
       case 'profile': path = '/profile'; break;
       case 'settings': path = '/settings'; break;
-      default: path = '/dashboard';
+      default: path = '/home';
     }
     router.push(path);
     setMobileNavOpen(false);

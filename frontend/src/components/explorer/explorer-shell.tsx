@@ -17,12 +17,12 @@ export function ExplorerShell({ network, children }: { network: string; children
   return (
     <div className="explorer-shell">
       <aside className="explorer-sidebar">
-        <Link href="/dashboard" className="explorer-sidebar-brand">Releeve</Link>
+        <Link href="/home" className="explorer-sidebar-brand">Releeve</Link>
         <p>Explorer</p>
         <nav aria-label="Explorer navigation">
           {navigation.map((item) => <Link key={item.label} href={item.href} className={pathname === root && item.label === 'Overview' ? 'active' : ''}>{item.label}</Link>)}
         </nav>
-        <div className="explorer-sidebar-footer"><Link href="/dashboard">Workspace</Link></div>
+        <div className="explorer-sidebar-footer"><Link href="/home">Workspace</Link></div>
       </aside>
       <div className="explorer-shell-content">{children}</div>
       <style>{`
