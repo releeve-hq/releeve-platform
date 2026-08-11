@@ -17,3 +17,4 @@ pub mod state;
 pub mod sync;
 pub mod upstream;
 pub mod worker;
+pub mod xdr_decode;

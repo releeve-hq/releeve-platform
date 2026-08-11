@@ -8,7 +8,7 @@ import AppShell from '@/components/layout/app-shell';
 const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'];
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
-const LANDING_ROUTES = ['/bounties', '/jobs', '/about', '/terms', '/privacy'];
+const MARKETING_ROUTES = ['/about', '/pricing', '/docs', '/terms', '/privacy'];
 const EXPLORER_ENTITY_ROUTES = new Set(['ledger', 'tx', 'account', 'contract']);
 const APP_ROUTES = [
   '/home',
@@ -19,7 +19,6 @@ const APP_ROUTES = [
   '/alerts',
   '/wallets',
   '/contracts',
-  '/docs',
   '/settings',
   '/onboarding',
 ];
@@ -35,7 +34,7 @@ function isAuthRoute(pathname: string): boolean {
 }
 
 function isPublicRoute(pathname: string): boolean {
-  return PUBLIC_ROUTES.includes(pathname) || LANDING_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
+  return PUBLIC_ROUTES.includes(pathname) || MARKETING_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
 }
 
 function isExplorerRoute(pathname: string): boolean {
@@ -82,9 +81,6 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
   }
 
   if (isPublicRoute(pathname)) {
-    if (isAuthenticated) {
-      return <AppShell>{children}</AppShell>;
-    }
     return <>{children}</>;
   }
 

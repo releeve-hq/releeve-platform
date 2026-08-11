@@ -1,4 +1,11 @@
+import type { Metadata } from 'next';
 import LegalPage, { LegalSection } from '@/components/legal/legal-page';
+
+export const metadata: Metadata = {
+  title: 'Privacy Policy | Releeve',
+  description: 'How Releeve collects, uses, and protects information.',
+  alternates: { canonical: '/privacy' },
+};
 
 const sections: LegalSection[] = [
   {
@@ -10,16 +17,16 @@ const sections: LegalSection[] = [
   {
     heading: '2. Information We Collect',
     paragraphs: [
-      'We collect information you provide directly, such as your name, email address, username, profile information, and any content you submit, including bounty postings, comments, and repository connections.',
+      'We collect information you provide directly, such as your name, email address, username, profile information, project configuration, comments, monitored entities, alert rules, and simulation inputs.',
       'We also collect information automatically when you use the Service, including device and browser information, IP address, log data, and usage information such as pages viewed and actions taken.',
-      'When you connect third-party accounts such as GitHub, we may collect information from those services consistent with the permissions you grant, such as your public repositories and contribution activity.',
+      'When you connect a third-party identity provider, we may collect account information from that service consistent with the permissions you grant.',
       'When you use blockchain-related features, we may process public blockchain data, including transaction hashes and addresses, that you interact with through the Service.',
     ],
   },
   {
     heading: '3. How We Use Information',
     paragraphs: [
-      'We use the information we collect to operate, maintain, and improve the Service; to authenticate you and secure your account; to process bounty transactions and hiring connections; to provide monitoring and alerting features; to respond to your requests and support inquiries; to send you service notifications; and to enforce our Terms of Service.',
+      'We use the information we collect to operate, maintain, and improve the Service; to authenticate you and secure your account; to run requested simulations; to provide monitoring and alerting features; to respond to support inquiries; to send service notifications; and to enforce our Terms of Service.',
     ],
   },
   {
@@ -34,7 +41,7 @@ const sections: LegalSection[] = [
     paragraphs: [
       'We do not sell your personal information. We may share your information with service providers who help us operate the Service, such as hosting, email delivery, and analytics providers, subject to appropriate confidentiality obligations.',
       'We may disclose information where required by law, regulation, or legal process, or where we believe in good faith that disclosure is necessary to protect our rights, your safety, or the safety of others.',
-      'Information that is publicly visible by design — such as your public profile, public bounty listings, and public blockchain data — is accessible to other users of the Service and, where applicable, the public.',
+      'Information that is publicly visible by design, including public blockchain data and public explorer pages, is accessible to other users of the Service and, where applicable, the public.',
     ],
   },
   {

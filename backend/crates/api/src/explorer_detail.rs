@@ -4,14 +4,19 @@
 
 use std::collections::HashSet;
 
-use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
+use axum::{Json, body::Bytes};
 use chrono::{DateTime, Utc};
+use ingest::decode::{decode_classic_tx, decode_invoke_detail, decode_ledger};
+use ingest::rpc::SorobanRpcClient;
+use ingest::state::{upsert_ledger, upsert_tx};
+use ingest::upstream::{Backoff, CircuitBreaker};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use shared::{Cursor, Error, Paged, Pagination, Permission, PermissionSet, clamp_limit};
 use sqlx::{PgPool, Row};
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::extract::AuthUser;
@@ -48,6 +53,11 @@ pub struct SearchQuery {
     pub q: String,
     #[serde(default = "default_scope")]
     pub scope: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LookupQuery {
+    pub q: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +100,7 @@ fn default_call_mode() -> String {
 
 #[derive(Clone)]
 struct ProjectAuth {
+    organization_id: Uuid,
     project_id: Uuid,
     network: String,
     email_verified: bool,
@@ -125,9 +136,9 @@ async fn resolve_project(
     org_slug: &str,
     project_slug: &str,
 ) -> Result<ProjectAuth, Error> {
-    let row = sqlx::query_as::<_, (Uuid, String, bool, i16)>(
+    let row = sqlx::query_as::<_, (Uuid, Uuid, String, bool, i16)>(
         r#"
-        SELECT p.id, p.network, u.email_verified, m.permissions
+        SELECT o.id, p.id, p.network, u.email_verified, m.permissions
         FROM organizations o
         JOIN organization_members m ON m.organization_id = o.id AND m.user_id = $1
         JOIN users u ON u.id = m.user_id
@@ -144,11 +155,56 @@ async fn resolve_project(
     .ok_or(Error::NotFound)?;
 
     Ok(ProjectAuth {
-        project_id: row.0,
-        network: row.1,
-        email_verified: row.2,
-        perms: PermissionSet(row.3),
+        organization_id: row.0,
+        project_id: row.1,
+        network: row.2,
+        email_verified: row.3,
+        perms: PermissionSet(row.4),
     })
+}
+
+fn source_lens(state: &AppState) -> Result<&source_lens_client::SourceLensClient, Error> {
+    state
+        .source_lens
+        .as_ref()
+        .ok_or_else(|| Error::ServiceUnavailable("source_lens".into()))
+}
+
+fn source_lens_actor(
+    user_id: Uuid,
+    auth: &ProjectAuth,
+    request_id: Uuid,
+) -> source_lens_client::ServiceActor {
+    source_lens_client::ServiceActor::project_member(
+        user_id,
+        auth.organization_id,
+        auth.project_id,
+        request_id,
+        auth.perms.contains(Permission::UpdateProjects),
+    )
+}
+
+fn map_source_lens(error: source_lens_client::Error) -> Error {
+    tracing::warn!(%error, "SourceLens request failed");
+    match error {
+        source_lens_client::Error::Remote { status, .. } if status.as_u16() == 404 => {
+            Error::NotFound
+        }
+        source_lens_client::Error::Remote { status, .. } if status.as_u16() == 409 => {
+            Error::Conflict
+        }
+        source_lens_client::Error::Remote { status, .. } if status.as_u16() == 429 => {
+            Error::RateLimited
+        }
+        source_lens_client::Error::Remote { status, .. } if status.is_client_error() => {
+            Error::BadRequest("SourceLens rejected the request".into())
+        }
+        source_lens_client::Error::Remote { status, .. } if status.is_server_error() => {
+            Error::ServiceUnavailable("source_lens".into())
+        }
+        source_lens_client::Error::Transport(_) => Error::ServiceUnavailable("source_lens".into()),
+        other => Error::internal(other),
+    }
 }
 
 fn parse_time_cursor(raw: Option<&str>) -> Result<Option<(DateTime<Utc>, String)>, Error> {
@@ -232,35 +288,188 @@ fn numeric_str(row: &sqlx::postgres::PgRow, name: &str) -> Option<String> {
 
 // ---- Transaction detail -------------------------------------------------------------
 
+pub async fn public_lookup(
+    State(state): State<AppState>,
+    Path(network): Path<String>,
+    Query(q): Query<LookupQuery>,
+) -> Result<Json<Value>, Error> {
+    let query = q.q.trim();
+    if query.is_empty() {
+        return Ok(Json(json!({ "query": query, "suggestions": [] })));
+    }
+    let base = horizon_url_for_network(&network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+    let mut suggestions = Vec::new();
+
+    if query.len() == 64 && query.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let local = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM transactions WHERE network = $1 AND lower(hash) = lower($2))",
+        )
+        .bind(&network)
+        .bind(query)
+        .fetch_one(&state.db)
+        .await
+        .map_err(Error::internal)?;
+        if local || upstream_exists(&format!("{base}/transactions/{query}")).await {
+            suggestions.push(json!({
+                "kind": "transaction", "value": query,
+                "label": "Transaction", "description": "Open decoded transaction detail"
+            }));
+        }
+    } else if query.starts_with('G') && query.len() == 56 {
+        if upstream_exists(&format!("{base}/accounts/{query}")).await {
+            suggestions.push(json!({
+                "kind": "account", "value": query,
+                "label": "Wallet / Account", "description": "Open balances and transaction history"
+            }));
+        }
+    } else if query.starts_with('C') && query.len() == 56 {
+        let local = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM contracts WHERE network = $1 AND address = $2
+                UNION ALL
+                SELECT 1 FROM tx_call_tree_nodes c
+                JOIN transactions t ON t.hash = c.tx_hash
+                WHERE t.network = $1 AND c.contract_id = $2
+            )
+            "#,
+        )
+        .bind(&network)
+        .bind(query)
+        .fetch_one(&state.db)
+        .await
+        .map_err(Error::internal)?;
+        if local || upstream_exists(&format!("{base}/contracts/{query}")).await {
+            suggestions.push(json!({
+                "kind": "contract", "value": query,
+                "label": "Contract", "description": "Open contract activity and events"
+            }));
+        }
+    } else if query.bytes().all(|byte| byte.is_ascii_digit())
+        && let Ok(sequence) = query.parse::<i64>()
+    {
+        let local = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM ledgers WHERE network = $1 AND sequence = $2)",
+        )
+        .bind(&network)
+        .bind(sequence)
+        .fetch_one(&state.db)
+        .await
+        .map_err(Error::internal)?;
+        if local || upstream_exists(&format!("{base}/ledgers/{sequence}")).await {
+            suggestions.push(json!({
+                "kind": "ledger", "value": query,
+                "label": format!("Ledger {sequence}"), "description": "Open ledger detail"
+            }));
+        }
+    }
+
+    Ok(Json(json!({ "query": query, "suggestions": suggestions })))
+}
+
+async fn upstream_exists(url: &str) -> bool {
+    reqwest::Client::new()
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
+}
+
 pub async fn public_tx_detail(
     State(state): State<AppState>,
     Path((network, hash)): Path<(String, String)>,
 ) -> Result<Json<Value>, Error> {
-    Ok(Json(load_tx_detail(&state.db, &network, &hash).await?))
+    Ok(Json(
+        load_tx_detail(&state.db, &network, &hash, &state.settings.soroban_rpc_url).await?,
+    ))
 }
 
-async fn load_tx_detail(pool: &PgPool, network: &str, hash: &str) -> Result<Value, Error> {
-    let row = sqlx::query(
-        r#"
-        SELECT hash, network, ledger_sequence, status, source_account, operation_type,
-               fee_charged::text, sequence_number, application_order, timestamp,
-               cpu_instructions, memory_bytes, invoke_time_nsecs, disk_read_bytes,
-               write_bytes, max_rw_key_byte, max_rw_data_byte
-        FROM transactions
-        WHERE network = $1 AND hash = $2
-        "#,
-    )
-    .bind(network)
-    .bind(hash)
-    .fetch_optional(pool)
-    .await
-    .map_err(Error::internal)?
-    .ok_or(Error::NotFound)?;
+async fn load_tx_detail(
+    pool: &PgPool,
+    network: &str,
+    hash: &str,
+    configured_rpc_url: &str,
+) -> Result<Value, Error> {
+    let mut row = match tx_header_row(pool, network, hash).await {
+        Ok(row) => row,
+        Err(Error::NotFound) => {
+            let (horizon_tx, _) = fetch_horizon_tx_with_fund_flow(network, hash).await?;
+            ensure_horizon_ledger(pool, network, &horizon_tx).await?;
+            let tx = decode_classic_tx(&horizon_tx, network).map_err(Error::internal)?;
+            upsert_tx(pool, &tx).await.map_err(Error::internal)?;
+            tx_header_row(pool, network, hash).await?
+        }
+        Err(error) => return Err(error),
+    };
 
+    let operation_type = row.get::<String, _>("operation_type");
+    let is_soroban_invocation = operation_type == "invoke_host_function";
+    if is_soroban_invocation {
+        if let Some(rpc_url) = rpc_url_for_network(network, configured_rpc_url) {
+            match fetch_rpc_tx_detail(&rpc_url, network, hash).await {
+                Ok(tx) => {
+                    upsert_tx(pool, &tx).await.map_err(|err| {
+                        tracing::error!(%err, hash, network, "failed to persist RPC-enriched explorer transaction");
+                        Error::internal(err)
+                    })?;
+                    row = tx_header_row(pool, network, hash).await?;
+                }
+                Err(error) => {
+                    tracing::warn!(?error, hash, network, "RPC explorer enrichment failed");
+                }
+            }
+        }
+    }
+
+    let mut flow = fund_flow(pool, hash).await?;
+    // A Soroban invocation can legitimately move no asset. Its empty flow must
+    // not trigger the classic Horizon fallback, which only has the envelope
+    // root and would overwrite a decoded nested RPC trace.
+    if flow.is_empty()
+        && !is_soroban_invocation
+        && let Ok((horizon_tx, horizon_flow)) = fetch_horizon_tx_with_fund_flow(network, hash).await
+    {
+        if let Ok(tx) = decode_classic_tx(&horizon_tx, network) {
+            let should_fetch_rpc = tx.operation_type == "invoke_host_function"
+                && call_tree_count(pool, hash).await? == 0;
+            upsert_tx(pool, &tx).await.map_err(|err| {
+                tracing::error!(%err, hash, network, "failed to persist Horizon-enriched explorer transaction");
+                Error::internal(err)
+            })?;
+            row = tx_header_row(pool, network, hash).await?;
+            if should_fetch_rpc
+                && let Some(rpc_url) = rpc_url_for_network(network, configured_rpc_url)
+            {
+                match fetch_rpc_tx_detail(&rpc_url, network, hash).await {
+                    Ok(tx) => {
+                        upsert_tx(pool, &tx).await.map_err(|err| {
+                            tracing::error!(%err, hash, network, "failed to persist RPC detail after Horizon fetch");
+                            Error::internal(err)
+                        })?;
+                        row = tx_header_row(pool, network, hash).await?;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            hash,
+                            network,
+                            "RPC explorer enrichment after Horizon fetch failed"
+                        );
+                    }
+                }
+            }
+        }
+        flow = horizon_flow;
+    }
+    if flow.is_empty() {
+        flow = fund_flow(pool, hash).await?;
+    }
     let calls = call_tree(pool, hash).await?;
     let states = state_changes(pool, hash).await?;
     let events = tx_events(pool, hash).await?;
-    let flow = fund_flow(pool, hash).await?;
     let annotations = annotations(pool, hash).await?;
 
     Ok(json!({
@@ -271,17 +480,23 @@ async fn load_tx_detail(pool: &PgPool, network: &str, hash: &str) -> Result<Valu
         "timestamp": row.get::<DateTime<Utc>, _>("timestamp"),
         "source_account": row.get::<String, _>("source_account"),
         "operation_type": row.get::<String, _>("operation_type"),
+        "operation_target_address": row.get::<Option<String>, _>("operation_target_address"),
+        "operation_target_kind": row.get::<Option<String>, _>("operation_target_kind"),
         "fee_charged": numeric_str(&row, "fee_charged"),
         "sequence_number": row.get::<Option<String>, _>("sequence_number"),
         "application_order": row.get::<Option<i32>, _>("application_order"),
         "resource_usage": {
             "cpu_instructions": row.get::<Option<i64>, _>("cpu_instructions"),
+            "cpu_instruction_limit": row.get::<Option<i64>, _>("cpu_instruction_limit"),
             "memory_bytes": row.get::<Option<i64>, _>("memory_bytes"),
             "invoke_time_nsecs": row.get::<Option<i64>, _>("invoke_time_nsecs"),
             "disk_read_bytes": row.get::<Option<i64>, _>("disk_read_bytes"),
+            "disk_read_bytes_limit": row.get::<Option<i64>, _>("disk_read_bytes_limit"),
             "write_bytes": row.get::<Option<i64>, _>("write_bytes"),
+            "write_bytes_limit": row.get::<Option<i64>, _>("write_bytes_limit"),
             "max_rw_key_byte": row.get::<Option<i32>, _>("max_rw_key_byte"),
-            "max_rw_data_byte": row.get::<Option<i32>, _>("max_rw_data_byte")
+            "max_rw_data_byte": row.get::<Option<i32>, _>("max_rw_data_byte"),
+            "resource_fee": numeric_str(&row, "resource_fee")
         },
         "call_tree": calls,
         "state_changes": states,
@@ -292,13 +507,39 @@ async fn load_tx_detail(pool: &PgPool, network: &str, hash: &str) -> Result<Valu
     }))
 }
 
+async fn tx_header_row(
+    pool: &PgPool,
+    network: &str,
+    hash: &str,
+) -> Result<sqlx::postgres::PgRow, Error> {
+    sqlx::query(
+        r#"
+        SELECT hash, network, ledger_sequence, status, source_account, operation_type,
+               operation_target_address, operation_target_kind,
+               fee_charged::text, sequence_number, application_order, timestamp,
+               cpu_instructions, memory_bytes, invoke_time_nsecs, disk_read_bytes,
+               write_bytes, max_rw_key_byte, max_rw_data_byte,
+               cpu_instruction_limit, disk_read_bytes_limit, write_bytes_limit,
+               resource_fee::text
+        FROM transactions
+        WHERE network = $1 AND hash = $2
+        "#,
+    )
+    .bind(network)
+    .bind(hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)
+}
+
 async fn call_tree(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
     let rows = sqlx::query(
         r#"
-        SELECT id, parent_node_id, contract_id, function_name, args, return_value, depth
+        SELECT id, parent_node_id, contract_id, function_name, args, return_value, depth, sequence
         FROM tx_call_tree_nodes
         WHERE tx_hash = $1
-        ORDER BY depth ASC, id ASC
+        ORDER BY sequence ASC, id ASC
         "#,
     )
     .bind(hash)
@@ -315,19 +556,64 @@ async fn call_tree(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
             "function_name": row.get::<String, _>("function_name"),
             "args": row.get::<Value, _>("args"),
             "return_value": row.get::<Option<Value>, _>("return_value"),
-            "depth": row.get::<i32, _>("depth")
+            "depth": row.get::<i32, _>("depth"),
+            "sequence": row.get::<i32, _>("sequence")
         }));
     }
     Ok(nodes)
 }
 
+async fn call_tree_count(pool: &PgPool, hash: &str) -> Result<i64, Error> {
+    sqlx::query_scalar("SELECT count(*) FROM tx_call_tree_nodes WHERE tx_hash = $1")
+        .bind(hash)
+        .fetch_one(pool)
+        .await
+        .map_err(Error::internal)
+}
+
+fn explorer_backoff() -> Backoff {
+    Backoff {
+        base: Duration::from_millis(250),
+        max: Duration::from_secs(5),
+        jitter: 0.1,
+        max_attempts: 3,
+    }
+}
+
+fn explorer_breaker() -> CircuitBreaker {
+    CircuitBreaker::new(3, Duration::from_secs(30))
+}
+
+fn rpc_url_for_network(network: &str, configured_rpc_url: &str) -> Option<String> {
+    match network {
+        "testnet" => Some("https://soroban-testnet.stellar.org".to_string()),
+        "mainnet" if !configured_rpc_url.trim().is_empty() => Some(configured_rpc_url.to_string()),
+        _ => None,
+    }
+}
+
+async fn fetch_rpc_tx_detail(
+    rpc_url: &str,
+    network: &str,
+    hash: &str,
+) -> Result<ingest::models::TxRecord, Error> {
+    let mut rpc = SorobanRpcClient::new(rpc_url, explorer_backoff(), explorer_breaker());
+    let detail = rpc.get_transaction(hash).await.map_err(|err| {
+        Error::BadRequest(format!(
+            "Soroban RPC transaction detail unavailable: {err:?}"
+        ))
+    })?;
+    decode_invoke_detail(&detail, network).map_err(Error::internal)
+}
+
 async fn state_changes(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
     let rows = sqlx::query(
         r#"
-        SELECT id, caused_by_node_id, entry_type, entry_key, value_before, value_after
+        SELECT id, caused_by_node_id, entry_type, entry_key, value_before, value_after,
+               sequence, cause_confidence
         FROM tx_state_changes
         WHERE tx_hash = $1
-        ORDER BY id ASC
+        ORDER BY sequence ASC, id ASC
         "#,
     )
     .bind(hash)
@@ -343,7 +629,9 @@ async fn state_changes(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
                 "key": row.get::<String, _>("entry_key"),
                 "before": row.get::<Option<Value>, _>("value_before"),
                 "after": row.get::<Option<Value>, _>("value_after"),
-                "caused_by_call": row.get::<Option<Uuid>, _>("caused_by_node_id")
+                "caused_by_call": row.get::<Option<Uuid>, _>("caused_by_node_id"),
+                "sequence": row.get::<i32, _>("sequence"),
+                "cause_confidence": row.get::<String, _>("cause_confidence")
             })
         })
         .collect())
@@ -351,7 +639,11 @@ async fn state_changes(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
 
 async fn tx_events(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
     let rows = sqlx::query(
-        "SELECT id, contract_id, topics, data FROM tx_events WHERE tx_hash = $1 ORDER BY id ASC",
+        r#"
+        SELECT id, contract_id, topics, data, caused_by_node_id, sequence,
+               event_type, successful, stage
+        FROM tx_events WHERE tx_hash = $1 ORDER BY sequence ASC, id ASC
+        "#,
     )
     .bind(hash)
     .fetch_all(pool)
@@ -364,7 +656,12 @@ async fn tx_events(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
                 "id": row.get::<Uuid, _>("id"),
                 "contract_id": row.get::<String, _>("contract_id"),
                 "topics": row.get::<Value, _>("topics"),
-                "data": row.get::<Value, _>("data")
+                "data": row.get::<Value, _>("data"),
+                "caused_by_call": row.get::<Option<Uuid>, _>("caused_by_node_id"),
+                "sequence": row.get::<i32, _>("sequence"),
+                "event_type": row.get::<String, _>("event_type"),
+                "successful": row.get::<Option<bool>, _>("successful"),
+                "stage": row.get::<Option<String>, _>("stage")
             })
         })
         .collect())
@@ -373,10 +670,11 @@ async fn tx_events(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
 async fn fund_flow(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
     let rows = sqlx::query(
         r#"
-        SELECT id, from_address, to_address, asset, amount::text
+        SELECT id, from_address, to_address, asset, amount::text, caused_by_node_id,
+               sequence, asset_type, usd_value::text
         FROM tx_fund_flow_edges
         WHERE tx_hash = $1
-        ORDER BY id ASC
+        ORDER BY sequence ASC, id ASC
         "#,
     )
     .bind(hash)
@@ -391,10 +689,138 @@ async fn fund_flow(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
                 "from": row.get::<String, _>("from_address"),
                 "to": row.get::<String, _>("to_address"),
                 "asset": row.get::<String, _>("asset"),
-                "amount": row.get::<String, _>("amount")
+                "amount": row.get::<String, _>("amount"),
+                "caused_by_call": row.get::<Option<Uuid>, _>("caused_by_node_id"),
+                "sequence": row.get::<i32, _>("sequence"),
+                "asset_type": row.get::<String, _>("asset_type"),
+                "usd_value": numeric_str(&row, "usd_value")
             })
         })
         .collect())
+}
+
+fn horizon_url_for_network(network: &str) -> Option<&'static str> {
+    match network {
+        "mainnet" => Some("https://horizon.stellar.org"),
+        "testnet" => Some("https://horizon-testnet.stellar.org"),
+        _ => None,
+    }
+}
+
+fn classic_asset_label(op: &Value) -> String {
+    match op
+        .get("asset_type")
+        .and_then(Value::as_str)
+        .unwrap_or("native")
+    {
+        "native" => "XLM".to_string(),
+        _ => {
+            let code = op
+                .get("asset_code")
+                .and_then(Value::as_str)
+                .unwrap_or("ASSET");
+            let issuer = op.get("asset_issuer").and_then(Value::as_str).unwrap_or("");
+            if issuer.is_empty() {
+                code.to_string()
+            } else {
+                format!("{code}:{issuer}")
+            }
+        }
+    }
+}
+
+fn op_flow_edge(op: &Value) -> Option<Value> {
+    match op.get("type").and_then(Value::as_str) {
+        Some("payment") => Some(json!({
+            "id": op.get("id").and_then(Value::as_str).unwrap_or("horizon"),
+            "from": op.get("from").and_then(Value::as_str)?,
+            "to": op.get("to").and_then(Value::as_str)?,
+            "asset": classic_asset_label(op),
+            "amount": op.get("amount").and_then(Value::as_str)?
+        })),
+        Some("create_account") => Some(json!({
+            "id": op.get("id").and_then(Value::as_str).unwrap_or("horizon"),
+            "from": op.get("funder").and_then(Value::as_str)?,
+            "to": op.get("account").and_then(Value::as_str)?,
+            "asset": "XLM",
+            "amount": op.get("starting_balance").and_then(Value::as_str)?
+        })),
+        _ => None,
+    }
+}
+
+async fn fetch_horizon_tx_with_fund_flow(
+    network: &str,
+    hash: &str,
+) -> Result<(Value, Vec<Value>), Error> {
+    let base = horizon_url_for_network(network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+    let client = reqwest::Client::new();
+    let mut tx = client
+        .get(format!("{base}/transactions/{hash}"))
+        .send()
+        .await
+        .map_err(Error::internal)?
+        .error_for_status()
+        .map_err(Error::internal)?
+        .json::<Value>()
+        .await
+        .map_err(Error::internal)?;
+    let body = client
+        .get(format!("{base}/transactions/{hash}/operations?limit=200"))
+        .send()
+        .await
+        .map_err(Error::internal)?
+        .error_for_status()
+        .map_err(Error::internal)?
+        .json::<Value>()
+        .await
+        .map_err(Error::internal)?;
+    let rows = body
+        .get("_embedded")
+        .and_then(|embedded| embedded.get("records"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(obj) = tx.as_object_mut() {
+        obj.insert("operations".to_string(), Value::Array(rows.clone()));
+    }
+    Ok((tx, rows.iter().filter_map(op_flow_edge).collect()))
+}
+
+async fn ensure_horizon_ledger(pool: &PgPool, network: &str, tx: &Value) -> Result<(), Error> {
+    let sequence = tx
+        .get("ledger")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| Error::BadRequest("Horizon transaction did not include a ledger".into()))?;
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM ledgers WHERE network = $1 AND sequence = $2)",
+    )
+    .bind(network)
+    .bind(sequence)
+    .fetch_one(pool)
+    .await
+    .map_err(Error::internal)?;
+    if exists {
+        return Ok(());
+    }
+    let base = horizon_url_for_network(network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+    let body = reqwest::Client::new()
+        .get(format!("{base}/ledgers/{sequence}"))
+        .send()
+        .await
+        .map_err(Error::internal)?
+        .error_for_status()
+        .map_err(Error::internal)?
+        .json::<Value>()
+        .await
+        .map_err(Error::internal)?;
+    let ledger = decode_ledger(&body, network).map_err(Error::internal)?;
+    upsert_ledger(pool, &ledger)
+        .await
+        .map_err(Error::internal)?;
+    Ok(())
 }
 
 async fn annotations(pool: &PgPool, hash: &str) -> Result<Vec<Value>, Error> {
@@ -440,7 +866,8 @@ pub async fn tx_search(
     if !SEARCH_SCOPES.contains(&q.scope.as_str()) {
         return Err(Error::BadRequest("invalid search scope".into()));
     }
-    let detail = load_tx_detail(&state.db, &network, &hash).await?;
+    let detail =
+        load_tx_detail(&state.db, &network, &hash, &state.settings.soroban_rpc_url).await?;
     let query = q.q.to_lowercase();
     let mut results = Vec::new();
 
@@ -502,6 +929,23 @@ pub async fn ledger_detail(
     Ok(Json(load_ledger(&state.db, &network, sequence).await?))
 }
 
+pub async fn public_ledger_transactions(
+    State(state): State<AppState>,
+    Path((network, sequence)): Path<(String, i64)>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<Paged<Value>>, Error> {
+    let limit = clamp_limit(q.limit);
+    let cursor = parse_time_cursor(q.cursor.as_deref())?;
+    let page = transaction_page(&state.db, &network, limit, cursor, |sql, binds| {
+        binds.push(json!(sequence.to_string()));
+        let n = binds.len();
+        sql.push_str(&format!(" AND ledger_sequence = ${n}::bigint"));
+        Ok(())
+    })
+    .await?;
+    Ok(Json(page))
+}
+
 pub async fn latest_ledger(
     State(state): State<AppState>,
     Path(network): Path<String>,
@@ -518,20 +962,47 @@ pub async fn latest_ledger(
 }
 
 async fn load_ledger(pool: &PgPool, network: &str, sequence: i64) -> Result<Value, Error> {
-    let row = sqlx::query(
-        r#"
+    let query = || {
+        sqlx::query(
+            r#"
         SELECT sequence, hash, parent_hash, transaction_count, size_bytes, timestamp,
                base_operation_fee::text, base_reserve::text,
                total_cpu_instructions, resource_limit
         FROM ledgers WHERE network = $1 AND sequence = $2
         "#,
-    )
-    .bind(network)
-    .bind(sequence)
-    .fetch_optional(pool)
-    .await
-    .map_err(Error::internal)?
-    .ok_or(Error::NotFound)?;
+        )
+    };
+    let mut row = query()
+        .bind(network)
+        .bind(sequence)
+        .fetch_optional(pool)
+        .await
+        .map_err(Error::internal)?;
+    if row.is_none() {
+        let base = horizon_url_for_network(network)
+            .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+        let body = reqwest::Client::new()
+            .get(format!("{base}/ledgers/{sequence}"))
+            .send()
+            .await
+            .map_err(Error::internal)?
+            .error_for_status()
+            .map_err(|_| Error::NotFound)?
+            .json::<Value>()
+            .await
+            .map_err(Error::internal)?;
+        let ledger = decode_ledger(&body, network).map_err(Error::internal)?;
+        upsert_ledger(pool, &ledger)
+            .await
+            .map_err(Error::internal)?;
+        row = query()
+            .bind(network)
+            .bind(sequence)
+            .fetch_optional(pool)
+            .await
+            .map_err(Error::internal)?;
+    }
+    let row = row.ok_or(Error::NotFound)?;
     let total = row.get::<Option<i64>, _>("total_cpu_instructions");
     let limit = row.get::<Option<i64>, _>("resource_limit");
     let percent = match (total, limit) {
@@ -619,8 +1090,95 @@ async fn transaction_page(
 ) -> Result<Paged<Value>, Error> {
     let mut sql = String::from(
         r#"
-        SELECT hash, network, ledger_sequence, status, source_account, operation_type,
-               timestamp, application_order
+        SELECT
+            hash,
+            network,
+            ledger_sequence,
+            status,
+            source_account,
+            operation_type,
+            timestamp,
+            application_order,
+            COALESCE((
+                SELECT e.to_address
+                FROM tx_fund_flow_edges e
+                WHERE e.tx_hash = transactions.hash
+                ORDER BY e.sequence, e.id
+                LIMIT 1
+            ), (
+                SELECT c.contract_id
+                FROM tx_call_tree_nodes c
+                WHERE c.tx_hash = transactions.hash
+                ORDER BY c.sequence, c.id
+                LIMIT 1
+            ), operation_target_address) AS destination_account,
+            CASE
+                WHEN operation_type IN (
+                    'manage_data',
+                    'set_options',
+                    'manage_sell_offer',
+                    'manage_buy_offer',
+                    'change_trust',
+                    'allow_trust',
+                    'bump_sequence',
+                    'begin_sponsoring_future_reserves',
+                    'end_sponsoring_future_reserves',
+                    'revoke_sponsorship',
+                    'clawback',
+                    'clawback_claimable_balance',
+                    'set_trust_line_flags',
+                    'multi_operation'
+                ) THEN source_account
+                ELSE NULL
+            END AS affected_account,
+            CASE
+                WHEN EXISTS (SELECT 1 FROM tx_fund_flow_edges e WHERE e.tx_hash = transactions.hash)
+                    THEN 'transfer'
+                WHEN EXISTS (SELECT 1 FROM tx_call_tree_nodes c WHERE c.tx_hash = transactions.hash)
+                    THEN 'contract'
+                WHEN operation_target_address IS NOT NULL
+                    THEN COALESCE(operation_target_kind, 'entity')
+                WHEN operation_type IN (
+                    'manage_data', 'set_options', 'manage_sell_offer', 'manage_buy_offer',
+                    'change_trust', 'allow_trust', 'bump_sequence',
+                    'begin_sponsoring_future_reserves', 'end_sponsoring_future_reserves',
+                    'revoke_sponsorship', 'set_trust_line_flags', 'multi_operation'
+                ) THEN 'account_effect'
+                ELSE 'none'
+            END AS target_kind,
+            (
+                SELECT e.amount::text
+                FROM tx_fund_flow_edges e
+                WHERE e.tx_hash = transactions.hash
+                ORDER BY e.sequence, e.id
+                LIMIT 1
+            ) AS amount,
+            (
+                SELECT e.asset
+                FROM tx_fund_flow_edges e
+                WHERE e.tx_hash = transactions.hash
+                ORDER BY e.sequence, e.id
+                LIMIT 1
+            ) AS asset,
+            (
+                SELECT count(*)
+                FROM tx_call_tree_nodes c
+                WHERE c.tx_hash = transactions.hash
+            ) AS call_count,
+            (
+                SELECT c.contract_id
+                FROM tx_call_tree_nodes c
+                WHERE c.tx_hash = transactions.hash
+                ORDER BY c.sequence, c.id
+                LIMIT 1
+            ) AS root_contract,
+            (
+                SELECT c.function_name
+                FROM tx_call_tree_nodes c
+                WHERE c.tx_hash = transactions.hash
+                ORDER BY c.sequence, c.id
+                LIMIT 1
+            ) AS root_function
         FROM transactions
         WHERE network = $1
         "#,
@@ -666,6 +1224,16 @@ async fn transaction_page(
             "status": row.get::<String, _>("status"),
             "source_account": row.get::<String, _>("source_account"),
             "operation_type": row.get::<String, _>("operation_type"),
+            "destination_account": row.get::<Option<String>, _>("destination_account"),
+            "affected_account": row.get::<Option<String>, _>("affected_account"),
+            "target_kind": row.get::<String, _>("target_kind"),
+            "amount": row.get::<Option<String>, _>("amount"),
+            "asset": row.get::<Option<String>, _>("asset"),
+            "call_trace": {
+                "count": row.get::<Option<i64>, _>("call_count").unwrap_or(0),
+                "root_contract": row.get::<Option<String>, _>("root_contract"),
+                "root_function": row.get::<Option<String>, _>("root_function")
+            },
             "timestamp": ts,
             "application_order": row.get::<Option<i32>, _>("application_order")
         }));
@@ -853,6 +1421,31 @@ pub async fn public_account(
     ))
 }
 
+pub async fn public_account_transactions(
+    State(state): State<AppState>,
+    Path((network, address)): Path<(String, String)>,
+    Query(q): Query<AccountTxQuery>,
+) -> Result<Json<Paged<Value>>, Error> {
+    let limit = clamp_limit(q.limit);
+    let cursor = parse_time_cursor(q.cursor.as_deref())?;
+    let page = transaction_page(&state.db, &network, limit, cursor, |sql, binds| {
+        binds.push(json!(address));
+        let n = binds.len();
+        sql.push_str(&format!(
+            " AND (source_account = ${n} OR EXISTS (SELECT 1 FROM tx_fund_flow_edges e WHERE e.tx_hash = transactions.hash AND (e.from_address = ${n} OR e.to_address = ${n})))"
+        ));
+        if let Some(kind) = q.kind.as_deref() {
+            let op = tx_type_to_operation(kind)?;
+            binds.push(json!(op));
+            let n = binds.len();
+            sql.push_str(&format!(" AND operation_type = ${n}"));
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(Json(page))
+}
+
 pub async fn list_accounts(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
@@ -957,7 +1550,12 @@ async fn account_summary(
         (Some(project_id), Some(id)) => entity_tags(pool, project_id, "wallet", id).await?,
         _ => Vec::new(),
     };
-    let xlm = latest_holding(pool, network, address, "XLM").await?;
+    let mut xlm = latest_holding(pool, network, address, "XLM").await?;
+    if xlm.as_ref().is_none_or(|(balance, _)| balance.is_empty())
+        && let Ok(balance) = fetch_horizon_xlm_balance(network, address).await
+    {
+        xlm = Some((balance, None));
+    }
     let token_holdings = holdings(pool, network, address).await?;
     Ok(json!({
         "address": address,
@@ -969,6 +1567,36 @@ async fn account_summary(
         "tags": tags,
         "source_map_status": "not_available"
     }))
+}
+
+async fn fetch_horizon_xlm_balance(network: &str, address: &str) -> Result<String, Error> {
+    let base = horizon_url_for_network(network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+    let body = reqwest::Client::new()
+        .get(format!("{base}/accounts/{address}"))
+        .send()
+        .await
+        .map_err(Error::internal)?
+        .error_for_status()
+        .map_err(Error::internal)?
+        .json::<Value>()
+        .await
+        .map_err(Error::internal)?;
+    body.get("balances")
+        .and_then(Value::as_array)
+        .and_then(|balances| {
+            balances.iter().find_map(|balance| {
+                (balance.get("asset_type").and_then(Value::as_str) == Some("native"))
+                    .then(|| {
+                        balance
+                            .get("balance")
+                            .and_then(Value::as_str)
+                            .map(String::from)
+                    })
+                    .flatten()
+            })
+        })
+        .ok_or_else(|| Error::NotFound)
 }
 
 async fn latest_holding(
@@ -1190,6 +1818,16 @@ async fn contract_summary(
     })
 }
 
+pub async fn public_contract_transactions(
+    State(state): State<AppState>,
+    Path((network, address)): Path<(String, String)>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<Paged<Value>>, Error> {
+    Ok(Json(
+        contract_transaction_page(&state.db, &network, &address, q).await?,
+    ))
+}
+
 pub async fn contract_transactions(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
@@ -1197,9 +1835,20 @@ pub async fn contract_transactions(
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Paged<Value>>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
+    Ok(Json(
+        contract_transaction_page(&state.db, &auth.network, &address, q).await?,
+    ))
+}
+
+async fn contract_transaction_page(
+    pool: &PgPool,
+    network: &str,
+    address: &str,
+    q: PageQuery,
+) -> Result<Paged<Value>, Error> {
     let limit = clamp_limit(q.limit);
     let cursor = parse_time_cursor(q.cursor.as_deref())?;
-    let page = transaction_page(&state.db, &auth.network, limit, cursor, |sql, binds| {
+    transaction_page(pool, network, limit, cursor, |sql, binds| {
         binds.push(json!(address));
         let n = binds.len();
         sql.push_str(&format!(
@@ -1207,8 +1856,17 @@ pub async fn contract_transactions(
         ));
         Ok(())
     })
-    .await?;
-    Ok(Json(page))
+    .await
+}
+
+pub async fn public_contract_events(
+    State(state): State<AppState>,
+    Path((network, address)): Path<(String, String)>,
+    Query(q): Query<EventQuery>,
+) -> Result<Json<Paged<Value>>, Error> {
+    Ok(Json(
+        contract_event_page(&state.db, &network, &address, q).await?,
+    ))
 }
 
 pub async fn contract_events(
@@ -1218,11 +1876,24 @@ pub async fn contract_events(
     Query(q): Query<EventQuery>,
 ) -> Result<Json<Paged<Value>>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
+    Ok(Json(
+        contract_event_page(&state.db, &auth.network, &address, q).await?,
+    ))
+}
+
+async fn contract_event_page(
+    pool: &PgPool,
+    network: &str,
+    address: &str,
+    q: EventQuery,
+) -> Result<Paged<Value>, Error> {
     let limit = clamp_limit(q.limit);
     let cursor = parse_seq_cursor(q.cursor.as_deref())?;
     let mut sql = String::from(
         r#"
-        SELECT e.id, e.tx_hash, e.contract_id, e.topics, e.data, t.ledger_sequence, t.timestamp
+        SELECT e.id, e.tx_hash, e.contract_id, e.topics, e.data, e.caused_by_node_id,
+               e.sequence, e.event_type, e.successful, e.stage,
+               t.ledger_sequence, t.timestamp
         FROM tx_events e
         JOIN transactions t ON t.hash = e.tx_hash
         WHERE t.network = $1 AND e.contract_id = $2
@@ -1253,7 +1924,7 @@ pub async fn contract_events(
         " ORDER BY t.ledger_sequence DESC, e.id DESC LIMIT ${next}"
     ));
 
-    let mut query = sqlx::query(&sql).bind(&auth.network).bind(&address);
+    let mut query = sqlx::query(&sql).bind(network).bind(address);
     if let Some(kind) = &q.event_type {
         query = query.bind(kind);
     }
@@ -1269,7 +1940,7 @@ pub async fn contract_events(
     }
     let rows = query
         .bind(limit + 1)
-        .fetch_all(&state.db)
+        .fetch_all(pool)
         .await
         .map_err(Error::internal)?;
     let mut data = Vec::new();
@@ -1284,11 +1955,16 @@ pub async fn contract_events(
             "contract_id": row.get::<String, _>("contract_id"),
             "topics": row.get::<Value, _>("topics"),
             "data": row.get::<Value, _>("data"),
+            "caused_by_call": row.get::<Option<Uuid>, _>("caused_by_node_id"),
+            "sequence": row.get::<i32, _>("sequence"),
+            "event_type": row.get::<String, _>("event_type"),
+            "successful": row.get::<Option<bool>, _>("successful"),
+            "stage": row.get::<Option<String>, _>("stage"),
             "ledger": seq,
             "timestamp": row.get::<DateTime<Utc>, _>("timestamp")
         }));
     }
-    Ok(Json(paged_json(data, cursors, limit, had_cursor)))
+    Ok(paged_json(data, cursors, limit, had_cursor))
 }
 
 pub async fn contract_source(
@@ -1367,19 +2043,48 @@ async fn contract_id(pool: &PgPool, project_id: Uuid, address: &str) -> Result<U
 
 // ---- Verification -------------------------------------------------------------------
 
+pub async fn upload_verification_source(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, address)): Path<(String, String, String)>,
+    bytes: Bytes,
+) -> Result<(StatusCode, Json<Value>), Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_mutation()?;
+    contract_id(&state.db, auth.project_id, &address).await?;
+    if bytes.is_empty() || bytes.len() > 50 * 1024 * 1024 {
+        return Err(Error::BadRequest(
+            "source archive must be a non-empty ZIP up to 50 MiB".into(),
+        ));
+    }
+    let uploaded = source_lens(&state)?
+        .create_upload(&source_lens_actor(user_id, &auth, Uuid::new_v4()), &bytes)
+        .await
+        .map_err(map_source_lens)?;
+    Ok((StatusCode::CREATED, Json(uploaded)))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyRequest {
     pub visibility: String,
-    pub source_archive_url: String,
     #[serde(default)]
-    pub toolchain: Value,
+    pub source: Option<Value>,
+    #[serde(default)]
+    pub source_archive_url: Option<String>,
+    #[serde(default = "default_recipe_id")]
+    pub recipe_id: String,
+}
+
+fn default_recipe_id() -> String {
+    "rust-soroban-1".into()
 }
 
 pub async fn submit_verification(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
     Path((org, project, address)): Path<(String, String, String)>,
+    headers: HeaderMap,
     Json(req): Json<VerifyRequest>,
 ) -> Result<(StatusCode, Json<Value>), Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
@@ -1387,42 +2092,91 @@ pub async fn submit_verification(
     if !["public", "private"].contains(&req.visibility.as_str()) {
         return Err(Error::BadRequest("invalid verification visibility".into()));
     }
-    if req.source_archive_url.trim().is_empty() {
-        return Err(Error::BadRequest("source_archive_url is required".into()));
+    let source = req.source.ok_or_else(|| {
+        if req.source_archive_url.is_some() {
+            Error::BadRequest(
+                "mutable source_archive_url submissions are retired; submit an immutable GitHub commit or SourceLens upload_id".into(),
+            )
+        } else {
+            Error::BadRequest("source is required".into())
+        }
+    })?;
+    if req.recipe_id.trim().is_empty() || req.recipe_id.len() > 128 {
+        return Err(Error::BadRequest("invalid build recipe".into()));
     }
-    let contract_id = contract_id(&state.db, auth.project_id, &address).await?;
+    let contract = sqlx::query(
+        "SELECT id,current_wasm_hash FROM contracts WHERE project_id=$1 AND address=$2",
+    )
+    .bind(auth.project_id)
+    .bind(&address)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    let contract_id = contract.get::<Uuid, _>("id");
+    let wasm_hash = contract
+        .get::<Option<String>, _>("current_wasm_hash")
+        .ok_or_else(|| Error::BadRequest("contract Wasm hash is not indexed yet".into()))?;
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty() && value.len() <= 128)
+        .map(str::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let request_id = Uuid::new_v4();
+    let accepted = source_lens(&state)?
+        .create_verification(
+            &source_lens_actor(user_id, &auth, request_id),
+            &idempotency_key,
+            &json!({
+                "network": &auth.network,
+                "contract_id": &address,
+                "wasm_hash": &wasm_hash,
+                "visibility": &req.visibility,
+                "source": &source,
+                "recipe_id": &req.recipe_id,
+            }),
+        )
+        .await
+        .map_err(map_source_lens)?;
+    let source_lens_id = accepted
+        .verification_id
+        .ok_or_else(|| Error::ServiceUnavailable("source_lens_invalid_response".into()))?;
     let id = sqlx::query_scalar::<_, Uuid>(
         r#"
         INSERT INTO contract_verifications
             (contract_id, submitted_by, visibility, source_archive_url,
-             rust_version, soroban_sdk_version, wasm_target, opt_level, wasm_opt_applied)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             source_lens_verification_id, source_lens_job_id, source_lens_status,
+             source_input, recipe_id, legacy_claim)
+        VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,false)
+        ON CONFLICT (source_lens_verification_id) WHERE source_lens_verification_id IS NOT NULL
+        DO UPDATE SET source_lens_job_id=EXCLUDED.source_lens_job_id
         RETURNING id
         "#,
     )
     .bind(contract_id)
     .bind(user_id)
     .bind(&req.visibility)
-    .bind(req.source_archive_url.trim())
-    .bind(req.toolchain.get("rust_version").and_then(Value::as_str))
-    .bind(
-        req.toolchain
-            .get("soroban_sdk_version")
-            .and_then(Value::as_str),
-    )
-    .bind(req.toolchain.get("wasm_target").and_then(Value::as_str))
-    .bind(req.toolchain.get("opt_level").and_then(Value::as_str))
-    .bind(
-        req.toolchain
-            .get("wasm_opt_applied")
-            .and_then(Value::as_bool),
-    )
+    .bind(source_lens_id)
+    .bind(accepted.job_id)
+    .bind(&accepted.status)
+    .bind(&source)
+    .bind(req.recipe_id.trim())
     .fetch_one(&state.db)
     .await
     .map_err(Error::internal)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({ "verification_id": id, "status": "submitted" })),
+        Json(json!({
+            "verification_id": id,
+            "status": "submitted",
+            "source_lens": {
+                "verification_id": source_lens_id,
+                "job_id": accepted.job_id,
+                "status": accepted.status,
+                "created": accepted.created
+            }
+        })),
     ))
 }
 
@@ -1434,13 +2188,100 @@ pub async fn verification_history(
 ) -> Result<Json<Paged<Value>>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
     let contract_id = contract_id(&state.db, auth.project_id, &address).await?;
+    if let Some(client) = &state.source_lens {
+        match client
+            .list_verifications(&source_lens_actor(user_id, &auth, Uuid::new_v4()))
+            .await
+        {
+            Ok(remote) => {
+                for verification in remote
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let Some(remote_id) = verification
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .and_then(|value| Uuid::parse_str(value).ok())
+                    else {
+                        continue;
+                    };
+                    let remote_status = verification
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("failed");
+                    let capabilities = verification
+                        .get("capabilities")
+                        .cloned()
+                        .unwrap_or_else(|| json!({}));
+                    let compatibility_status = match remote_status {
+                        "queued" => "submitted",
+                        "running" => "compiling",
+                        "succeeded" => "verified",
+                        _ => "failed",
+                    };
+                    sqlx::query(
+                        r#"
+                        UPDATE contract_verifications v
+                        SET source_lens_status=$2, status=$3, capability_summary=$4,
+                            built_wasm_hash=$5, failure_reason=$6,
+                            source_lens_synced_at=now(),
+                            completed_at=CASE WHEN $2 IN ('succeeded','failed','cancelled','dead_letter')
+                                              THEN COALESCE(completed_at,now()) ELSE completed_at END
+                        FROM contracts c
+                        WHERE v.contract_id=c.id AND c.project_id=$1
+                          AND v.source_lens_verification_id=$7
+                        "#,
+                    )
+                    .bind(auth.project_id)
+                    .bind(remote_status)
+                    .bind(compatibility_status)
+                    .bind(&capabilities)
+                    .bind(verification.get("built_wasm_hash").and_then(Value::as_str))
+                    .bind(verification.get("failure_code").and_then(Value::as_str))
+                    .bind(remote_id)
+                    .execute(&state.db)
+                    .await
+                    .map_err(Error::internal)?;
+                }
+                if let Some(capabilities) =
+                    remote
+                        .get("data")
+                        .and_then(Value::as_array)
+                        .and_then(|items| {
+                            items.iter().find_map(|item| {
+                                (item.get("contract_id").and_then(Value::as_str)
+                                    == Some(address.as_str()))
+                                .then(|| item.get("capabilities").cloned())
+                                .flatten()
+                            })
+                        })
+                {
+                    sqlx::query(
+                        "UPDATE contracts SET source_lens_capabilities=$2,source_lens_synced_at=now() WHERE id=$1",
+                    )
+                    .bind(contract_id)
+                    .bind(capabilities)
+                    .execute(&state.db)
+                    .await
+                    .map_err(Error::internal)?;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not refresh SourceLens verification summaries")
+            }
+        }
+    }
     let limit = clamp_limit(q.limit);
     let cursor = parse_time_cursor(q.cursor.as_deref())?;
     let mut sql = String::from(
         r#"
         SELECT id, visibility, status, source_archive_url, rust_version,
                soroban_sdk_version, wasm_target, opt_level, wasm_opt_applied,
-               built_wasm_hash, failure_reason, created_at, completed_at
+               built_wasm_hash, failure_reason, created_at, completed_at,
+               source_lens_verification_id, source_lens_job_id, source_lens_status,
+               capability_summary, source_input, recipe_id, source_lens_synced_at, legacy_claim
         FROM contract_verifications
         WHERE contract_id = $1
         "#,
@@ -1473,7 +2314,7 @@ pub async fn verification_history(
             "id": id,
             "visibility": row.get::<String, _>("visibility"),
             "status": row.get::<String, _>("status"),
-            "source_archive_url": row.get::<String, _>("source_archive_url"),
+            "source_archive_url": row.get::<Option<String>, _>("source_archive_url"),
             "toolchain": {
                 "rust_version": row.get::<Option<String>, _>("rust_version"),
                 "soroban_sdk_version": row.get::<Option<String>, _>("soroban_sdk_version"),
@@ -1483,6 +2324,14 @@ pub async fn verification_history(
             },
             "built_wasm_hash": row.get::<Option<String>, _>("built_wasm_hash"),
             "failure_reason": row.get::<Option<String>, _>("failure_reason"),
+            "source_lens_verification_id": row.get::<Option<Uuid>, _>("source_lens_verification_id"),
+            "source_lens_job_id": row.get::<Option<Uuid>, _>("source_lens_job_id"),
+            "source_lens_status": row.get::<Option<String>, _>("source_lens_status"),
+            "capabilities": row.get::<Value, _>("capability_summary"),
+            "source": row.get::<Option<Value>, _>("source_input"),
+            "recipe_id": row.get::<Option<String>, _>("recipe_id"),
+            "source_lens_synced_at": row.get::<Option<DateTime<Utc>>, _>("source_lens_synced_at"),
+            "legacy_claim": row.get::<bool, _>("legacy_claim"),
             "created_at": ts,
             "completed_at": row.get::<Option<DateTime<Utc>>, _>("completed_at")
         }));

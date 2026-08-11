@@ -27,6 +27,7 @@ pub mod tokens;
 use axum::routing::{delete, get, patch, post};
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     http::{
         HeaderValue, Method,
         header::{AUTHORIZATION, CONTENT_TYPE},
@@ -44,7 +45,9 @@ use crate::auth::{
     resend_verification, reset_password, revoke, signup, update_me, verify,
 };
 use crate::environments::*;
-use crate::explorer::{live_feed, recent_ledgers, recent_transactions, top_tokens, transfers};
+use crate::explorer::{
+    live_feed, recent_ledgers, recent_transactions, sync_explorer_network, top_tokens, transfers,
+};
 use crate::explorer_detail::*;
 use crate::health::{__path_health_check, HealthChecks, HealthResponse, health_check};
 use crate::monitoring::*;
@@ -110,6 +113,11 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             "/api/v1/explorer/{network}/account/{address}",
             Get,
             "Public account lookup",
+        ),
+        (
+            "/api/v1/explorer/{network}/account/{address}/transactions",
+            Get,
+            "Public account transactions",
         ),
         (
             "/api/v1/explorer/{network}/contract/{address}",
@@ -447,8 +455,13 @@ pub fn app(state: AppState) -> Router {
         )
         .route("/api/v1/explorer/{network}/ledgers", get(recent_ledgers))
         .route("/api/v1/explorer/{network}/live", get(live_feed))
+        .route(
+            "/api/v1/explorer/{network}/sync",
+            post(sync_explorer_network),
+        )
         .route("/api/v1/explorer/{network}/tokens/top", get(top_tokens))
         .route("/api/v1/explorer/{network}/transfers", get(transfers))
+        .route("/api/v1/explorer/{network}/lookup", get(public_lookup))
         .route(
             "/api/v1/explorer/{network}/tx/{hash}",
             get(public_tx_detail),
@@ -462,8 +475,20 @@ pub fn app(state: AppState) -> Router {
             get(public_account),
         )
         .route(
+            "/api/v1/explorer/{network}/account/{address}/transactions",
+            get(public_account_transactions),
+        )
+        .route(
             "/api/v1/explorer/{network}/contract/{address}",
             get(public_contract),
+        )
+        .route(
+            "/api/v1/explorer/{network}/contract/{address}/transactions",
+            get(public_contract_transactions),
+        )
+        .route(
+            "/api/v1/explorer/{network}/contract/{address}/events",
+            get(public_contract_events),
         )
         .route(
             "/api/v1/explorer/{network}/ledger/latest",
@@ -472,6 +497,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/explorer/{network}/ledger/{sequence}",
             get(ledger_detail),
+        )
+        .route(
+            "/api/v1/explorer/{network}/ledger/{sequence}/transactions",
+            get(public_ledger_transactions),
         )
         .route("/api/v1/auth/signup", post(signup))
         .route("/api/v1/auth/login", post(login))
@@ -578,6 +607,30 @@ pub fn app(state: AppState) -> Router {
             get(get_simulation).delete(cancel_simulation),
         )
         .route(
+            "/api/v1/{org}/{project}/simulations/{simulation_id}/analysis",
+            get(get_simulation_analysis).post(create_simulation_analysis),
+        )
+        .route(
+            "/api/v1/{org}/{project}/simulations/{simulation_id}/debugger",
+            get(get_simulation_debugger).post(create_simulation_debugger),
+        )
+        .route(
+            "/api/v1/{org}/{project}/simulations/{simulation_id}/debugger/trace",
+            get(get_simulation_debug_trace),
+        )
+        .route(
+            "/api/v1/{org}/{project}/debugger/{analysis_id}",
+            get(get_debugger_workspace).post(create_debugger_workspace),
+        )
+        .route(
+            "/api/v1/{org}/{project}/debugger/{analysis_id}/trace",
+            get(get_debugger_workspace_trace),
+        )
+        .route(
+            "/api/v1/{org}/{project}/debugger/{analysis_id}/source/{*source_path}",
+            get(get_debugger_source_file),
+        )
+        .route(
             "/api/v1/{org}/{project}/environments",
             get(list_environments).post(create_environment),
         )
@@ -662,6 +715,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/{org}/{project}/contracts/{address}/verify",
             post(submit_verification),
+        )
+        .route(
+            "/api/v1/{org}/{project}/contracts/{address}/verification-upload",
+            post(upload_verification_source).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
         )
         .route(
             "/api/v1/{org}/{project}/contracts/{address}/verifications",

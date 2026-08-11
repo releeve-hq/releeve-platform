@@ -195,7 +195,7 @@ async fn login_refresh_rotation_with_reuse_detection() {
     assert_eq!(rstatus, StatusCode::OK);
     let new_refresh = rotated["refresh_token"].as_str().unwrap().to_string();
 
-    // A freshly-issued access token lets the subsequent reuse succeed to a 401.
+    // A freshly-issued access token verifies the rotated pair works.
     let (_, _) = req(
         app.router(),
         Method::GET,
@@ -215,9 +215,9 @@ async fn login_refresh_rotation_with_reuse_detection() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "reuse rejected");
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "retry rejected");
 
-    let (status2, _) = req(
+    let (status2, rotated_again) = req(
         app.router(),
         Method::POST,
         "/api/v1/auth/token/refresh",
@@ -225,7 +225,45 @@ async fn login_refresh_rotation_with_reuse_detection() {
         None,
     )
     .await;
-    assert_eq!(status2, StatusCode::UNAUTHORIZED, "chain revoked by reuse");
+    assert_eq!(
+        status2,
+        StatusCode::OK,
+        "recent retry did not revoke the replacement"
+    );
+    let newest_refresh = rotated_again["refresh_token"].as_str().unwrap().to_string();
+
+    sqlx::query(
+        "UPDATE refresh_tokens
+            SET consumed_at = now() - interval '1 minute'
+          WHERE consumed_at IS NOT NULL AND replaced_by IS NOT NULL",
+    )
+    .execute(app.db())
+    .await
+    .unwrap();
+
+    let (status3, _) = req(
+        app.router(),
+        Method::POST,
+        "/api/v1/auth/token/refresh",
+        Some(serde_json::json!({ "refresh_token": refresh })),
+        None,
+    )
+    .await;
+    assert_eq!(status3, StatusCode::UNAUTHORIZED, "old reuse rejected");
+
+    let (status4, _) = req(
+        app.router(),
+        Method::POST,
+        "/api/v1/auth/token/refresh",
+        Some(serde_json::json!({ "refresh_token": newest_refresh })),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status4,
+        StatusCode::UNAUTHORIZED,
+        "chain revoked by old reuse"
+    );
 }
 
 #[tokio::test]

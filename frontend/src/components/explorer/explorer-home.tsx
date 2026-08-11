@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useState } from 'react';
+import { GlobalExplorerSearch } from '@/components/explorer/global-explorer-search';
 import {
   getRecentLedgers,
   getRecentTransactions,
@@ -10,8 +10,7 @@ import {
   type ExplorerFeedTransaction,
   type ExplorerPage,
 } from '@/lib/explorer-api';
-import { addressRoute, explorerRoutes, truncateEntity } from '@/lib/explorer-routes';
-import { ExplorerShell } from '@/components/explorer/explorer-shell';
+import { explorerRoutes, truncateEntity } from '@/lib/explorer-routes';
 
 const PAGE_SIZES = [10, 20, 50, 100];
 
@@ -28,10 +27,7 @@ function PageControls({ page, onPage, disabled }: { page: ExplorerPage<unknown> 
 }
 
 export function ExplorerHome({ network }: { network: string }) {
-  const router = useRouter();
   const [pageSize, setPageSize] = useState(10);
-  const [query, setQuery] = useState('');
-  const [queryError, setQueryError] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<ExplorerPage<ExplorerFeedTransaction> | null>(null);
   const [ledgers, setLedgers] = useState<ExplorerPage<ExplorerFeedLedger> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,18 +48,8 @@ export function ExplorerHome({ network }: { network: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  function submitSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const value = query.trim();
-    setQueryError(null);
-    if (/^\d+$/.test(value)) return router.push(explorerRoutes.ledger(network, value));
-    if (/^[a-fA-F0-9]{64}$/.test(value)) return router.push(explorerRoutes.tx(network, value));
-    if (/^[GC][A-Z2-7]{55}$/.test(value)) return router.push(addressRoute(network, value));
-    setQueryError('Enter a Stellar transaction hash, account, contract ID, or ledger sequence.');
-  }
-
   const latestLedger = ledgers?.data[0];
-  return <ExplorerShell network={network}><main className="explorer-home">
+  return <main className="explorer-home">
     <header className="explorer-header">
       <div><span className="explorer-brand">Explorer</span><span className="explorer-slash">/</span><span>Network index</span></div>
       <nav aria-label="Network"><Link className={network === 'mainnet' ? 'active' : ''} href="/explorer/mainnet">Mainnet</Link><Link className={network === 'testnet' ? 'active' : ''} href="/explorer/testnet">Testnet</Link><Link className={network === 'futurenet' ? 'active' : ''} href="/explorer/futurenet">Futurenet</Link></nav>
@@ -71,11 +57,7 @@ export function ExplorerHome({ network }: { network: string }) {
     <section className="explorer-hero">
       <p className="explorer-eyebrow">{network} network</p>
       <h1>Explore Stellar without leaving your workspace.</h1>
-      <form id="search" className="explorer-search" onSubmit={submitSearch}>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search transaction, account, contract, or ledger" aria-label="Search the explorer" />
-        <button type="submit" aria-label="Search">Search</button>
-      </form>
-      {queryError && <p className="explorer-query-error" role="alert">{queryError}</p>}
+      <div id="search" className="explorer-search"><GlobalExplorerSearch network={network} /></div>
     </section>
 
     <section className="explorer-metrics" aria-label="Network summary">
@@ -104,7 +86,7 @@ export function ExplorerHome({ network }: { network: string }) {
       </div>
     </section>
     <style>{`
-      .explorer-home{min-height:100dvh;background:#171312;color:#f2efec;padding:0 clamp(20px,4vw,64px) 56px;font-family:var(--font-inter),system-ui,sans-serif}.explorer-header{height:72px;border-bottom:1px solid #3e3530;display:flex;align-items:center;justify-content:space-between;gap:20px;font-size:14px}.explorer-brand{color:#f2efec;font-weight:700;text-decoration:none}.explorer-slash{margin:0 9px;color:#786d65}.explorer-header nav{display:flex;gap:6px}.explorer-header nav a{padding:7px 10px;border-radius:6px;color:#b6aaa2;text-decoration:none;font-size:12px}.explorer-header nav a.active,.explorer-header nav a:hover{background:#2a2421;color:#f2efec}.explorer-hero{max-width:840px;padding:72px 0 34px}.explorer-eyebrow{margin:0 0 10px;color:#e8823c;font-size:12px;font-weight:700;text-transform:uppercase}.explorer-hero h1{margin:0;max-width:690px;font-size:clamp(30px,4vw,48px);line-height:1.1;letter-spacing:0}.explorer-search{display:flex;gap:8px;margin-top:28px;padding:6px;border:1px solid #4a423c;border-radius:8px;background:#211c19}.explorer-search input{width:100%;min-width:0;height:42px;border:0;background:transparent;color:#f2efec;outline:0;padding:0 10px;font:inherit;font-size:14px}.explorer-search input::placeholder{color:#786d65}.explorer-search button,.explorer-error button{border:0;border-radius:6px;background:#e8823c;color:#1e1713;padding:0 14px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}.explorer-query-error,.explorer-error{margin:10px 0 0;color:#f3a2a2;font-size:13px}.explorer-error{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px;border:1px solid #713f3f;border-radius:8px;background:#35201f}.explorer-error button{height:30px;background:transparent;border:1px solid #8d655b;color:#f2efec}.explorer-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 24px}.explorer-metrics>div{padding:14px;border:1px solid #3e3530;border-radius:8px;background:#1d1816}.explorer-metrics span,.explorer-section p{display:block;color:#a69a92;font-size:12px}.explorer-metrics strong{display:block;margin-top:8px;color:#f2efec;font-size:19px}.explorer-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.3fr);gap:18px}.explorer-section{min-width:0;border:1px solid #3e3530;border-radius:8px;background:#1d1816;overflow:hidden}.explorer-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px}.explorer-section h2{margin:0;color:#f2efec;font-size:15px}.explorer-section p{margin:5px 0 0}.explorer-controls,.explorer-page-controls{display:flex;align-items:center;gap:7px}.explorer-controls select{height:30px;border:1px solid #4a423c;border-radius:6px;background:#211c19;color:#d8cec7;padding:0 7px;font:inherit;font-size:12px}.explorer-page-controls button{height:30px;border:1px solid #4a423c;border-radius:6px;background:transparent;color:#d8cec7;padding:0 9px;font:inherit;font-size:12px;cursor:pointer}.explorer-page-controls button:disabled{opacity:.4;cursor:not-allowed}.explorer-row{display:grid;grid-template-columns:1.1fr .7fr 1fr;align-items:center;gap:10px;min-height:52px;padding:0 16px;border-top:1px solid #342c28;color:#e1d8d2;text-decoration:none;font-size:13px}.explorer-row:not(.explorer-table-label):hover{background:#231d1a}.explorer-transaction-row{grid-template-columns:1.2fr 1fr .65fr .55fr}.explorer-table-label{min-height:36px;color:#8f837c;font-size:11px;font-weight:700;text-transform:uppercase}.explorer-row strong,.explorer-row small{display:block}.explorer-row small{margin-top:4px;color:#8f837c;font-size:11px}.explorer-mono{font-family:var(--font-mono),monospace}.status-success{color:#4ad870;font-weight:700}.status-failed{color:#f48686;font-weight:700}.explorer-empty{padding:28px 16px;color:#8f837c;font-size:13px}@media(max-width:900px){.explorer-metrics,.explorer-grid{grid-template-columns:1fr 1fr}.explorer-grid{gap:14px}.explorer-section{grid-column:1/-1}}@media(max-width:620px){.explorer-home{padding:0 16px 40px}.explorer-header{height:auto;min-height:68px;align-items:flex-start;padding:17px 0;flex-direction:column}.explorer-hero{padding-top:44px}.explorer-metrics{grid-template-columns:1fr 1fr}.explorer-section-head{flex-direction:column}.explorer-row{grid-template-columns:1fr .65fr .8fr}.explorer-transaction-row{grid-template-columns:1.25fr .8fr .55fr}.explorer-transaction-row>span:nth-child(2),.explorer-transaction-row>span:nth-child(4){display:none}.explorer-table-label.explorer-transaction-row>span:nth-child(2),.explorer-table-label.explorer-transaction-row>span:nth-child(4){display:none}}
+      .explorer-home{min-height:100dvh;background:#171312;color:#f2efec;padding:0 clamp(20px,4vw,64px) 56px;font-family:var(--font-inter),system-ui,sans-serif}.explorer-header{height:72px;border-bottom:1px solid #3e3530;display:flex;align-items:center;justify-content:space-between;gap:20px;font-size:14px}.explorer-brand{color:#f2efec;font-weight:700;text-decoration:none}.explorer-slash{margin:0 9px;color:#786d65}.explorer-header nav{display:flex;gap:6px}.explorer-header nav a{padding:7px 10px;border-radius:6px;color:#b6aaa2;text-decoration:none;font-size:12px}.explorer-header nav a.active,.explorer-header nav a:hover{background:#2a2421;color:#f2efec}.explorer-hero{max-width:840px;padding:72px 0 34px}.explorer-eyebrow{margin:0 0 10px;color:#e8823c;font-size:12px;font-weight:700;text-transform:uppercase}.explorer-hero h1{margin:0;max-width:690px;font-size:clamp(30px,4vw,48px);line-height:1.1;letter-spacing:0}.explorer-search{margin-top:28px}.explorer-error{margin:10px 0 0;color:#f3a2a2;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px;border:1px solid #713f3f;border-radius:8px;background:#35201f}.explorer-error button{height:30px;background:transparent;border:1px solid #8d655b;border-radius:6px;color:#f2efec}.explorer-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 24px}.explorer-metrics>div{padding:14px;border:1px solid #3e3530;border-radius:8px;background:#1d1816}.explorer-metrics span,.explorer-section p{display:block;color:#a69a92;font-size:12px}.explorer-metrics strong{display:block;margin-top:8px;color:#f2efec;font-size:19px}.explorer-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.3fr);gap:18px}.explorer-section{min-width:0;border:1px solid #3e3530;border-radius:8px;background:#1d1816;overflow:hidden}.explorer-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px}.explorer-section h2{margin:0;color:#f2efec;font-size:15px}.explorer-section p{margin:5px 0 0}.explorer-controls,.explorer-page-controls{display:flex;align-items:center;gap:7px}.explorer-controls select{height:30px;border:1px solid #4a423c;border-radius:6px;background:#211c19;color:#d8cec7;padding:0 7px;font:inherit;font-size:12px}.explorer-page-controls button{height:30px;border:1px solid #4a423c;border-radius:6px;background:transparent;color:#d8cec7;padding:0 9px;font:inherit;font-size:12px;cursor:pointer}.explorer-page-controls button:disabled{opacity:.4;cursor:not-allowed}.explorer-row{display:grid;grid-template-columns:1.1fr .7fr 1fr;align-items:center;gap:10px;min-height:52px;padding:0 16px;border-top:1px solid #342c28;color:#e1d8d2;text-decoration:none;font-size:13px}.explorer-row:not(.explorer-table-label):hover{background:#231d1a}.explorer-transaction-row{grid-template-columns:1.2fr 1fr .65fr .55fr}.explorer-table-label{min-height:36px;color:#8f837c;font-size:11px;font-weight:700;text-transform:uppercase}.explorer-row strong,.explorer-row small{display:block}.explorer-row small{margin-top:4px;color:#8f837c;font-size:11px}.explorer-mono{font-family:var(--font-mono),monospace}.status-success{color:#4ad870;font-weight:700}.status-failed{color:#f48686;font-weight:700}.explorer-empty{padding:28px 16px;color:#8f837c;font-size:13px}@media(max-width:900px){.explorer-metrics,.explorer-grid{grid-template-columns:1fr 1fr}.explorer-grid{gap:14px}.explorer-section{grid-column:1/-1}}@media(max-width:620px){.explorer-home{padding:0 16px 40px}.explorer-header{height:auto;min-height:68px;align-items:flex-start;padding:17px 0;flex-direction:column}.explorer-hero{padding-top:44px}.explorer-metrics{grid-template-columns:1fr 1fr}.explorer-section-head{flex-direction:column}.explorer-row{grid-template-columns:1fr .65fr .8fr}.explorer-transaction-row{grid-template-columns:1.25fr .8fr .55fr}.explorer-transaction-row>span:nth-child(2),.explorer-transaction-row>span:nth-child(4){display:none}.explorer-table-label.explorer-transaction-row>span:nth-child(2),.explorer-table-label.explorer-transaction-row>span:nth-child(4){display:none}}
     `}</style>
-  </main></ExplorerShell>;
+  </main>;
 }

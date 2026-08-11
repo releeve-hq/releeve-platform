@@ -40,6 +40,8 @@ fn classic_tx(hash: &str, seq: u64, network: &str) -> TxRecord {
         status: TxStatus::Success,
         source_account: "GALICE".into(),
         operation_type: "payment".into(),
+        operation_target_address: Some("GBOB".into()),
+        operation_target_kind: Some("account".into()),
         fee_charged: Some("150".into()),
         sequence_number: None,
         application_order: 1,
@@ -53,6 +55,7 @@ fn classic_tx(hash: &str, seq: u64, network: &str) -> TxRecord {
             to_address: "GBOB".into(),
             asset: "XLM".into(),
             amount: "10.5".into(),
+            ..Default::default()
         }],
         raw_result_meta_xdr: None,
         raw_envelope_xdr: None,
@@ -130,6 +133,7 @@ async fn transaction_with_call_tree_roundtrips() {
                 args: serde_json::json!([]),
                 return_value: Some(serde_json::json!({"ok": true})),
                 depth: 0,
+                ..Default::default()
             },
             ingest::models::CallTreeNode {
                 parent_index: Some(0),
@@ -138,6 +142,7 @@ async fn transaction_with_call_tree_roundtrips() {
                 args: serde_json::json!([1, 2]),
                 return_value: None,
                 depth: 1,
+                ..Default::default()
             },
         ];
         t.state_changes = vec![ingest::models::StateChange {
@@ -146,11 +151,13 @@ async fn transaction_with_call_tree_roundtrips() {
             value_before: Some(serde_json::json!(100)),
             value_after: Some(serde_json::json!(105)),
             caused_by_node: Some(0),
+            ..Default::default()
         }];
         t.events = vec![ingest::models::Event {
             contract_id: "C123".into(),
             topics: vec!["transfer".into()],
             data: serde_json::json!({"amount": 5}),
+            ..Default::default()
         }];
         t
     };
@@ -250,6 +257,8 @@ async fn rollup_aggregates_edges_into_trailing_windows() {
             status: TxStatus::Success,
             source_account: from.into(),
             operation_type: "payment".into(),
+            operation_target_address: Some(to.into()),
+            operation_target_kind: Some("account".into()),
             fee_charged: None,
             sequence_number: None,
             application_order: 1,
@@ -263,6 +272,7 @@ async fn rollup_aggregates_edges_into_trailing_windows() {
                 to_address: to.into(),
                 asset: asset.into(),
                 amount: amount.into(),
+                ..Default::default()
             }],
             raw_result_meta_xdr: None,
             raw_envelope_xdr: None,
@@ -330,6 +340,8 @@ async fn rollup_null_usd_when_no_price_and_numeric_math() {
         status: TxStatus::Success,
         source_account: "GA".into(),
         operation_type: "payment".into(),
+        operation_target_address: Some("GB".into()),
+        operation_target_kind: Some("account".into()),
         fee_charged: None,
         sequence_number: None,
         application_order: 1,
@@ -343,6 +355,7 @@ async fn rollup_null_usd_when_no_price_and_numeric_math() {
             to_address: "GB".into(),
             asset: "NOQUOTE:XYZ".into(),
             amount: "5".into(),
+            ..Default::default()
         }],
         raw_result_meta_xdr: None,
         raw_envelope_xdr: None,

@@ -24,7 +24,7 @@ export default defineConfig({
       use: { ...devices["Pixel 7"] },
     },
   ],
-  webServer: process.env.PLAYWRIGHT_SKIP_WEB_SERVER
+  webServer: process.env.PLAYWRIGHT_SKIP_WEB_SERVER || process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
         command: "yarn dev",

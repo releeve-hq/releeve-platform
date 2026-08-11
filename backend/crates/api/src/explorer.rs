@@ -18,12 +18,15 @@ use futures::Stream;
 use redis::AsyncCommands;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use shared::Error;
+use shared::{Error, IngestSettings};
 use utoipa::IntoParams;
 
 use crate::state::AppState;
 use ingest::feeds::{self, Cursor, Dir, Window};
 use ingest::ratelimit;
+use ingest::rpc::SorobanRpcClient;
+use ingest::upstream::{Backoff, CircuitBreaker};
+use ingest::worker::{HorizonClient, sync_network};
 
 /// Sliding-window allowance for a single caller on explorer feeds.
 const RATE_LIMIT_PER_WINDOW: u64 = 120;
@@ -40,6 +43,8 @@ pub struct ListParams {
     pub limit: Option<i64>,
     #[serde(default)]
     pub cursor: Option<String>,
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 /// Params for `/tokens/top` and `/transfers`.
@@ -90,10 +95,15 @@ async fn cached_page(
     state: &AppState,
     key: &str,
     ttl_secs: u64,
+    refresh: bool,
     build: impl Future<Output = Result<feeds::Page, sqlx::Error>> + Send,
 ) -> Result<Value, Error> {
     if let Ok(mut conn) = state.redis.get_multiplexed_async_connection().await {
-        let hit: Result<Option<String>, _> = conn.get(key).await;
+        let hit: Result<Option<String>, _> = if refresh {
+            Ok(None)
+        } else {
+            conn.get(key).await
+        };
         if let Ok(Some(raw)) = hit
             && let Ok(value) = serde_json::from_str(&raw)
         {
@@ -134,6 +144,87 @@ async fn rate_limit(state: &AppState, scope: &str, key: &str) -> Result<(), Erro
     }
 }
 
+fn ingest_network_settings(state: &AppState, network: &str) -> Result<IngestSettings, Error> {
+    let (horizon_url, rpc_url) = match network {
+        "mainnet" => (
+            "https://horizon.stellar.org".to_string(),
+            state.settings.soroban_rpc_url.clone(),
+        ),
+        "testnet" => (
+            "https://horizon-testnet.stellar.org".to_string(),
+            "https://soroban-testnet.stellar.org".to_string(),
+        ),
+        other => {
+            return Err(Error::BadRequest(format!(
+                "unsupported explorer network: {other}"
+            )));
+        }
+    };
+
+    Ok(IngestSettings {
+        database_url: state.settings.database_url.clone(),
+        redis_url: state.settings.redis_url.clone(),
+        log_filter: state.settings.log_filter.clone(),
+        network: network.to_string(),
+        horizon_url,
+        rpc_url,
+        price_feed_url: String::new(),
+        sync_interval_secs: 10,
+        rollup_interval_secs: 300,
+        max_ledgers_per_pass: 5,
+        lock_ttl_secs: 60,
+    })
+}
+
+/// `POST /api/v1/explorer/{network}/sync`
+pub async fn sync_explorer_network(
+    State(state): State<AppState>,
+    Path(network): Path<String>,
+) -> Result<Json<Value>, Error> {
+    rate_limit(&state, "explorer", &format!("sync:{network}")).await?;
+
+    let settings = ingest_network_settings(&state, &network)?;
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(Error::internal)?;
+    let backoff = || Backoff {
+        base: Duration::from_millis(200),
+        max: Duration::from_secs(2),
+        jitter: 0.2,
+        max_attempts: 3,
+    };
+    let breaker = || CircuitBreaker::new(3, Duration::from_secs(30));
+    let mut horizon = HorizonClient::new(settings.horizon_url.clone(), backoff(), breaker());
+    let mut rpc = if settings.rpc_url.trim().is_empty() {
+        None
+    } else {
+        Some(SorobanRpcClient::new(
+            settings.rpc_url.clone(),
+            backoff(),
+            breaker(),
+        ))
+    };
+    let ingested = sync_network(
+        &mut horizon,
+        &state.db,
+        &mut redis,
+        &settings.network,
+        settings.max_ledgers_per_pass,
+        settings.lock_ttl_secs,
+        rpc.as_mut(),
+    )
+    .await?;
+
+    Ok(Json(json!({
+        "network": network,
+        "ledgers_ingested": ingested,
+        "horizon_url": settings.horizon_url,
+        "soroban_trace_enrichment": if settings.rpc_url.trim().is_empty() { "disabled" } else { "daemon_required" }
+    })))
+}
+
 /// `GET /api/v1/explorer/{network}/transactions/latest`
 #[utoipa::path(
     get,
@@ -157,7 +248,7 @@ pub async fn recent_transactions(
     );
     let db = state.db.clone();
     let network_for_query = network.clone();
-    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, async move {
+    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, p.refresh, async move {
         feeds::latest_transactions(&db, &network_for_query, limit, cursor, Dir::Next).await
     })
     .await?;
@@ -183,7 +274,7 @@ pub async fn recent_ledgers(
     let key = feeds::feed_key(&network, "ledgers", &page_tail(limit, p.cursor.as_deref()));
     let db = state.db.clone();
     let network_for_query = network.clone();
-    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, async move {
+    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, p.refresh, async move {
         feeds::latest_ledgers(&db, &network_for_query, limit, cursor, Dir::Next).await
     })
     .await?;
@@ -195,22 +286,28 @@ async fn live_payload(state: &AppState, network: &str) -> Result<String, Error> 
     let ledger_key = feeds::feed_key(network, "ledgers", &page_tail(HOME_CHART_LIMIT, None));
     let tx_db = state.db.clone();
     let tx_network = network.to_owned();
-    let transactions = cached_page(state, &tx_key, feeds::FEED_TTL_SECS, async move {
+    let transactions = cached_page(state, &tx_key, feeds::FEED_TTL_SECS, false, async move {
         feeds::latest_transactions(&tx_db, &tx_network, HOME_CHART_LIMIT, None, Dir::Next).await
     })
     .await?;
     let ledger_db = state.db.clone();
     let ledger_network = network.to_owned();
-    let ledgers = cached_page(state, &ledger_key, feeds::FEED_TTL_SECS, async move {
-        feeds::latest_ledgers(
-            &ledger_db,
-            &ledger_network,
-            HOME_CHART_LIMIT,
-            None,
-            Dir::Next,
-        )
-        .await
-    })
+    let ledgers = cached_page(
+        state,
+        &ledger_key,
+        feeds::FEED_TTL_SECS,
+        false,
+        async move {
+            feeds::latest_ledgers(
+                &ledger_db,
+                &ledger_network,
+                HOME_CHART_LIMIT,
+                None,
+                Dir::Next,
+            )
+            .await
+        },
+    )
     .await?;
 
     serde_json::to_string(&json!({
@@ -279,7 +376,7 @@ pub async fn top_tokens(
     );
     let db = state.db.clone();
     let network_for_query = network.clone();
-    let payload = cached_page(&state, &key, feeds::RANKINGS_TTL_SECS, async move {
+    let payload = cached_page(&state, &key, feeds::RANKINGS_TTL_SECS, false, async move {
         feeds::top_tokens(&db, &network_for_query, window, limit, cursor).await
     })
     .await?;
@@ -321,7 +418,7 @@ pub async fn transfers(
     let db = state.db.clone();
     let network_for_query = network.clone();
     let asset = p.asset.clone();
-    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, async move {
+    let payload = cached_page(&state, &key, feeds::FEED_TTL_SECS, false, async move {
         feeds::transfers(
             &db,
             &network_for_query,

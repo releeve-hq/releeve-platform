@@ -19,4 +19,5 @@ pub struct AppState {
     pub mailer: Arc<dyn Mailer>,
     pub oauth: OAuthClients,
     pub fork_core: Option<sim::ForkCoreClient>,
+    pub source_lens: Option<source_lens_client::SourceLensClient>,
 }

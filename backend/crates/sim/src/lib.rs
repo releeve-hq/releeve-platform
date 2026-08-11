@@ -178,6 +178,21 @@ impl ForkCoreClient {
         .await
     }
 
+    pub async fn get_simulation_trace(
+        &self,
+        actor: &ServiceActor,
+        simulation_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/simulations/{simulation_id}/trace"),
+            None,
+            None,
+        )
+        .await
+    }
+
     pub async fn cancel_simulation(
         &self,
         actor: &ServiceActor,

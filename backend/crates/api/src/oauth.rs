@@ -110,6 +110,11 @@ impl OAuthClients {
             fork_core_signing_kid: "test".into(),
             fork_core_issuer: "releeve-platform".into(),
             fork_core_audience: "fork-core".into(),
+            source_lens_url: String::new(),
+            source_lens_signing_key_file: String::new(),
+            source_lens_signing_kid: "test".into(),
+            source_lens_issuer: "releeve-platform".into(),
+            source_lens_audience: "source-lens".into(),
         });
         o.callback_base = callback_base.to_string();
         o.github_base = provider_base.to_string();
@@ -409,6 +414,11 @@ mod tests {
             fork_core_signing_kid: "test".into(),
             fork_core_issuer: "releeve-platform".into(),
             fork_core_audience: "fork-core".into(),
+            source_lens_url: String::new(),
+            source_lens_signing_key_file: String::new(),
+            source_lens_signing_kid: "test".into(),
+            source_lens_issuer: "releeve-platform".into(),
+            source_lens_audience: "source-lens".into(),
         }
     }
 

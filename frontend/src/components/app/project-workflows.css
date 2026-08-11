@@ -232,6 +232,289 @@ button.pw-row:hover {
   color: var(--red);
 }
 
+.pw-debug-head,
+.pw-debug-toolbar,
+.pw-debug-source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pw-debug-head {
+  margin-bottom: 14px;
+}
+
+.pw-debug-toolbar {
+  min-height: 50px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  padding: 7px 10px;
+  background: var(--panel);
+}
+
+.pw-breakpoint {
+  flex: 1;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.pw-breakpoint .pw-field {
+  width: min(260px, 42vw);
+}
+
+.pw-debug-counter {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.pw-debug-limitations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+}
+
+.pw-debug-grid {
+  display: grid;
+  min-height: 620px;
+  grid-template-columns: minmax(190px, 240px) minmax(360px, 1fr) minmax(260px, 340px);
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.pw-debug-calls,
+.pw-debug-source,
+.pw-debug-evidence {
+  min-width: 0;
+  overflow: auto;
+}
+
+.pw-debug-calls,
+.pw-debug-source {
+  border-right: 1px solid var(--border);
+}
+
+.pw-debug-calls h2 {
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 12px;
+  font-size: 12px;
+}
+
+.pw-debug-calls > button {
+  display: flex;
+  width: 100%;
+  min-height: 45px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pw-debug-calls > button[data-active="true"] {
+  background: color-mix(in srgb, var(--green) 11%, var(--panel));
+}
+
+.pw-debug-calls > button span:not(.pw-badge) {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pw-debug-calls small {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.pw-debug-source {
+  display: grid;
+  grid-template-rows: auto minmax(260px, 1fr) minmax(190px, 280px);
+}
+
+.pw-debug-source-head {
+  min-height: 43px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.pw-debug-event {
+  min-width: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.pw-debug-event > span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.pw-debug-event h2 {
+  margin: 8px 0 14px;
+  font-size: 15px;
+  text-transform: capitalize;
+}
+
+.pw-debug-timeline {
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.pw-debug-timeline > button:not(.pw-button) {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 48px 130px minmax(160px, 1fr);
+  gap: 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 11px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pw-debug-timeline > button[data-active="true"] {
+  background: color-mix(in srgb, var(--green) 12%, var(--panel));
+  color: var(--text);
+}
+
+.pw-debug-evidence .pw-tabs {
+  min-height: 43px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  padding: 0 10px;
+  gap: 12px;
+}
+
+.pw-debug-evidence > .pw-json {
+  max-height: 720px;
+  margin: 0;
+  border: 0;
+  padding: 14px;
+}
+
+.pw-verification {
+  display: grid;
+  grid-template-columns: minmax(300px, .8fr) minmax(380px, 1.2fr);
+}
+
+.pw-verification-form,
+.pw-verification-history {
+  min-width: 0;
+  padding: 18px;
+}
+
+.pw-verification-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  border-right: 1px solid var(--border);
+}
+
+.pw-verification h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.pw-verification-run {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+}
+
+.pw-verification-run p {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.pw-verification-run > .pw-inline:last-child {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.pw-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 13px 0;
+}
+
+.pw-capability-grid > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pw-capability-grid > div > span:first-child {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+@media (max-width: 1100px) {
+  .pw-debug-grid {
+    grid-template-columns: 210px minmax(360px, 1fr);
+  }
+
+  .pw-debug-evidence {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--border);
+  }
+
+  .pw-verification {
+    grid-template-columns: 1fr;
+  }
+
+  .pw-verification-form {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 720px) {
+  .pw-debug-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pw-breakpoint {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .pw-debug-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pw-debug-calls,
+  .pw-debug-source {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .pw-debug-source {
+    min-height: 650px;
+  }
+
+  .pw-capability-grid {
+    grid-template-columns: repeat(2, minmax(100px, 1fr));
+  }
+}
+
 .pw-badge {
   display: inline-flex;
   align-items: center;

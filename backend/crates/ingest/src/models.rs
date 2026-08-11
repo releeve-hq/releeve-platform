@@ -26,12 +26,16 @@ pub struct LedgerRecord {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ResourceMetrics {
     pub cpu_instructions: Option<i64>,
+    pub cpu_instruction_limit: Option<i64>,
     pub memory_bytes: Option<i64>,
     pub invoke_time_nsecs: Option<i64>,
     pub disk_read_bytes: Option<i64>,
+    pub disk_read_bytes_limit: Option<i64>,
     pub write_bytes: Option<i64>,
+    pub write_bytes_limit: Option<i64>,
     pub max_rw_key_byte: Option<i64>,
     pub max_rw_data_byte: Option<i64>,
+    pub resource_fee: Option<String>,
 }
 
 /// A single ledger-inclusion transaction with its decoded detail.
@@ -43,6 +47,9 @@ pub struct TxRecord {
     pub status: TxStatus,
     pub source_account: String,
     pub operation_type: String,
+    /// Explicit target decoded from the classic operation, separate from asset flow.
+    pub operation_target_address: Option<String>,
+    pub operation_target_kind: Option<String>,
     pub fee_charged: Option<String>,
     pub sequence_number: Option<String>,
     pub application_order: i64,
@@ -65,7 +72,7 @@ pub enum TxStatus {
 }
 
 /// A node in the Soroban call tree (`tx_call_tree_nodes`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct CallTreeNode {
     /// Index of the parent node within the same call tree; `None` for the root.
     pub parent_index: Option<i64>,
@@ -75,10 +82,12 @@ pub struct CallTreeNode {
     pub return_value: Option<serde_json::Value>,
     /// Depth reconstructed by the decoder (root = 0).
     pub depth: i64,
+    /// Stable execution order from diagnostic evidence or envelope order.
+    pub sequence: i64,
 }
 
 /// A ledger entry mutated by a Soroban invocation (`tx_state_changes`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StateChange {
     pub entry_type: String,
     pub entry_key: String,
@@ -86,23 +95,36 @@ pub struct StateChange {
     pub value_after: Option<serde_json::Value>,
     /// Index of the call-tree node that caused this change, if any.
     pub caused_by_node: Option<i64>,
+    pub sequence: i64,
+    /// `exact` comes from ordered diagnostics; `contract` is inferred by the
+    /// owning contract; `transaction` means the protocol exposes no child cause.
+    pub cause_confidence: String,
 }
 
 /// A Soroban event (`tx_events`). Protocol-23 knows three buckets.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Event {
     pub contract_id: String,
     pub topics: Vec<String>,
     pub data: serde_json::Value,
+    pub caused_by_node: Option<i64>,
+    pub sequence: i64,
+    pub event_type: String,
+    pub successful: Option<bool>,
+    pub stage: Option<String>,
 }
 
 /// A classic payment edge (`tx_fund_flow_edges`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FundFlowEdge {
     pub from_address: String,
     pub to_address: String,
     pub asset: String,
     pub amount: String,
+    pub caused_by_node: Option<i64>,
+    pub sequence: i64,
+    pub asset_type: String,
+    pub usd_value: Option<String>,
 }
 
 /// A single live ledger entry returned by Soroban-RPC `getLedgerEntries`.

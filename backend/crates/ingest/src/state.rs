@@ -48,22 +48,47 @@ pub async fn upsert_ledger(pool: &PgPool, l: &LedgerRecord) -> Result<bool, sqlx
     Ok(res.is_some())
 }
 
-/// Write a transaction and, only when newly inserted, its child rows (call
-/// tree nodes, state changes, events, fund-flow edges) atomically.
+/// Write or enrich a transaction and its decoded child rows atomically.
 pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sqlx::Error> {
     let mut db = pool.begin().await?;
 
-    let inserted: Option<String> = sqlx::query_scalar(
+    let inserted: bool = sqlx::query_scalar(
         r#"
         INSERT INTO transactions (
             hash, network, ledger_sequence, status, source_account, operation_type,
+            operation_target_address, operation_target_kind,
             fee_charged, sequence_number, application_order, timestamp,
             cpu_instructions, memory_bytes, invoke_time_nsecs, disk_read_bytes,
             write_bytes, max_rw_key_byte, max_rw_data_byte,
+            cpu_instruction_limit, disk_read_bytes_limit, write_bytes_limit, resource_fee,
             raw_result_meta_xdr, raw_envelope_xdr
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7::numeric,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-        ON CONFLICT (hash) DO NOTHING
-        RETURNING hash
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::numeric,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::numeric,$24,$25)
+        ON CONFLICT (hash) DO UPDATE SET
+            network = EXCLUDED.network,
+            ledger_sequence = EXCLUDED.ledger_sequence,
+            status = EXCLUDED.status,
+            source_account = EXCLUDED.source_account,
+            operation_type = EXCLUDED.operation_type,
+            operation_target_address = COALESCE(EXCLUDED.operation_target_address, transactions.operation_target_address),
+            operation_target_kind = COALESCE(EXCLUDED.operation_target_kind, transactions.operation_target_kind),
+            fee_charged = COALESCE(EXCLUDED.fee_charged, transactions.fee_charged),
+            sequence_number = COALESCE(EXCLUDED.sequence_number, transactions.sequence_number),
+            application_order = EXCLUDED.application_order,
+            timestamp = EXCLUDED.timestamp,
+            cpu_instructions = COALESCE(EXCLUDED.cpu_instructions, transactions.cpu_instructions),
+            memory_bytes = COALESCE(EXCLUDED.memory_bytes, transactions.memory_bytes),
+            invoke_time_nsecs = COALESCE(EXCLUDED.invoke_time_nsecs, transactions.invoke_time_nsecs),
+            disk_read_bytes = COALESCE(EXCLUDED.disk_read_bytes, transactions.disk_read_bytes),
+            write_bytes = COALESCE(EXCLUDED.write_bytes, transactions.write_bytes),
+            max_rw_key_byte = COALESCE(EXCLUDED.max_rw_key_byte, transactions.max_rw_key_byte),
+            max_rw_data_byte = COALESCE(EXCLUDED.max_rw_data_byte, transactions.max_rw_data_byte),
+            cpu_instruction_limit = COALESCE(EXCLUDED.cpu_instruction_limit, transactions.cpu_instruction_limit),
+            disk_read_bytes_limit = COALESCE(EXCLUDED.disk_read_bytes_limit, transactions.disk_read_bytes_limit),
+            write_bytes_limit = COALESCE(EXCLUDED.write_bytes_limit, transactions.write_bytes_limit),
+            resource_fee = COALESCE(EXCLUDED.resource_fee, transactions.resource_fee),
+            raw_result_meta_xdr = COALESCE(EXCLUDED.raw_result_meta_xdr, transactions.raw_result_meta_xdr),
+            raw_envelope_xdr = COALESCE(EXCLUDED.raw_envelope_xdr, transactions.raw_envelope_xdr)
+        RETURNING (xmax = 0) AS inserted
         "#,
     )
     .bind(&tx.hash)
@@ -72,6 +97,8 @@ pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sq
     .bind(status_sql(tx.status))
     .bind(&tx.source_account)
     .bind(&tx.operation_type)
+    .bind(&tx.operation_target_address)
+    .bind(&tx.operation_target_kind)
     .bind(&tx.fee_charged)
     .bind(&tx.sequence_number)
     .bind(tx.application_order)
@@ -83,27 +110,64 @@ pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sq
     .bind(tx.metrics.write_bytes)
     .bind(tx.metrics.max_rw_key_byte)
     .bind(tx.metrics.max_rw_data_byte)
+    .bind(tx.metrics.cpu_instruction_limit)
+    .bind(tx.metrics.disk_read_bytes_limit)
+    .bind(tx.metrics.write_bytes_limit)
+    .bind(&tx.metrics.resource_fee)
     .bind(&tx.raw_result_meta_xdr)
     .bind(&tx.raw_envelope_xdr)
-    .fetch_optional(&mut *db)
+    .fetch_one(&mut *db)
     .await?;
 
-    let new = inserted.is_some();
-    let node_ids = if new {
+    let new = inserted;
+    let replace_detail = new
+        || !tx.call_tree.is_empty()
+        || !tx.state_changes.is_empty()
+        || !tx.events.is_empty()
+        || !tx.fund_flow.is_empty();
+    let node_ids = if replace_detail {
+        delete_invocation_detail(&mut db, &tx.hash).await?;
         let ids = insert_call_tree(&mut db, &tx.hash, &tx.call_tree).await?;
         insert_state_changes(&mut db, &tx.hash, &tx.state_changes, &ids).await?;
-        insert_events(&mut db, &tx.hash, &tx.events).await?;
-        insert_fund_flow(&mut db, &tx.hash, &tx.fund_flow).await?;
+        insert_events(&mut db, &tx.hash, &tx.events, &ids).await?;
         ids
     } else {
         Vec::new()
     };
+    if new || !tx.fund_flow.is_empty() {
+        delete_fund_flow(&mut db, &tx.hash).await?;
+        insert_fund_flow(&mut db, &tx.hash, &tx.fund_flow, &node_ids).await?;
+    }
 
     db.commit().await?;
     Ok(UpsertOutcome {
         already_present: !new,
         node_ids,
     })
+}
+
+async fn delete_invocation_detail(db: &mut PgConnection, tx_hash: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM tx_state_changes WHERE tx_hash = $1")
+        .bind(tx_hash)
+        .execute(&mut *db)
+        .await?;
+    sqlx::query("DELETE FROM tx_events WHERE tx_hash = $1")
+        .bind(tx_hash)
+        .execute(&mut *db)
+        .await?;
+    sqlx::query("DELETE FROM tx_call_tree_nodes WHERE tx_hash = $1")
+        .bind(tx_hash)
+        .execute(&mut *db)
+        .await?;
+    Ok(())
+}
+
+async fn delete_fund_flow(db: &mut PgConnection, tx_hash: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM tx_fund_flow_edges WHERE tx_hash = $1")
+        .bind(tx_hash)
+        .execute(&mut *db)
+        .await?;
+    Ok(())
 }
 
 /// Persist entity snapshots from `getLedgerEntries` (idempotent by
@@ -168,8 +232,8 @@ async fn insert_call_tree(
         let id: Uuid = sqlx::query_scalar(
             r#"
             INSERT INTO tx_call_tree_nodes
-                (tx_hash, parent_node_id, contract_id, function_name, args, return_value, depth)
-            VALUES ($1,$2,$3,$4,$5,$6,$7)
+                (tx_hash, parent_node_id, contract_id, function_name, args, return_value, depth, sequence)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             RETURNING id
             "#,
         )
@@ -180,6 +244,7 @@ async fn insert_call_tree(
         .bind(&n.args)
         .bind(&n.return_value)
         .bind(n.depth)
+        .bind(n.sequence)
         .fetch_one(&mut **db)
         .await?;
         ids.push(id);
@@ -201,8 +266,8 @@ async fn insert_state_changes(
         sqlx::query(
             r#"
             INSERT INTO tx_state_changes
-                (tx_hash, caused_by_node_id, entry_type, entry_key, value_before, value_after)
-            VALUES ($1,$2,$3,$4,$5,$6)
+                (tx_hash, caused_by_node_id, entry_type, entry_key, value_before, value_after, sequence, cause_confidence)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             "#,
         )
         .bind(tx_hash)
@@ -211,6 +276,8 @@ async fn insert_state_changes(
         .bind(&c.entry_key)
         .bind(&c.value_before)
         .bind(&c.value_after)
+        .bind(c.sequence)
+        .bind(&c.cause_confidence)
         .execute(&mut *db)
         .await?;
     }
@@ -221,19 +288,30 @@ async fn insert_events(
     db: &mut PgConnection,
     tx_hash: &str,
     events: &[crate::models::Event],
+    node_ids: &[Uuid],
 ) -> Result<(), sqlx::Error> {
     for e in events {
         let topics = serde_json::json!(e.topics);
+        let caused_by = e
+            .caused_by_node
+            .and_then(|index| node_ids.get(index as usize))
+            .copied();
         sqlx::query(
             r#"
-            INSERT INTO tx_events (tx_hash, contract_id, topics, data)
-            VALUES ($1,$2,$3,$4)
+            INSERT INTO tx_events
+                (tx_hash, contract_id, topics, data, caused_by_node_id, sequence, event_type, successful, stage)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
             "#,
         )
         .bind(tx_hash)
         .bind(&e.contract_id)
         .bind(topics)
         .bind(&e.data)
+        .bind(caused_by)
+        .bind(e.sequence)
+        .bind(&e.event_type)
+        .bind(e.successful)
+        .bind(&e.stage)
         .execute(&mut *db)
         .await?;
     }
@@ -244,13 +322,18 @@ async fn insert_fund_flow(
     db: &mut PgConnection,
     tx_hash: &str,
     edges: &[crate::models::FundFlowEdge],
+    node_ids: &[Uuid],
 ) -> Result<(), sqlx::Error> {
     for e in edges {
+        let caused_by = e
+            .caused_by_node
+            .and_then(|index| node_ids.get(index as usize))
+            .copied();
         sqlx::query(
             r#"
             INSERT INTO tx_fund_flow_edges
-                (tx_hash, from_address, to_address, asset, amount)
-            VALUES ($1,$2,$3,$4,$5::numeric)
+                (tx_hash, from_address, to_address, asset, amount, caused_by_node_id, sequence, asset_type, usd_value)
+            VALUES ($1,$2,$3,$4,$5::numeric,$6,$7,$8,$9::numeric)
             "#,
         )
         .bind(tx_hash)
@@ -258,6 +341,10 @@ async fn insert_fund_flow(
         .bind(&e.to_address)
         .bind(&e.asset)
         .bind(&e.amount)
+        .bind(caused_by)
+        .bind(e.sequence)
+        .bind(&e.asset_type)
+        .bind(&e.usd_value)
         .execute(&mut *db)
         .await?;
     }

@@ -65,6 +65,8 @@ async fn seed_tx(app: &TestApp) -> String {
         status: TxStatus::Success,
         source_account: "GBLOCKED".into(),
         operation_type: "invoke_host_function".into(),
+        operation_target_address: Some("CCONTRACT".into()),
+        operation_target_kind: Some("contract".into()),
         fee_charged: Some("100".into()),
         sequence_number: Some("1".into()),
         application_order: 0,
@@ -80,6 +82,7 @@ async fn seed_tx(app: &TestApp) -> String {
             args: serde_json::json!({ "asset": "XLM", "amount": 42 }),
             return_value: Some(serde_json::json!({ "ok": true })),
             depth: 0,
+            ..Default::default()
         }],
         state_changes: vec![StateChange {
             entry_type: "contract_data".into(),
@@ -87,17 +90,20 @@ async fn seed_tx(app: &TestApp) -> String {
             value_before: Some(serde_json::json!(1)),
             value_after: Some(serde_json::json!(43)),
             caused_by_node: None,
+            ..Default::default()
         }],
         events: vec![Event {
             contract_id: "CCONTRACT".into(),
             topics: vec!["transfer".into(), "XLM".into()],
             data: serde_json::json!({ "asset": "XLM", "amount": 42 }),
+            ..Default::default()
         }],
         fund_flow: vec![FundFlowEdge {
             from_address: "GBLOCKED".into(),
             to_address: "GALICE".into(),
             asset: "XLM".into(),
             amount: "42".into(),
+            ..Default::default()
         }],
         raw_result_meta_xdr: None,
         raw_envelope_xdr: None,

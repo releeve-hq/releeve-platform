@@ -3,12 +3,14 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AddressLink, LedgerLink, TxHashLink } from "@/components/explorer/entity-links";
+import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
 import { truncateEntity } from "@/lib/explorer-routes";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import {
   AlertsPage as ProjectAlertsPage,
   ContractsPage as ProjectContractsPage,
+  DebuggerPage as ProjectDebuggerPage,
   SimulatorPage as ProjectSimulatorPage,
   VirtualEnvPage as ProjectVirtualEnvPage,
   WalletsPage as ProjectWalletsPage,
@@ -17,6 +19,7 @@ import {
   explorerLiveUrl,
   getRecentLedgers,
   getRecentTransactions,
+  syncExplorerNetwork,
   type ExplorerFeedLedger,
   type ExplorerFeedTransaction,
   type ExplorerLiveFeed,
@@ -39,6 +42,7 @@ type PageKey =
   | "contracts"
   | "ledgers"
   | "simulator"
+  | "debugger"
   | "virtualenv"
   | "activity"
   | "alerts"
@@ -213,7 +217,6 @@ const PAGE_BY_APP_ROUTE: Record<string, PageKey> = {
   "/alerts": "alerts",
   "/wallets": "wallets",
   "/contracts": "contracts",
-  "/docs": "docs",
   "/settings": "settings",
 };
 
@@ -224,6 +227,7 @@ const CRUMBS: Record<PageKey, string> = {
   contracts: "Explore / Contracts",
   ledgers: "Explore / Ledgers",
   simulator: "Simulator",
+  debugger: "Debugger",
   virtualenv: "Virtual Environment",
   activity: "Activity",
   alerts: "Alerts",
@@ -819,10 +823,13 @@ const TOKEN_GRADIENTS = [
 ];
 
 function TxRow({ method, hash, from, to, time, network = DEMO_NETWORK }: ExplorerTransaction & { network?: string }) {
-  const renderEntity = (value: string) =>
-    /^[GC][A-Z2-7]{55}$/.test(value) || value.startsWith("C")
-      ? <AddressLink address={value} network={network} />
-      : <span title={value}>{truncateEntity(value, 6, 5)}</span>;
+  const renderEntity = (value: string) => {
+    const clean = value.trim();
+    if (/^[GC][A-Z2-7]{55}$/.test(clean)) {
+      return <AddressLink address={clean} network={network} />;
+    }
+    return <span title={clean} style={{ color: "var(--text-faint)" }}>{clean}</span>;
+  };
 
   return (
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "10px 8px", gap: 7, borderTop: "1px solid var(--border)" }}>
@@ -896,16 +903,19 @@ function ledgerRow(ledger: ExplorerFeedLedger, network: string): ExplorerLedger 
 }
 
 function txRow(tx: ExplorerFeedTransaction, network: string): ExplorerTransaction & { network: string } {
+  const operationType = tx.operation_type
+    ? Array.from(new Set(tx.operation_type.split(",").map((part) => part.trim()).filter(Boolean))).join(", ")
+    : "operation";
   return {
-    method: tx.operation_type || "operation",
+    method: operationType,
     hash: tx.hash,
     from: tx.source_account || "Unknown source",
-    to: tx.ledger_sequence ? `Ledger ${tx.ledger_sequence}` : "Ledger pending",
+    to: tx.destination_account || (tx.affected_account ? `Affected: ${tx.affected_account}` : "No address target"),
     ledger: String(tx.ledger_sequence ?? ""),
     time: timeAgo(tx.timestamp),
     status: tx.status === "failed" ? "failed" : "success",
     fee: tx.fee_charged ?? "n/a",
-    amount: "n/a",
+    amount: tx.amount ? `${tx.amount} ${tx.asset ?? ""}`.trim() : "No asset transfer",
     contractCalls: [],
     network,
   };
@@ -924,18 +934,13 @@ function ledgerChartPoints(ledgers: ExplorerFeedLedger[]) {
 
 function transactionChartPoints(transactions: ExplorerFeedTransaction[]) {
   if (!transactions.length) return [];
-  const perLedger = new Map<number, number>();
-  for (const transaction of transactions) {
-    const ledger = transaction.ledger_sequence;
-    if (ledger !== null) perLedger.set(ledger, (perLedger.get(ledger) ?? 0) + 1);
-  }
-  const entries = Array.from(perLedger.entries()).reverse();
-  const values = entries.map(([, count]) => count);
+  const points = transactions.slice(0, 20).reverse();
+  const values = points.map((tx) => Number(tx.fee_charged ?? 1) || 1);
   const max = Math.max(...values, 1);
-  return entries.map(([ledger, count]) => ({
-    height: Math.max(12, Math.round((count / max) * 100)),
-    label: `Ledger ${ledger.toLocaleString()}`,
-    value: `${count.toLocaleString()} indexed transactions`,
+  return points.map((tx, index) => ({
+    height: Math.max(12, Math.round((values[index] / max) * 100)),
+    label: truncateEntity(tx.hash, 8, 6),
+    value: tx.amount ? `${tx.amount} ${tx.asset ?? ""}`.trim() : tx.operation_type,
   }));
 }
 
@@ -962,11 +967,11 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const feedGeneration = useRef(0);
 
-  const loadFeeds = useCallback(async () => {
+  const loadFeeds = useCallback(async (refresh = false) => {
     const generation = feedGeneration.current;
     const [ledgerResult, transactionResult] = await Promise.all([
-      getRecentLedgers(network, 20),
-      getRecentTransactions(network, 20),
+      getRecentLedgers(network, 20, null, refresh),
+      getRecentTransactions(network, 20, null, refresh),
     ]);
     if (generation !== feedGeneration.current) return;
     if (ledgerResult.data) setLedgers(ledgerResult.data);
@@ -974,6 +979,20 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
     setFeedError(ledgerResult.error || transactionResult.error);
     setLastUpdated(new Date().toLocaleTimeString());
   }, [network]);
+
+  const refreshFeeds = useCallback(async () => {
+    const generation = feedGeneration.current;
+    if (network === "futurenet") {
+      await loadFeeds(true);
+      return;
+    }
+    const syncResult = await syncExplorerNetwork(network);
+    if (generation !== feedGeneration.current) return;
+    if (syncResult.error) {
+      setFeedError(syncResult.error);
+    }
+    await loadFeeds(true);
+  }, [loadFeeds, network]);
 
   useEffect(() => {
     feedGeneration.current += 1;
@@ -984,8 +1003,8 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
   }, [network]);
 
   useEffect(() => {
-    void loadFeeds();
-  }, [loadFeeds]);
+    void refreshFeeds();
+  }, [refreshFeeds]);
 
   useEffect(() => {
     const generation = feedGeneration.current;
@@ -1014,9 +1033,9 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
   }, [loadFeeds, network]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => void loadFeeds(), 60_000);
+    const timer = window.setInterval(() => void refreshFeeds(), 60_000);
     return () => window.clearInterval(timer);
-  }, [loadFeeds]);
+  }, [refreshFeeds]);
 
   const ledgerRows = ledgers?.data.slice(0, 10).map((ledger) => ledgerRow(ledger, network)) ?? [];
   const txRows = transactions?.data.slice(0, 10).map((tx) => txRow(tx, network)) ?? [];
@@ -1031,7 +1050,8 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
       <h1 style={{ fontSize: 21, fontWeight: 700, lineHeight: 1.28, margin: "2px 3px 14px", letterSpacing: -0.2 }}>
         Find any address, token, or transaction — decoded
       </h1>
-      <div style={{ display: "flex", alignItems: "center", gap: 9, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "11px 12px", margin: "0 3px 16px" }}>
+      <div style={{ margin: "0 3px 16px" }}><GlobalExplorerSearch network={network} /></div>
+      <div style={{ display: "none", alignItems: "center", gap: 9, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "11px 12px", margin: "0 3px 16px" }}>
         <Icon size={15}>
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
@@ -1753,26 +1773,6 @@ function AlertsPage() {
   );
 }
 
-function DocsPage() {
-  return (
-    <div>
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Documentation</h1>
-      <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Guides and references to help you ship faster.</p>
-      <Card>
-        <div style={{ padding: "0 8px" }}>
-          <div style={{ borderTop: "none" }}>
-            <ChevRow>Getting started</ChevRow>
-          </div>
-          <ChevRow>CLI reference</ChevRow>
-          <ChevRow>API reference</ChevRow>
-          <ChevRow>Smart contract guides</ChevRow>
-          <ChevRow>Billing &amp; plans</ChevRow>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
 function SettingsPage({ navigate }: { navigate: (k: PageKey) => void }) {
   return (
     <div>
@@ -1919,7 +1919,8 @@ export default function ReleeveApp() {
   const router = useRouter();
   const pathname = usePathname();
   const { user } = useAuth();
-  const [page, setPage] = useState<PageKey>(() => PAGE_BY_APP_ROUTE[pathname] ?? "home");
+  const pageForPath = useCallback((path: string): PageKey => path.startsWith("/debugger/") ? "debugger" : PAGE_BY_APP_ROUTE[path] ?? "home", []);
+  const [page, setPage] = useState<PageKey>(() => pathname.startsWith("/debugger/") ? "debugger" : PAGE_BY_APP_ROUTE[pathname] ?? "home");
   const [light, setLight] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1927,7 +1928,18 @@ export default function ReleeveApp() {
   const [wsOpen, setWsOpen] = useState(false);
   const [projOpen, setProjOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [network, setNetwork] = useState<"mainnet" | "testnet" | "futurenet">("mainnet");
+  const [network, setNetwork] = useState<"mainnet" | "testnet" | "futurenet">(() => {
+    if (typeof window === "undefined") return "mainnet";
+    try {
+      const remembered = JSON.parse(localStorage.getItem(ACTIVE_WORKSPACE_KEY) || "null") as StoredWorkspace | null;
+      if (remembered?.network === "mainnet" || remembered?.network === "testnet" || remembered?.network === "futurenet") {
+        return remembered.network;
+      }
+    } catch {
+      // ignore corrupt local state
+    }
+    return "mainnet";
+  });
   const [netOpen, setNetOpen] = useState<"production" | "create" | null>(null);
   const [organizations, setOrganizations] = useState<WorkspaceOrganization[]>([]);
   const [projects, setProjects] = useState<WorkspaceProject[]>([]);
@@ -1935,8 +1947,8 @@ export default function ReleeveApp() {
   const [activeProject, setActiveProject] = useState<string | null>(null);
 
   useEffect(() => {
-    setPage(PAGE_BY_APP_ROUTE[pathname] ?? "home");
-  }, [pathname]);
+    setPage(pageForPath(pathname));
+  }, [pageForPath, pathname]);
 
   const saveWorkspace = useCallback((workspace: StoredWorkspace) => {
     localStorage.setItem(ACTIVE_WORKSPACE_KEY, JSON.stringify(workspace));
@@ -1984,8 +1996,12 @@ export default function ReleeveApp() {
         const selected = items.find((item) => item.slug === remembered?.project) ?? items[0] ?? null;
         setActiveProject(selected?.slug ?? null);
         if (selected) {
-          setNetwork(selected.network);
-          saveWorkspace({ organization: activeOrganization, project: selected.slug, network: selected.network });
+          const nextNetwork =
+            remembered?.network === "mainnet" || remembered?.network === "testnet" || remembered?.network === "futurenet"
+              ? remembered.network
+              : selected.network;
+          setNetwork(nextNetwork);
+          saveWorkspace({ organization: activeOrganization, project: selected.slug, network: nextNetwork });
         }
       })
       .catch(() => {
@@ -2020,6 +2036,11 @@ export default function ReleeveApp() {
   const projectScope = { organization: activeOrganization, project: activeProject, network };
 
   const navigate = useCallback((k: PageKey) => {
+    if (k === "docs") {
+      router.push("/docs");
+      setNavOpen(false);
+      return;
+    }
     const explorerAnchors: Partial<Record<PageKey, string>> = {
       transactions: '#transactions',
       ledgers: '#ledgers',
@@ -2095,8 +2116,7 @@ export default function ReleeveApp() {
     }
     .db-root * { box-sizing: border-box; }
     .db-root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; font-size: 12.5px; background: var(--bg); color: var(--text); min-height: 100vh; }
-    .db-nav-item:hover { background: var(--panel) !important; color: var(--text) !important; font-weight: 700 !important; }
-    .db-nav-item:hover svg { stroke: var(--text) !important; }
+    .db-nav-item:hover { background: var(--panel) !important; }
     .db-content {
       scrollbar-width: none;
       -ms-overflow-style: none;
@@ -2585,9 +2605,9 @@ export default function ReleeveApp() {
                   padding: collapsed ? "10px 0" : "10px 12px",
                   borderRadius: 8,
                   margin: "1px 0",
-                  color: topNavKey === n.key ? "var(--text)" : "var(--text-dim)",
+                  color: "var(--text)",
                   background: topNavKey === n.key ? "var(--panel)" : "transparent",
-                  fontWeight: topNavKey === n.key ? 700 : 400,
+                  fontWeight: 700,
                   fontSize: 13,
                   cursor: "pointer",
                   transition: "background .15s ease, color .15s ease",
@@ -2620,10 +2640,10 @@ export default function ReleeveApp() {
           {page === "contracts" && <ProjectContractsPage scope={projectScope} />}
           {page === "ledgers" && <LedgersPage />}
           {page === "simulator" && <ProjectSimulatorPage scope={projectScope} />}
+          {page === "debugger" && <ProjectDebuggerPage scope={projectScope} analysisId={pathname.split("/")[2] ?? ""} />}
           {page === "virtualenv" && <ProjectVirtualEnvPage scope={projectScope} />}
           {page === "activity" && <ActivityPage />}
           {page === "alerts" && <ProjectAlertsPage scope={projectScope} />}
-          {page === "docs" && <DocsPage />}
           {page === "settings" && <SettingsPage navigate={navigate} />}
           {page === "settings-profile" && <SettingsProfilePage navigate={navigate} />}
           {page === "settings-notifications" && <SettingsNotificationsPage navigate={navigate} />}

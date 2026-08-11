@@ -181,18 +181,64 @@ async fn run_environment_action(
 }
 
 pub async fn environment_simulate(
-    state: State<AppState>,
-    user: AuthUser,
-    path: Path<(String, String, Uuid)>,
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
     let idempotency_key = headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    run_environment_action(state, user, path, "simulate", body, Some(&idempotency_key)).await
+    let body = body
+        .map(|Json(value)| value)
+        .ok_or_else(|| Error::BadRequest("Simulation request is required".into()))?;
+    let request = body
+        .get("request")
+        .cloned()
+        .ok_or_else(|| Error::BadRequest("Simulation request is required".into()))?;
+    let accepted = client(&state)?
+        .environment_action(
+            &actor(user_id, &auth),
+            environment_id,
+            "simulate",
+            Some(&body),
+            Some(&idempotency_key),
+        )
+        .await
+        .map_err(map_remote)?;
+    let fork_simulation_id = accepted
+        .get("simulation_id")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| Error::ServiceUnavailable("fork_core_invalid_response".into()))?;
+    let fork_job_id = accepted
+        .get("job_id")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok());
+    let local_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO simulation_runs(project_id,base_ledger_sequence,function_name,args,overrides,status,created_by,fork_environment_id,fork_core_simulation_id,fork_core_job_id,fork_core_summary)
+         VALUES($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9,$10)
+         ON CONFLICT(fork_core_simulation_id) WHERE fork_core_simulation_id IS NOT NULL
+         DO UPDATE SET fork_core_job_id=EXCLUDED.fork_core_job_id RETURNING id",
+    )
+    .bind(auth.project_id)
+    .bind(request.get("base_ledger_sequence").and_then(Value::as_i64).unwrap_or_default())
+    .bind(request.get("function_name").and_then(Value::as_str).unwrap_or("unknown"))
+    .bind(request.get("args").cloned().unwrap_or_else(|| json!([])))
+    .bind(request.get("overrides").cloned().unwrap_or_else(|| json!([])))
+    .bind(user_id)
+    .bind(environment_id)
+    .bind(fork_simulation_id)
+    .bind(fork_job_id)
+    .bind(json!({"status":accepted.get("status").cloned().unwrap_or_else(||json!("queued"))}))
+    .fetch_one(&state.db)
+    .await
+    .map_err(Error::internal)?;
+    Ok(Json(json!({"id":local_id,"fork_core":accepted})))
 }
 
 pub async fn environment_rollback(

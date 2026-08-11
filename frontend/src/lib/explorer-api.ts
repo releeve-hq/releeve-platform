@@ -10,12 +10,16 @@ export type JsonValue =
 
 export type ResourceUsage = {
   cpu_instructions?: number | null;
+  cpu_instruction_limit?: number | null;
   memory_bytes?: number | null;
   invoke_time_nsecs?: number | null;
   disk_read_bytes?: number | null;
+  disk_read_bytes_limit?: number | null;
   write_bytes?: number | null;
+  write_bytes_limit?: number | null;
   max_rw_key_byte?: number | null;
   max_rw_data_byte?: number | null;
+  resource_fee?: string | null;
 };
 
 export type TxCallTreeNode = {
@@ -26,6 +30,7 @@ export type TxCallTreeNode = {
   args: JsonValue;
   return_value?: JsonValue;
   depth: number;
+  sequence: number;
 };
 
 export type TxStateChange = {
@@ -35,6 +40,8 @@ export type TxStateChange = {
   before?: JsonValue;
   after?: JsonValue;
   caused_by_call?: string | null;
+  sequence: number;
+  cause_confidence: "exact" | "contract" | "transaction" | string;
 };
 
 export type TxEvent = {
@@ -42,6 +49,11 @@ export type TxEvent = {
   contract_id: string;
   topics: JsonValue;
   data: JsonValue;
+  caused_by_call?: string | null;
+  sequence: number;
+  event_type: string;
+  successful?: boolean | null;
+  stage?: string | null;
 };
 
 export type TxFundFlowEdge = {
@@ -50,6 +62,10 @@ export type TxFundFlowEdge = {
   to: string;
   asset: string;
   amount: string;
+  caused_by_call?: string | null;
+  sequence: number;
+  asset_type: string;
+  usd_value?: string | null;
 };
 
 export type TxAnnotation = {
@@ -68,6 +84,8 @@ export type ExplorerTxDetail = {
   timestamp: string;
   source_account: string;
   operation_type: string;
+  operation_target_address?: string | null;
+  operation_target_kind?: string | null;
   fee_charged?: string | null;
   sequence_number?: string | null;
   application_order?: number | null;
@@ -145,12 +163,36 @@ export type ExplorerLiveFeed = {
 export type ExplorerFeedTransaction = {
   hash: string;
   network: string;
+  ledger?: number | null;
   ledger_sequence: number | null;
   status: 'success' | 'failed' | string;
   source_account: string;
+  destination_account?: string | null;
+  affected_account?: string | null;
+  target_kind?: "transfer" | "contract" | "account_effect" | "none" | string;
   operation_type: string;
   timestamp: string;
   fee_charged?: string | null;
+  amount?: string | null;
+  asset?: string | null;
+  call_trace?: {
+    count: number;
+    root_contract?: string | null;
+    root_function?: string | null;
+  };
+};
+
+export type ExplorerAccountTransaction = Omit<ExplorerFeedTransaction, "ledger_sequence"> & {
+  ledger_sequence?: number | null;
+};
+
+export type ExplorerPagedEnvelope<T> = {
+  data: T[];
+  pagination: {
+    limit: number;
+    next_cursor: string | null;
+    prev_cursor: string | null;
+  };
 };
 
 export type ExplorerFeedLedger = {
@@ -163,9 +205,56 @@ export type ExplorerFeedLedger = {
   resource_limit?: number | null;
 };
 
-async function publicExplorerGet<T>(path: string): Promise<ExplorerFetchResult<T>> {
+export type ExplorerTokenTransfer = {
+  tx_hash: string;
+  from_address: string;
+  to_address: string;
+  asset: string;
+  amount: string;
+  timestamp: string;
+};
+
+export type ExplorerLookupSuggestion = {
+  kind: "transaction" | "account" | "contract" | "ledger";
+  value: string;
+  label: string;
+  description: string;
+};
+
+export type ExplorerLookupResponse = {
+  query: string;
+  suggestions: ExplorerLookupSuggestion[];
+};
+
+async function publicExplorerGet<T>(path: string, signal?: AbortSignal): Promise<ExplorerFetchResult<T>> {
   try {
     const res = await fetch(`${BACKEND_URL}${path}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+      signal,
+    });
+
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null) as { message?: string; error?: string } | null;
+      const error = detail?.message ?? detail?.error ?? (res.status === 404
+        ? "No matching explorer record was found on this network."
+        : res.status >= 500
+          ? "The explorer service is temporarily unavailable."
+          : `The explorer request could not be completed (${res.status}).`);
+      return { data: null, error };
+    }
+
+    return { data: (await res.json()) as T, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Explorer API unavailable";
+    return { data: null, error: message };
+  }
+}
+
+async function publicExplorerPost<T>(path: string): Promise<ExplorerFetchResult<T>> {
+  try {
+    const res = await fetch(`${BACKEND_URL}${path}`, {
+      method: "POST",
       cache: "no-store",
       headers: { Accept: "application/json" },
     });
@@ -199,25 +288,83 @@ export function getAccountDetail(network: string, address: string) {
   );
 }
 
+export function getAccountTransactions(network: string, address: string, limit = 20, cursor?: string | null) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  return publicExplorerGet<ExplorerPagedEnvelope<ExplorerAccountTransaction>>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/account/${encodeURIComponent(address)}/transactions?${query.toString()}`,
+  );
+}
+
 export function getContractDetail(network: string, address: string) {
   return publicExplorerGet<ExplorerContractDetail>(
     `/api/v1/explorer/${encodeURIComponent(network)}/contract/${encodeURIComponent(address)}`,
   );
 }
 
-export function getRecentTransactions(network: string, limit: number, cursor?: string | null) {
+export function lookupExplorer(network: string, query: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ q: query });
+  return publicExplorerGet<ExplorerLookupResponse>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/lookup?${params.toString()}`,
+    signal,
+  );
+}
+
+export function getLedgerTransactions(network: string, sequence: string | number, limit = 20, cursor?: string | null) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  return publicExplorerGet<ExplorerPagedEnvelope<ExplorerAccountTransaction>>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/ledger/${encodeURIComponent(String(sequence))}/transactions?${query.toString()}`,
+  );
+}
+
+export function getContractTransactions(network: string, address: string, limit = 20, cursor?: string | null) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  return publicExplorerGet<ExplorerPagedEnvelope<ExplorerAccountTransaction>>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/contract/${encodeURIComponent(address)}/transactions?${query.toString()}`,
+  );
+}
+
+export type ExplorerContractEvent = TxEvent & { tx_hash: string; ledger: number; timestamp: string };
+
+export function getContractEvents(network: string, address: string, limit = 20, cursor?: string | null) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor) query.set("cursor", cursor);
+  return publicExplorerGet<ExplorerPagedEnvelope<ExplorerContractEvent>>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/contract/${encodeURIComponent(address)}/events?${query.toString()}`,
+  );
+}
+
+export function syncExplorerNetwork(network: string) {
+  return publicExplorerPost<{ network: string; ledgers_ingested: number }>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/sync`,
+  );
+}
+
+export function getRecentTransactions(network: string, limit: number, cursor?: string | null, refresh = false) {
   const query = new URLSearchParams({ limit: String(limit) });
   if (cursor) query.set('cursor', cursor);
+  if (refresh) query.set("refresh", "true");
   return publicExplorerGet<ExplorerPage<ExplorerFeedTransaction>>(
     `/api/v1/explorer/${encodeURIComponent(network)}/transactions/latest?${query.toString()}`,
   );
 }
 
-export function getRecentLedgers(network: string, limit: number, cursor?: string | null) {
+export function getRecentLedgers(network: string, limit: number, cursor?: string | null, refresh = false) {
   const query = new URLSearchParams({ limit: String(limit) });
   if (cursor) query.set('cursor', cursor);
+  if (refresh) query.set("refresh", "true");
   return publicExplorerGet<ExplorerPage<ExplorerFeedLedger>>(
     `/api/v1/explorer/${encodeURIComponent(network)}/ledgers?${query.toString()}`,
+  );
+}
+
+export function getTokenTransfers(network: string, asset: string, limit = 20, cursor?: string | null) {
+  const query = new URLSearchParams({ limit: String(limit), asset, window: "30d" });
+  if (cursor) query.set("cursor", cursor);
+  return publicExplorerGet<ExplorerPage<ExplorerTokenTransfer>>(
+    `/api/v1/explorer/${encodeURIComponent(network)}/transfers?${query.toString()}`,
   );
 }
 

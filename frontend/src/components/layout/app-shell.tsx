@@ -365,6 +365,33 @@ function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const results: any[] = [];
   if (q.length > 0) {
     allProjects.filter((p: any) => p.name.toLowerCase().includes(q)).slice(0, 3).forEach((p: any) => results.push({ type: 'Project', label: p.name, sub: p.category, action: () => navigate('project', { id: p.id }) }));
+    const raw = query.trim();
+    const network = 'mainnet';
+    if (/^[a-fA-F0-9]{64}$/.test(raw)) {
+      results.push({
+        type: 'Transaction',
+        label: `${raw.slice(0, 10)}...${raw.slice(-8)}`,
+        sub: `Open ${network} transaction`,
+        action: () => { window.location.href = `/explorer/${network}/tx/${encodeURIComponent(raw)}`; },
+      });
+    }
+    if (/^[GC][A-Z2-7]{55}$/.test(raw)) {
+      const kind = raw.toUpperCase().startsWith('C') ? 'Contract' : 'Wallet';
+      results.push({
+        type: kind,
+        label: `${raw.slice(0, 8)}...${raw.slice(-6)}`,
+        sub: `Open ${network} ${kind.toLowerCase()}`,
+        action: () => { window.location.href = `/explorer/${network}/${kind === 'Contract' ? 'contract' : 'account'}/${encodeURIComponent(raw)}`; },
+      });
+    }
+    if (/^\d+$/.test(raw)) {
+      results.push({
+        type: 'Ledger',
+        label: `Ledger #${raw}`,
+        sub: `Open ${network} ledger`,
+        action: () => { window.location.href = `/explorer/${network}/ledger/${encodeURIComponent(raw)}`; },
+      });
+    }
   }
 
   return (
@@ -380,7 +407,7 @@ function CommandPalette({ open, onClose }: CommandPaletteProps) {
           {query.length > 0 && results.length === 0 && <div className="px-4 py-8 text-center text-sm text-gray-400">No results for “{query}”</div>}
           {results.map((r, i) => (
             <button key={i} onClick={() => { r.action(); onClose(); }} className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors duration-100 text-left">
-              <div><div className="text-sm font-medium text-gray-900">{r.label}</div><div className="text-xs text-gray-400">{r.sub}</div></div>
+              <div><div className="text-sm font-medium text-zinc-100">{r.label}</div><div className="text-xs text-gray-400">{r.sub}</div></div>
               <Tag>{r.type}</Tag>
             </button>
           ))}

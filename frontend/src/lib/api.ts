@@ -1,6 +1,7 @@
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080';
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
+let refreshPromise: Promise<string | null> | null = null;
 
 export function clearTokenPair() {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
@@ -16,18 +17,32 @@ export class ApiError extends Error {
 }
 
 async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/auth/token/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      if (!res.ok) return null;
+      await res.json().catch(() => ({}));
+      return 'cookie';
+    } catch {
+      return null;
+    }
+  })();
+
   try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/token/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-    });
-    if (!res.ok) return null;
-    await res.json().catch(() => ({}));
-    return 'cookie';
-  } catch {
-    return null;
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
   }
+}
+
+function wait(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function request<T = any>(
@@ -61,6 +76,9 @@ async function request<T = any>(
     const newToken = await refreshAccessToken();
     if (newToken) {
       res = await fetch(url, { ...fetchOptions, headers });
+    } else {
+      await wait(250);
+      res = await fetch(url, { ...fetchOptions, headers });
     }
   }
 
@@ -93,4 +111,18 @@ export const api = {
     request<T>('PATCH', path, body, opts),
   delete: <T = any>(path: string, opts?: { skipAuth?: boolean }) =>
     request<T>('DELETE', path, undefined, opts),
+  upload: async <T = any>(path: string, body: Blob): Promise<T> => {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': body.type || 'application/zip' },
+      body,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = typeof data.error === 'string' ? data.error : data.error?.message || data.message || 'Upload failed';
+      throw new ApiError(message, response.status);
+    }
+    return data as T;
+  },
 };

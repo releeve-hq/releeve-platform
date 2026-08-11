@@ -42,6 +42,11 @@ pub struct Settings {
     pub fork_core_signing_kid: String,
     pub fork_core_issuer: String,
     pub fork_core_audience: String,
+    pub source_lens_url: String,
+    pub source_lens_signing_key_file: String,
+    pub source_lens_signing_kid: String,
+    pub source_lens_issuer: String,
+    pub source_lens_audience: String,
 }
 
 /// Runtime configuration for the `releeve-ingest` daemon (Phase 2).
@@ -137,6 +142,11 @@ impl Settings {
             .set_default("fork_core_signing_kid", "platform-current")?
             .set_default("fork_core_issuer", "releeve-platform")?
             .set_default("fork_core_audience", "fork-core")?
+            .set_default("source_lens_url", "")?
+            .set_default("source_lens_signing_key_file", "")?
+            .set_default("source_lens_signing_kid", "platform-current")?
+            .set_default("source_lens_issuer", "releeve-platform")?
+            .set_default("source_lens_audience", "source-lens")?
             .add_source(Environment::default())
             .build()?
             .try_deserialize()

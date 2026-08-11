@@ -35,6 +35,7 @@ shared = { path = "../shared" }
 ingest = { path = "../ingest" }
 alerts = { path = "../alerts" }
 sim = { path = "../sim" }
+source-lens-client = { path = "../source-lens-client" }
 
 [dev-dependencies]
 test-support = { path = "../test-support" }

@@ -11,6 +11,8 @@ export const explorerRoutes = {
     `/explorer/${encodeURIComponent(network)}/account/${encodeURIComponent(address)}`,
   contract: (network: ExplorerNetwork, address: string) =>
     `/explorer/${encodeURIComponent(network)}/contract/${encodeURIComponent(address)}`,
+  token: (network: ExplorerNetwork, asset: string) =>
+    `/explorer/${encodeURIComponent(network)}/token/${encodeURIComponent(asset)}`,
 };
 
 export function isContractAddress(address: string): boolean {
@@ -27,4 +29,11 @@ export function truncateEntity(value: string | number, head = 8, tail = 6): stri
   const text = String(value);
   if (text.length <= head + tail + 3) return text;
   return `${text.slice(0, head)}...${text.slice(-tail)}`;
+}
+
+export function stellarExpertRoute(network: ExplorerNetwork, kind: "tx" | "account" | "contract" | "ledger", value: string | number): string {
+  const base = network === "mainnet"
+    ? "https://stellar.expert/explorer/public"
+    : `https://stellar.expert/explorer/${encodeURIComponent(network)}`;
+  return `${base}/${kind}/${encodeURIComponent(String(value))}`;
 }

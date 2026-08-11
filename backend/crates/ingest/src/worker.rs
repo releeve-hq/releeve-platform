@@ -89,6 +89,19 @@ impl HorizonClient {
             .await?;
         Ok(records(&body))
     }
+
+    /// Operations for a single transaction. Horizon ledger transaction pages do
+    /// not always embed operation records, so classic transfer decoding may need
+    /// this follow-up request.
+    pub async fn fetch_transaction_operations(
+        &mut self,
+        hash: &str,
+    ) -> Result<Vec<Value>, FetchError> {
+        let body = self
+            .get_json(&format!("/transactions/{hash}/operations?limit=200"))
+            .await?;
+        Ok(records(&body))
+    }
 }
 
 /// Extract Horizon HAL `_embedded.records`.
@@ -97,6 +110,28 @@ fn records(v: &Value) -> Vec<Value> {
         .as_array()
         .cloned()
         .unwrap_or_default()
+}
+
+fn has_operations(v: &Value) -> bool {
+    v.get("operations").and_then(Value::as_array).is_some()
+        || v.get("_embedded")
+            .and_then(|e| e.get("operations"))
+            .and_then(Value::as_array)
+            .is_some()
+}
+
+async fn with_operations(client: &mut HorizonClient, mut tx: Value) -> Result<Value, FetchError> {
+    if has_operations(&tx) {
+        return Ok(tx);
+    }
+    let Some(hash) = tx.get("hash").and_then(Value::as_str).map(String::from) else {
+        return Ok(tx);
+    };
+    let ops = client.fetch_transaction_operations(&hash).await?;
+    if let Some(obj) = tx.as_object_mut() {
+        obj.insert("operations".to_string(), Value::Array(ops));
+    }
+    Ok(tx)
 }
 
 /// The last ledger's `paging_token`, used to page forward.
@@ -213,9 +248,19 @@ pub async fn sync_network(
                 Ok(txs) => {
                     for tv in txs {
                         if is_soroban_invocation(&tv) {
-                            enrich_soroban(pool, rpc.as_deref_mut(), network, &tv).await?;
-                        } else if let Ok(tx) = decode_classic_tx(&tv, network) {
-                            upsert_tx(pool, &tx).await.map_err(internal)?;
+                            enrich_soroban(pool, client, rpc.as_deref_mut(), network, tv).await?;
+                        } else {
+                            match with_operations(client, tv).await {
+                                Ok(tv) => {
+                                    if let Ok(tx) = decode_classic_tx(&tv, network) {
+                                        upsert_tx(pool, &tx).await.map_err(internal)?;
+                                    }
+                                }
+                                Err(FetchError::CircuitOpen) | Err(FetchError::Exhausted) => {
+                                    return Ok(ingested);
+                                }
+                                Err(FetchError::NonRetryable) => {}
+                            }
                         }
                     }
                 }
@@ -265,13 +310,20 @@ mod cursor_tests {
 /// so the row is never lost.
 async fn enrich_soroban(
     pool: &PgPool,
+    client: &mut HorizonClient,
     rpc: Option<&mut SorobanRpcClient>,
     network: &str,
-    tv: &Value,
+    tv: Value,
 ) -> WorkerResult<()> {
     let Some(rpc) = rpc else {
-        if let Ok(tx) = decode_classic_tx(tv, network) {
-            upsert_tx(pool, &tx).await.map_err(internal)?;
+        match with_operations(client, tv).await {
+            Ok(tv) => {
+                if let Ok(tx) = decode_classic_tx(&tv, network) {
+                    upsert_tx(pool, &tx).await.map_err(internal)?;
+                }
+            }
+            Err(FetchError::CircuitOpen) | Err(FetchError::Exhausted) => {}
+            Err(FetchError::NonRetryable) => {}
         }
         return Ok(());
     };
@@ -288,11 +340,15 @@ async fn enrich_soroban(
         Some(tx) => {
             upsert_tx(pool, &tx).await.map_err(internal)?;
         }
-        None => {
-            if let Ok(tx) = decode_classic_tx(tv, network) {
-                upsert_tx(pool, &tx).await.map_err(internal)?;
+        None => match with_operations(client, tv).await {
+            Ok(tv) => {
+                if let Ok(tx) = decode_classic_tx(&tv, network) {
+                    upsert_tx(pool, &tx).await.map_err(internal)?;
+                }
             }
-        }
+            Err(FetchError::CircuitOpen) | Err(FetchError::Exhausted) => {}
+            Err(FetchError::NonRetryable) => {}
+        },
     }
     Ok(())
 }

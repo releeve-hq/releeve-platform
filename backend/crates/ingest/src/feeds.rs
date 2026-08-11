@@ -210,7 +210,50 @@ pub async fn latest_transactions(
         r#"
         SELECT to_jsonb(t.*) || jsonb_build_object(
             '_sort', (extract(epoch from t.timestamp)::bigint * 1000),
-            '_tie', t.hash
+            '_tie', t.hash,
+            'destination_account', COALESCE((
+                SELECT e.to_address
+                FROM tx_fund_flow_edges e
+                WHERE e.tx_hash = t.hash
+                ORDER BY e.sequence, e.id
+                LIMIT 1
+            ), (
+                SELECT c.contract_id
+                FROM tx_call_tree_nodes c
+                WHERE c.tx_hash = t.hash
+                ORDER BY c.sequence, c.id
+                LIMIT 1
+            ), t.operation_target_address),
+            'affected_account', CASE WHEN t.operation_type IN (
+                'manage_data', 'set_options', 'manage_sell_offer', 'manage_buy_offer',
+                'change_trust', 'allow_trust', 'bump_sequence',
+                'begin_sponsoring_future_reserves', 'end_sponsoring_future_reserves',
+                'revoke_sponsorship', 'set_trust_line_flags', 'multi_operation'
+            ) THEN t.source_account ELSE NULL END,
+            'target_kind', CASE
+                WHEN EXISTS (SELECT 1 FROM tx_fund_flow_edges e WHERE e.tx_hash = t.hash) THEN 'transfer'
+                WHEN EXISTS (SELECT 1 FROM tx_call_tree_nodes c WHERE c.tx_hash = t.hash) THEN 'contract'
+                WHEN t.operation_target_address IS NOT NULL THEN COALESCE(t.operation_target_kind, 'entity')
+                WHEN t.operation_type IN (
+                    'manage_data', 'set_options', 'manage_sell_offer', 'manage_buy_offer',
+                    'change_trust', 'allow_trust', 'bump_sequence',
+                    'begin_sponsoring_future_reserves', 'end_sponsoring_future_reserves',
+                    'revoke_sponsorship', 'set_trust_line_flags', 'multi_operation'
+                ) THEN 'account_effect' ELSE 'none' END,
+            'amount', (
+                SELECT e.amount::text
+                FROM tx_fund_flow_edges e
+                WHERE e.tx_hash = t.hash
+                ORDER BY e.sequence, e.id
+                LIMIT 1
+            ),
+            'asset', (
+                SELECT e.asset
+                FROM tx_fund_flow_edges e
+                WHERE e.tx_hash = t.hash
+                ORDER BY e.sequence, e.id
+                LIMIT 1
+            )
         ) AS json
         FROM transactions t
         WHERE network = $1 {predicate}

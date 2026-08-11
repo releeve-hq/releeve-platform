@@ -109,6 +109,8 @@ async fn seed_chain_fixture(app: &TestApp) -> (String, Uuid, Uuid, Uuid) {
         status: TxStatus::Success,
         source_account: "GALICE".into(),
         operation_type: "invoke_host_function".into(),
+        operation_target_address: Some("CCONTRACT".into()),
+        operation_target_kind: Some("contract".into()),
         fee_charged: Some("300".into()),
         sequence_number: Some("12345".into()),
         application_order: 2,
@@ -121,6 +123,7 @@ async fn seed_chain_fixture(app: &TestApp) -> (String, Uuid, Uuid, Uuid) {
             write_bytes: Some(2),
             max_rw_key_byte: Some(1),
             max_rw_data_byte: Some(1),
+            ..Default::default()
         },
         call_tree: vec![CallTreeNode {
             parent_index: None,
@@ -133,6 +136,7 @@ async fn seed_chain_fixture(app: &TestApp) -> (String, Uuid, Uuid, Uuid) {
             ]),
             return_value: Some(serde_json::json!({ "type": "Bool", "value": true })),
             depth: 0,
+            ..Default::default()
         }],
         state_changes: vec![StateChange {
             entry_type: "contract_data".into(),
@@ -140,17 +144,20 @@ async fn seed_chain_fixture(app: &TestApp) -> (String, Uuid, Uuid, Uuid) {
             value_before: Some(serde_json::json!({ "amount": "100" })),
             value_after: Some(serde_json::json!({ "amount": "58" })),
             caused_by_node: Some(0),
+            ..Default::default()
         }],
         events: vec![Event {
             contract_id: "CCONTRACT".into(),
             topics: vec!["transfer".into(), "GALICE".into(), "GBOB".into()],
             data: serde_json::json!({ "amount": "42" }),
+            ..Default::default()
         }],
         fund_flow: vec![FundFlowEdge {
             from_address: "GALICE".into(),
             to_address: "GBOB".into(),
             asset: "XLM".into(),
             amount: "42".into(),
+            ..Default::default()
         }],
         raw_result_meta_xdr: None,
         raw_envelope_xdr: None,

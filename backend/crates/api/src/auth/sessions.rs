@@ -9,13 +9,14 @@
 
 use chrono::{Duration, Utc};
 use shared::Error;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::state::AppState;
 use crate::tokens::{generate_opaque_token, hash_token};
 
 const REFRESH_SESSION_KEY: &str = "releeve:refresh:";
+const RECENT_ROTATION_GRACE_SECONDS: i64 = 30;
 
 /// The key under which a refresh token's id→user mapping lives in Redis.
 fn session_key(token_id: &Uuid) -> String {
@@ -39,6 +40,7 @@ struct RefreshRow {
     expires_at: chrono::DateTime<Utc>,
     created_at: chrono::DateTime<Utc>,
     password_changed_at: Option<chrono::DateTime<Utc>>,
+    replaced_by: Option<Uuid>,
 }
 
 /// Insert a new refresh token (hashed at rest) and return its id + raw value.
@@ -73,6 +75,36 @@ async fn insert_refresh_token(
     if let Err(e) = set_redis_session(state, &id, user_id).await {
         tracing::warn!(error = %e, "redis session write failed (advisory)");
     }
+
+    Ok((id, raw))
+}
+
+async fn insert_refresh_token_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    refresh_ttl_seconds: i64,
+    user_id: Uuid,
+    user_agent: Option<&str>,
+    ip: Option<&str>,
+) -> Result<(Uuid, String), Error> {
+    let raw = generate_opaque_token();
+    let hash = hash_token(&raw);
+    let expires = Utc::now() + Duration::seconds(refresh_ttl_seconds);
+
+    let id = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip_address)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+        "#,
+    )
+    .bind(user_id)
+    .bind(&hash)
+    .bind(expires)
+    .bind(user_agent)
+    .bind(ip)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(Error::internal)?;
 
     Ok((id, raw))
 }
@@ -120,9 +152,16 @@ pub async fn issue_pair(
     })
 }
 
-/// Look up a refresh token by hash, with its user's password-change sentinel.
-async fn load_refresh(pool: &PgPool, raw: &str) -> Result<RefreshRow, Error> {
+/// Rotate a refresh token: validate, consume the old row, issue a new pair.
+/// Reuse of an already-consumed token revokes the whole user chain.
+pub async fn rotate(
+    state: &AppState,
+    raw: &str,
+    user_agent: Option<&str>,
+    ip: Option<&str>,
+) -> Result<TokenPair, Error> {
     let hash = hash_token(raw);
+    let mut tx = state.db.begin().await.map_err(Error::internal)?;
     let row = sqlx::query_as::<
         _,
         (
@@ -133,23 +172,24 @@ async fn load_refresh(pool: &PgPool, raw: &str) -> Result<RefreshRow, Error> {
             chrono::DateTime<Utc>,
             chrono::DateTime<Utc>,
             Option<chrono::DateTime<Utc>>,
+            Option<Uuid>,
         ),
     >(
         r#"
         SELECT rt.id, rt.user_id, rt.consumed_at, rt.revoked_at, rt.expires_at,
-               rt.created_at, u.password_changed_at
+               rt.created_at, u.password_changed_at, rt.replaced_by
         FROM refresh_tokens rt
         JOIN users u ON u.id = rt.user_id
         WHERE rt.token_hash = $1
+        FOR UPDATE OF rt
         "#,
     )
     .bind(&hash)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(Error::internal)?
     .ok_or(Error::Unauthorized)?;
-
-    Ok(RefreshRow {
+    let row = RefreshRow {
         id: row.0,
         user_id: row.1,
         consumed_at: row.2,
@@ -157,27 +197,36 @@ async fn load_refresh(pool: &PgPool, raw: &str) -> Result<RefreshRow, Error> {
         expires_at: row.4,
         created_at: row.5,
         password_changed_at: row.6,
-    })
-}
-
-/// Rotate a refresh token: validate, consume the old row, issue a new pair.
-/// Reuse of an already-consumed token revokes the whole user chain.
-pub async fn rotate(
-    state: &AppState,
-    raw: &str,
-    user_agent: Option<&str>,
-    ip: Option<&str>,
-) -> Result<TokenPair, Error> {
-    let row = load_refresh(&state.db, raw).await?;
+        replaced_by: row.7,
+    };
     let now = Utc::now();
 
     if row.revoked_at.is_some() {
         return Err(Error::Unauthorized);
     }
-    if row.consumed_at.is_some() {
-        // Reuse detection: a consumed token re-presented is a leak.
+    if let Some(consumed_at) = row.consumed_at {
+        if row.replaced_by.is_some()
+            && now.signed_duration_since(consumed_at).num_seconds() <= RECENT_ROTATION_GRACE_SECONDS
+        {
+            tracing::warn!(
+                user_id = %row.user_id,
+                token_id = %row.id,
+                "recently rotated refresh token retried - rejecting without chain revoke"
+            );
+            return Err(Error::Unauthorized);
+        }
+
+        // Reuse detection: a consumed token re-presented outside the race
+        // window is treated as a leak.
         tracing::warn!(user_id = %row.user_id, "refresh token reused — revoking chain");
-        revoke_all_for_user(&state.db, row.user_id).await?;
+        sqlx::query(
+            "UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+        )
+        .bind(row.user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(Error::internal)?;
+        tx.commit().await.map_err(Error::internal)?;
         return Err(Error::Unauthorized);
     }
     if row.expires_at <= now {
@@ -193,7 +242,14 @@ pub async fn rotate(
 
     // Issue the replacement, then atomically consume the presented token.
     let access_token = state.jwt.encode(row.user_id)?;
-    let (new_id, new_raw) = insert_refresh_token(state, row.user_id, user_agent, ip).await?;
+    let (new_id, new_raw) = insert_refresh_token_in_tx(
+        &mut tx,
+        state.settings.jwt_refresh_ttl,
+        row.user_id,
+        user_agent,
+        ip,
+    )
+    .await?;
 
     sqlx::query(
         r#"
@@ -204,11 +260,16 @@ pub async fn rotate(
     )
     .bind(row.id)
     .bind(new_id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(Error::internal)?;
 
+    tx.commit().await.map_err(Error::internal)?;
+
     delete_redis_session(state, &row.id).await;
+    if let Err(e) = set_redis_session(state, &new_id, row.user_id).await {
+        tracing::warn!(error = %e, "redis session write failed (advisory)");
+    }
 
     Ok(TokenPair {
         access_token,

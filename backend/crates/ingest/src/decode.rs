@@ -8,12 +8,14 @@
 //! The nested shape is decoded directly; a flat (pre-P23) shape is tolerated as
 //! a fallback; anything else fails loudly.
 
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::asset::classic_asset;
 use crate::models::{
-    EntitySnapshot, Event, FundFlowEdge, LedgerRecord, ResourceMetrics, TxRecord, TxStatus,
+    CallTreeNode, EntitySnapshot, Event, FundFlowEdge, LedgerRecord, ResourceMetrics, TxRecord,
+    TxStatus,
 };
 
 /// A decoding failure: a missing field or protocol schema drift. Kept distinct
@@ -42,10 +44,35 @@ fn opt_i64(v: &Value, key: &'static str) -> Option<i64> {
     v.get(key).and_then(Value::as_i64)
 }
 
+fn opt_string(v: &Value, keys: &[&'static str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        v.get(*key).and_then(|value| {
+            value
+                .as_str()
+                .map(String::from)
+                .or_else(|| value.as_i64().map(|n| n.to_string()))
+                .or_else(|| value.as_u64().map(|n| n.to_string()))
+        })
+    })
+}
+
 fn parse_time(s: &str) -> DecodeResult<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s)
         .map(|d| d.with_timezone(&Utc))
         .map_err(|_| DecodeError::BadTimestamp(s.to_string()))
+}
+
+fn parse_rpc_time(s: &str) -> DecodeResult<DateTime<Utc>> {
+    if let Ok(timestamp) = DateTime::parse_from_rfc3339(s) {
+        return Ok(timestamp.with_timezone(&Utc));
+    }
+
+    if let Ok(seconds) = s.parse::<i64>() {
+        return DateTime::<Utc>::from_timestamp(seconds, 0)
+            .ok_or_else(|| DecodeError::BadTimestamp(s.to_string()));
+    }
+
+    Err(DecodeError::BadTimestamp(s.to_string()))
 }
 
 /// Decode a Horizon `/ledgers` record.
@@ -79,41 +106,75 @@ pub fn decode_classic_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
     };
     let hash = as_str(v, "hash")?.to_string();
 
-    let fund_flow = operations(v)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|op| FundFlowEdge {
-            from_address: op.source,
-            to_address: op.to,
-            asset: classic_asset(
-                &op.asset_type,
-                op.asset_code.as_deref(),
-                op.asset_issuer.as_deref(),
-            ),
-            amount: op.amount,
+    let ops = operations(v).unwrap_or_default();
+    let operation_type = v
+        .get("operation_type")
+        .and_then(Value::as_str)
+        .map(String::from)
+        .or_else(|| {
+            let mut kinds = operation_kinds(v);
+            if kinds.is_empty() {
+                None
+            } else {
+                kinds.sort_unstable();
+                kinds.dedup();
+                Some(if kinds.len() == 1 {
+                    kinds[0].clone()
+                } else {
+                    "multi_operation".to_string()
+                })
+            }
         })
+        .unwrap_or_else(|| "transaction".to_string());
+    let (operation_target_address, operation_target_kind) = operation_target(v);
+    let mut fund_flow: Vec<FundFlowEdge> = ops
+        .into_iter()
+        .filter_map(|op| op.fund_flow_edge())
         .collect();
-
+    for (sequence, edge) in fund_flow.iter_mut().enumerate() {
+        edge.sequence = sequence as i64;
+    }
+    let invocation_targets = invocation_targets(v);
+    let call_tree = invocation_targets
+        .iter()
+        .enumerate()
+        .map(|(sequence, target)| CallTreeNode {
+            parent_index: None,
+            contract_id: target.contract_id.clone(),
+            function_name: target.function_name.clone(),
+            args: target.args.clone(),
+            return_value: None,
+            depth: 0,
+            sequence: sequence as i64,
+        })
+        .collect::<Vec<_>>();
     Ok(TxRecord {
         hash,
         network: network.to_string(),
         ledger_sequence: opt_i64(v, "ledger").unwrap_or(0),
         status,
         source_account: as_str(v, "source_account")?.to_string(),
-        operation_type: v
-            .get("operation_type")
-            .and_then(Value::as_str)
-            .unwrap_or("payment")
-            .to_string(),
+        operation_type,
+        operation_target_address,
+        operation_target_kind,
         fee_charged: v
             .get("fee_charged")
             .and_then(Value::as_str)
             .map(String::from),
-        sequence_number: None,
-        application_order: opt_i64(v, "application_order").unwrap_or(0),
+        sequence_number: opt_string(
+            v,
+            &[
+                "source_account_sequence",
+                "sequence_number",
+                "account_sequence",
+            ],
+        ),
+        application_order: opt_i64(v, "application_order")
+            .or_else(|| opt_i64(v, "applicationOrder"))
+            .unwrap_or(0),
         timestamp,
         metrics: ResourceMetrics::default(),
-        call_tree: Vec::new(),
+        call_tree,
         state_changes: Vec::new(),
         events: Vec::new(),
         fund_flow,
@@ -138,8 +199,75 @@ struct ClassicOp {
     asset_issuer: Option<String>,
 }
 
+impl ClassicOp {
+    fn fund_flow_edge(self) -> Option<FundFlowEdge> {
+        Some(FundFlowEdge {
+            from_address: self.source,
+            to_address: self.to,
+            asset: classic_asset(
+                &self.asset_type,
+                self.asset_code.as_deref(),
+                self.asset_issuer.as_deref(),
+            ),
+            amount: self.amount,
+            caused_by_node: None,
+            sequence: 0,
+            asset_type: self.asset_type,
+            usd_value: None,
+        })
+    }
+}
+
+fn operation_target(v: &Value) -> (Option<String>, Option<String>) {
+    let operations = v.get("operations").and_then(Value::as_array).or_else(|| {
+        v.get("_embedded")
+            .and_then(|value| value.get("operations"))
+            .and_then(Value::as_array)
+    });
+    for operation in operations.into_iter().flatten() {
+        let kind = operation.get("type").and_then(Value::as_str).unwrap_or("");
+        let target: Option<String> = match kind {
+            "payment" | "path_payment_strict_receive" | "path_payment_strict_send" => operation
+                .get("to")
+                .and_then(Value::as_str)
+                .map(String::from),
+            "create_account" => operation
+                .get("account")
+                .and_then(Value::as_str)
+                .map(String::from),
+            "account_merge" => operation
+                .get("into")
+                .and_then(Value::as_str)
+                .map(String::from),
+            "create_claimable_balance" => operation
+                .get("balance_id")
+                .and_then(Value::as_str)
+                .map(String::from),
+            "invoke_host_function" | "invoke_hf_op" => {
+                invocation_target(operation).map(|target| target.contract_id)
+            }
+            _ => None,
+        };
+        if let Some(target) = target {
+            let target_kind = if target.starts_with('C') {
+                "contract"
+            } else if target.starts_with('G') || target.starts_with('M') {
+                "account"
+            } else {
+                "entity"
+            };
+            return (Some(target), Some(target_kind.to_string()));
+        }
+    }
+    if operations.is_some() {
+        (None, Some("affected_account".to_string()))
+    } else {
+        (None, None)
+    }
+}
+
 /// Pull payments from either the flat shape (`operations`) or the embedded HAL
-/// shape (`_embedded.operations`), decoding only `payment` operations. Returns
+/// shape (`_embedded.operations`), decoding payment-like operations. Returns
 /// `Some` only when an operations collection is present; caller can then treat
 /// absence as "no operations" (`unwrap_or_default`).
 fn operations(v: &Value) -> Option<Vec<ClassicOp>> {
@@ -152,29 +280,244 @@ fn operations(v: &Value) -> Option<Vec<ClassicOp>> {
     let arr = arr?;
     let mut out = Vec::new();
     for op in arr {
-        if op.get("type").and_then(Value::as_str) != Some("payment") {
-            continue;
+        match op.get("type").and_then(Value::as_str) {
+            Some("payment") => out.push(ClassicOp {
+                source: op.get("from").and_then(Value::as_str)?.to_string(),
+                to: op.get("to").and_then(Value::as_str)?.to_string(),
+                amount: op.get("amount").and_then(Value::as_str)?.to_string(),
+                asset_type: op
+                    .get("asset_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("native")
+                    .to_string(),
+                asset_code: op
+                    .get("asset_code")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+                asset_issuer: op
+                    .get("asset_issuer")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+            }),
+            Some("create_account") => out.push(ClassicOp {
+                source: op.get("funder").and_then(Value::as_str)?.to_string(),
+                to: op.get("account").and_then(Value::as_str)?.to_string(),
+                amount: op
+                    .get("starting_balance")
+                    .and_then(Value::as_str)?
+                    .to_string(),
+                asset_type: "native".to_string(),
+                asset_code: None,
+                asset_issuer: None,
+            }),
+            Some("path_payment_strict_receive" | "path_payment_strict_send") => {
+                out.push(ClassicOp {
+                    source: op.get("from").and_then(Value::as_str)?.to_string(),
+                    to: op.get("to").and_then(Value::as_str)?.to_string(),
+                    amount: op
+                        .get("destination_amount")
+                        .or_else(|| op.get("amount"))
+                        .and_then(Value::as_str)?
+                        .to_string(),
+                    asset_type: op
+                        .get("destination_asset_type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("native")
+                        .to_string(),
+                    asset_code: op
+                        .get("destination_asset_code")
+                        .and_then(Value::as_str)
+                        .map(String::from),
+                    asset_issuer: op
+                        .get("destination_asset_issuer")
+                        .and_then(Value::as_str)
+                        .map(String::from),
+                })
+            }
+            Some("clawback") => out.push(ClassicOp {
+                source: op.get("from").and_then(Value::as_str)?.to_string(),
+                to: op
+                    .get("source_account")
+                    .or_else(|| v.get("source_account"))
+                    .and_then(Value::as_str)?
+                    .to_string(),
+                amount: op.get("amount").and_then(Value::as_str)?.to_string(),
+                asset_type: op
+                    .get("asset_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("credit_alphanum4")
+                    .to_string(),
+                asset_code: op
+                    .get("asset_code")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+                asset_issuer: op
+                    .get("asset_issuer")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+            }),
+            _ => {}
         }
-        out.push(ClassicOp {
-            source: op.get("from").and_then(Value::as_str)?.to_string(),
-            to: op.get("to").and_then(Value::as_str)?.to_string(),
-            amount: op.get("amount").and_then(Value::as_str)?.to_string(),
-            asset_type: op
-                .get("asset_type")
-                .and_then(Value::as_str)
-                .unwrap_or("native")
-                .to_string(),
-            asset_code: op
-                .get("asset_code")
-                .and_then(Value::as_str)
-                .map(String::from),
-            asset_issuer: op
-                .get("asset_issuer")
-                .and_then(Value::as_str)
-                .map(String::from),
-        });
     }
     Some(out)
+}
+
+fn operation_kinds(v: &Value) -> Vec<String> {
+    let arr = v.get("operations").and_then(Value::as_array).or_else(|| {
+        v.get("_embedded")
+            .and_then(|e| e.get("operations"))
+            .and_then(Value::as_array)
+    });
+    arr.map(|items| {
+        items
+            .iter()
+            .filter_map(|op| op.get("type").and_then(Value::as_str).map(String::from))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+struct InvocationTarget {
+    contract_id: String,
+    function_name: String,
+    args: Value,
+}
+
+fn invocation_targets(v: &Value) -> Vec<InvocationTarget> {
+    let arr = v.get("operations").and_then(Value::as_array).or_else(|| {
+        v.get("_embedded")
+            .and_then(|e| e.get("operations"))
+            .and_then(Value::as_array)
+    });
+    arr.map(|items| {
+        items
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op.get("type").and_then(Value::as_str),
+                    Some("invoke_host_function" | "invoke_hf_op")
+                )
+            })
+            .filter_map(invocation_target)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn invocation_target(op: &Value) -> Option<InvocationTarget> {
+    let params = op.get("parameters").and_then(Value::as_array);
+    let contract_id = params
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|param| param.get("type").and_then(Value::as_str) == Some("Address"))
+                .and_then(|param| param.get("value").and_then(Value::as_str))
+                .and_then(strkey_from_address_xdr)
+        })
+        .or_else(|| {
+            op.get("contract_id")
+                .or_else(|| op.get("contractId"))
+                .or_else(|| op.get("to"))
+                .and_then(Value::as_str)
+                .filter(|value| value.starts_with('C'))
+                .map(String::from)
+        })?;
+    let function_name = params
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|param| param.get("type").and_then(Value::as_str) == Some("Sym"))
+                .and_then(|param| param.get("value").and_then(Value::as_str))
+                .and_then(sym_from_xdr)
+        })
+        .unwrap_or_else(|| {
+            op.get("function")
+                .and_then(Value::as_str)
+                .unwrap_or("invoke_host_function")
+                .to_string()
+        });
+    Some(InvocationTarget {
+        contract_id,
+        function_name,
+        args: params.cloned().map(Value::Array).unwrap_or(Value::Null),
+    })
+}
+
+fn strkey_from_address_xdr(raw: &str) -> Option<String> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(raw).ok()?;
+    if bytes.len() < 40 {
+        return None;
+    }
+    let scval_type = u32::from_be_bytes(bytes[0..4].try_into().ok()?);
+    if scval_type != 18 {
+        return None;
+    }
+    let address_type = u32::from_be_bytes(bytes[4..8].try_into().ok()?);
+    let payload: [u8; 32] = bytes[8..40].try_into().ok()?;
+    match address_type {
+        0 => Some(strkey_encode(6 << 3, &payload)),
+        1 => Some(strkey_encode(2 << 3, &payload)),
+        _ => None,
+    }
+}
+
+fn sym_from_xdr(raw: &str) -> Option<String> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(raw).ok()?;
+    if bytes.len() < 8 {
+        return None;
+    }
+    let scval_type = u32::from_be_bytes(bytes[0..4].try_into().ok()?);
+    if scval_type != 15 {
+        return None;
+    }
+    let len = u32::from_be_bytes(bytes[4..8].try_into().ok()?) as usize;
+    let end = 8usize.checked_add(len)?;
+    String::from_utf8(bytes.get(8..end)?.to_vec()).ok()
+}
+
+fn strkey_encode(version: u8, payload: &[u8; 32]) -> String {
+    let mut data = Vec::with_capacity(35);
+    data.push(version);
+    data.extend_from_slice(payload);
+    let crc = crc16_xmodem(&data);
+    data.extend_from_slice(&crc.to_le_bytes());
+    base32_no_padding(&data)
+}
+
+fn crc16_xmodem(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for byte in data {
+        crc ^= (*byte as u16) << 8;
+        for _ in 0..8 {
+            if crc & 0x8000 != 0 {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    crc
+}
+
+fn base32_no_padding(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut out = String::new();
+    let mut buffer = 0u16;
+    let mut bits = 0u8;
+    for byte in data {
+        buffer = (buffer << 8) | (*byte as u16);
+        bits += 8;
+        while bits >= 5 {
+            let index = ((buffer >> (bits - 5)) & 0x1f) as usize;
+            out.push(ALPHABET[index] as char);
+            bits -= 5;
+        }
+    }
+    if bits > 0 {
+        let index = ((buffer << (5 - bits)) & 0x1f) as usize;
+        out.push(ALPHABET[index] as char);
+    }
+    out
 }
 
 /// True when a Horizon transaction record is a Soroban invocation (an
@@ -243,6 +586,7 @@ pub fn event_shape(events: &Value) -> EventShape {
 pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
     let hash = v
         .get("hash")
+        .or_else(|| v.get("txHash"))
         .and_then(Value::as_str)
         .ok_or(DecodeError::MissingRpcField("hash"))?
         .to_string();
@@ -250,8 +594,12 @@ pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
         Some("SUCCESS") => TxStatus::Success,
         _ => TxStatus::Failed,
     };
-    let timestamp = match v.get("created_at").and_then(Value::as_str) {
-        Some(s) => parse_time(s)?,
+    let timestamp = match v
+        .get("created_at")
+        .or_else(|| v.get("createdAt"))
+        .and_then(Value::as_str)
+    {
+        Some(s) => parse_rpc_time(s)?,
         None => Utc::now(),
     };
 
@@ -262,10 +610,13 @@ pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
         status,
         source_account: v
             .get("source_account")
+            .or_else(|| v.get("sourceAccount"))
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
         operation_type: "invoke_host_function".to_string(),
+        operation_target_address: None,
+        operation_target_kind: None,
         fee_charged: v
             .get("fee_charged")
             .and_then(Value::as_str)
@@ -280,10 +631,12 @@ pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
         fund_flow: Vec::new(),
         raw_result_meta_xdr: v
             .get("result_meta_xdr")
+            .or_else(|| v.get("resultMetaXdr"))
             .and_then(Value::as_str)
             .map(String::from),
         raw_envelope_xdr: v
             .get("envelope_xdr")
+            .or_else(|| v.get("envelopeXdr"))
             .and_then(Value::as_str)
             .map(String::from),
     })
@@ -303,6 +656,7 @@ pub fn decode_invoke_detail(v: &Value, network: &str) -> DecodeResult<TxRecord> 
     let mut tx = decode_invoke_tx(v, network)?;
     tx.events = decode_events(v);
     tx.metrics = decode_metrics(v);
+    crate::xdr_decode::enrich_from_xdr(&mut tx, v);
     Ok(tx)
 }
 
@@ -348,6 +702,18 @@ fn event_from_obj(obj: &Value) -> Option<Event> {
         contract_id,
         topics,
         data: o.get("data").cloned().unwrap_or(Value::Null),
+        caused_by_node: None,
+        sequence: 0,
+        event_type: o
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("contract")
+            .to_string(),
+        successful: o
+            .get("inSuccessfulContractCall")
+            .or_else(|| o.get("successful"))
+            .and_then(Value::as_bool),
+        stage: o.get("stage").and_then(Value::as_str).map(String::from),
     })
 }
 
@@ -389,6 +755,7 @@ fn decode_metrics(v: &Value) -> ResourceMetrics {
         write_bytes: m.get("write_bytes").and_then(Value::as_i64),
         max_rw_key_byte: m.get("max_rw_key_byte").and_then(Value::as_i64),
         max_rw_data_byte: m.get("max_rw_data_byte").and_then(Value::as_i64),
+        ..ResourceMetrics::default()
     }
 }
 

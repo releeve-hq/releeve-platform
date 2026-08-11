@@ -20,7 +20,8 @@ import {
   getLedgerDetail,
   getTransactionDetail,
 } from "@/lib/explorer-api";
-import { ExplorerShell } from "@/components/explorer/explorer-shell";
+import { TransactionExplorerDesign, WalletExplorerDesign } from "@/components/explorer/explorer-design-views";
+import { ContractExplorerDesign, LedgerExplorerDesign } from "@/components/explorer/entity-design-views";
 
 type DetailProps = {
   network: string;
@@ -63,7 +64,6 @@ const monoStyle: CSSProperties = {
 function ExplorerFrame({ title, eyebrow, actions, children }: { title: ReactNode; eyebrow: string; actions?: ReactNode; children: ReactNode }) {
   const network = eyebrow.split(" ")[0];
   return (
-    <ExplorerShell network={network}>
     <main style={pageStyle}>
       <div style={shellStyle}>
         <Link href={`/explorer/${encodeURIComponent(network)}`} style={{ color: "#a1a1aa", fontSize: 13, textDecoration: "none" }}>
@@ -79,7 +79,6 @@ function ExplorerFrame({ title, eyebrow, actions, children }: { title: ReactNode
         {children}
       </div>
     </main>
-    </ExplorerShell>
   );
 }
 
@@ -268,19 +267,7 @@ export async function LedgerDetailView({ network, sequence }: DetailProps & { se
   const ledger: ExplorerLedgerDetail | null = fetched.data;
   if (!ledger) return <ExplorerUnavailable title={`Ledger ${sequence}`} network={network} message={fetched.error || "This ledger has not been indexed yet."} />;
 
-  return (
-    <ExplorerFrame eyebrow={`${network} ledger`} title={<LedgerLink sequence={sequence} network={network} />}>
-      <FieldGrid
-        fields={[
-          { label: "Transactions", value: ledger.transaction_count ?? "n/a" },
-          { label: "Resource usage", value: ledger.aggregate_resource_usage.total_cpu_instructions?.toLocaleString() ?? "n/a", sub: ledger.aggregate_resource_usage.percent_used === undefined || ledger.aggregate_resource_usage.percent_used === null ? undefined : `${ledger.aggregate_resource_usage.percent_used}% of configured limit` },
-          { label: "Size", value: ledger.size_bytes === undefined || ledger.size_bytes === null ? "n/a" : `${ledger.size_bytes.toLocaleString()} bytes` },
-          { label: "Closed", value: formatTimestamp(ledger.timestamp) },
-        ]}
-      />
-      <Section title="Ledger hash"><EmptySection><span style={monoStyle}>{ledger.hash}</span></EmptySection></Section>
-    </ExplorerFrame>
-  );
+  return <LedgerExplorerDesign ledger={ledger} network={network} />;
 }
 
 export async function TransactionDetailView({ network, hash }: DetailProps & { hash: string }) {
@@ -292,17 +279,10 @@ export async function TransactionDetailView({ network, hash }: DetailProps & { h
   const contracts = uniqueContracts(tx);
   const firstFlow = tx.fund_flow[0];
 
+  return <TransactionExplorerDesign tx={tx} network={network} />;
+  /*
   return (
-    <ExplorerFrame
-      eyebrow={`${network} transaction`}
-      title={<TxHashLink hash={tx.hash} network={network} />}
-      actions={
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
-          <Pill tone={tx.status.toLowerCase() === "success" ? "green" : "red"}>{tx.status}</Pill>
-          <Pill>Source map: {tx.source_map_status}</Pill>
-        </div>
-      }
-    >
+    <ExplorerFrame eyebrow={`${network} transaction`} title={<TxHashLink hash={tx.hash} network={network} />}>
       <FieldGrid
         fields={[
           { label: "Network", value: tx.network },
@@ -311,7 +291,7 @@ export async function TransactionDetailView({ network, hash }: DetailProps & { h
           { label: "Timestamp", value: formatTimestamp(tx.timestamp) },
           { label: "From", value: <AddressLink address={tx.source_account} network={network} /> },
           { label: "To", value: counterparty ? <AddressLink address={counterparty} network={network} /> : "n/a" },
-          { label: "Value", value: firstFlow ? `${firstFlow.amount} ${firstFlow.asset}` : "No decoded transfer" },
+          { label: "Value", value: firstFlow ? `${firstFlow.amount} ${firstFlow.asset}` : "No asset transfer" },
           { label: "Tx fee", value: fee.primary, sub: fee.secondary },
           { label: "Operation type", value: tx.operation_type },
           { label: "Application order", value: tx.application_order ?? "n/a" },
@@ -413,6 +393,7 @@ export async function TransactionDetailView({ network, hash }: DetailProps & { h
       </Section>
     </ExplorerFrame>
   );
+  */
 }
 
 export async function AccountDetailView({ network, address }: DetailProps & { address: string }) {
@@ -420,6 +401,8 @@ export async function AccountDetailView({ network, address }: DetailProps & { ad
   const account: ExplorerAccountDetail | null = fetched.data;
   if (!account) return <ExplorerUnavailable title={truncateEntity(address)} network={network} message={fetched.error || "This account has not been indexed yet."} />;
 
+  return <WalletExplorerDesign account={account} network={network} address={address} />;
+  /*
   return (
     <ExplorerFrame eyebrow={`${network} account`} title={<AddressLink address={address} network={network} />}>
       <FieldGrid
@@ -436,6 +419,7 @@ export async function AccountDetailView({ network, address }: DetailProps & { ad
       </Section>
     </ExplorerFrame>
   );
+  */
 }
 
 export async function ContractDetailView({ network, address }: DetailProps & { address: string }) {
@@ -443,25 +427,5 @@ export async function ContractDetailView({ network, address }: DetailProps & { a
   const contract: ExplorerContractDetail | null = fetched.data;
   if (!contract) return <ExplorerUnavailable title={truncateEntity(address)} network={network} message={fetched.error || "This contract has not been indexed yet."} />;
 
-  return (
-    <ExplorerFrame eyebrow={`${network} contract`} title={<ContractLink address={address} network={network} />}>
-      <FieldGrid
-        fields={[
-          { label: "Contract", value: <ContractLink address={address} network={network} /> },
-          { label: "Verification", value: contract.verification.status },
-          { label: "WASM hash", value: contract.current_wasm_hash ? truncateEntity(contract.current_wasm_hash) : "Not available" },
-          { label: "Tracked", value: contract.tracked ? "Tracked" : "Public lookup" },
-          { label: "Source map", value: "Not available" },
-        ]}
-      />
-      <Section title="Build metadata">
-        <div style={{ padding: 14, color: "#a1a1aa", fontSize: 13, lineHeight: 1.8 }}>
-          <div>Rust: {contract.toolchain.rust_version ?? "Not reported"}</div>
-          <div>Soroban SDK: {contract.toolchain.soroban_sdk_version ?? "Not reported"}</div>
-          <div>Target: {contract.toolchain.wasm_target ?? "Not reported"}</div>
-          <div>Debug symbols: {contract.toolchain.debug_symbols_present ? "Present" : "Not present"}</div>
-        </div>
-      </Section>
-    </ExplorerFrame>
-  );
+  return <ContractExplorerDesign contract={contract} network={network} address={address} />;
 }

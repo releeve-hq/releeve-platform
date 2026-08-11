@@ -44,6 +44,7 @@ fn tx(
     network: &str,
     edge: Option<FundFlowEdge>,
 ) -> TxRecord {
+    let target = edge.as_ref().map(|edge| edge.to_address.clone());
     TxRecord {
         hash: hash.to_string(),
         network: network.to_string(),
@@ -51,6 +52,8 @@ fn tx(
         status: TxStatus::Success,
         source_account: "GALICE".into(),
         operation_type: "payment".into(),
+        operation_target_address: target,
+        operation_target_kind: Some("account".into()),
         fee_charged: Some("150".into()),
         sequence_number: None,
         application_order: 1,
@@ -101,6 +104,7 @@ async fn seed_feed_data(pool: &PgPool) {
                 to_address: "GB1".into(),
                 asset: "XLM".into(),
                 amount: "10.5".into(),
+                ..Default::default()
             }),
         ),
     )
@@ -118,6 +122,7 @@ async fn seed_feed_data(pool: &PgPool) {
                 to_address: "GB2".into(),
                 asset: "XLM".into(),
                 amount: "3.25".into(),
+                ..Default::default()
             }),
         ),
     )
@@ -277,6 +282,7 @@ async fn feed_cursor_paths_for_rankings_and_transfers_are_stable() {
                     to_address: format!("GTO{i}"),
                     asset: "XLM".into(),
                     amount: "1".into(),
+                    ..Default::default()
                 }),
             ),
         )

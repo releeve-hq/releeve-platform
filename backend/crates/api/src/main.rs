@@ -53,6 +53,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             signer,
         )?)
     };
+    let source_lens = if settings.source_lens_url.is_empty() {
+        None
+    } else {
+        let private_key = std::fs::read(&settings.source_lens_signing_key_file)?;
+        let signer = source_lens_client::ServiceAssertionSigner::from_ed25519_pem(
+            &private_key,
+            settings.source_lens_signing_kid.clone(),
+            settings.source_lens_issuer.clone(),
+            settings.source_lens_audience.clone(),
+        )?;
+        Some(source_lens_client::SourceLensClient::new(
+            settings.source_lens_url.clone(),
+            signer,
+        )?)
+    };
 
     let listener = tokio::net::TcpListener::bind(&settings.bind_addr).await?;
     tracing::info!(addr = %settings.bind_addr, "releeve-api listening");
@@ -66,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mailer: std::sync::Arc::new(mailer),
             oauth,
             fork_core,
+            source_lens,
         }),
     )
     .await?;
