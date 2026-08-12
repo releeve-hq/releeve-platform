@@ -115,12 +115,13 @@ async fn insert_personal_org<'c>(
 ) -> Result<Uuid, Error> {
     let org_id = sqlx::query_scalar::<_, Uuid>(
         r#"
-        INSERT INTO organizations (slug, name, is_personal, plan_tier)
-        VALUES ($1, NULL, true, 'free')
+        INSERT INTO organizations (slug, name, is_personal, plan_tier, owner_user_id)
+        VALUES ($1, NULL, true, 'free', $2)
         RETURNING id
         "#,
     )
     .bind(make_personal_slug(user_id))
+    .bind(user_id)
     .fetch_one(&mut **tx)
     .await
     .map_err(Error::internal)?;

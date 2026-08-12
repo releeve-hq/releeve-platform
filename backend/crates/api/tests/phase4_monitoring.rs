@@ -67,6 +67,7 @@ async fn seed_tx(app: &TestApp) -> String {
         operation_type: "invoke_host_function".into(),
         operation_target_address: Some("CCONTRACT".into()),
         operation_target_kind: Some("contract".into()),
+        operation_details: serde_json::json!([]),
         fee_charged: Some("100".into()),
         sequence_number: Some("1".into()),
         application_order: 0,

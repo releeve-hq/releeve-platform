@@ -86,6 +86,7 @@ export type ExplorerTxDetail = {
   operation_type: string;
   operation_target_address?: string | null;
   operation_target_kind?: string | null;
+  operation_details: JsonValue;
   fee_charged?: string | null;
   sequence_number?: string | null;
   application_order?: number | null;
@@ -282,9 +283,10 @@ export function getLedgerDetail(network: string, sequence: string) {
   );
 }
 
-export function getAccountDetail(network: string, address: string) {
+export function getAccountDetail(network: string, address: string, signal?: AbortSignal) {
   return publicExplorerGet<ExplorerAccountDetail>(
     `/api/v1/explorer/${encodeURIComponent(network)}/account/${encodeURIComponent(address)}`,
+    signal,
   );
 }
 

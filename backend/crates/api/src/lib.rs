@@ -156,9 +156,19 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
         ),
         ("/api/v1/{org}/{project}/accounts", Post, "Track account"),
         (
+            "/api/v1/{org}/{project}/accounts/delete",
+            Post,
+            "Remove tracked accounts",
+        ),
+        (
             "/api/v1/{org}/{project}/accounts/{address}",
             Get,
             "Tracked account detail",
+        ),
+        (
+            "/api/v1/{org}/{project}/accounts/{address}",
+            Delete,
+            "Remove tracked account",
         ),
         (
             "/api/v1/{org}/{project}/accounts/{address}/transactions",
@@ -530,6 +540,7 @@ pub fn app(state: AppState) -> Router {
             "/api/v1/{org}",
             get(get_org).patch(rename_org).delete(delete_org),
         )
+        .route("/api/v1/{org}/owner", post(transfer_ownership))
         .route(
             "/api/v1/{org}/members",
             get(list_members).post(invite_member),
@@ -681,8 +692,14 @@ pub fn app(state: AppState) -> Router {
             get(list_accounts).post(add_account),
         )
         .route(
+            "/api/v1/{org}/{project}/accounts/delete",
+            post(delete_accounts),
+        )
+        .route(
             "/api/v1/{org}/{project}/accounts/{address}",
-            get(project_account),
+            get(project_account)
+                .patch(rename_account)
+                .delete(delete_account),
         )
         .route(
             "/api/v1/{org}/{project}/accounts/{address}/transactions",
@@ -693,8 +710,14 @@ pub fn app(state: AppState) -> Router {
             get(list_contracts).post(add_contract),
         )
         .route(
+            "/api/v1/{org}/{project}/contracts/delete",
+            post(delete_contracts),
+        )
+        .route(
             "/api/v1/{org}/{project}/contracts/{address}",
-            get(project_contract),
+            get(project_contract)
+                .patch(rename_contract)
+                .delete(delete_contract),
         )
         .route(
             "/api/v1/{org}/{project}/contracts/{address}/transactions",

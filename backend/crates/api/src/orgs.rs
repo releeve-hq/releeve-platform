@@ -101,6 +101,7 @@ pub struct OrgAuth {
     pub org_id: Uuid,
     pub slug: String,
     pub email_verified: bool,
+    owner: bool,
     perms: PermissionSet,
 }
 
@@ -120,14 +121,14 @@ impl OrgAuth {
         }
     }
     pub fn is_owner(&self) -> bool {
-        self.perms == PermissionSet::all()
+        self.owner
     }
 }
 
 async fn resolve_org(state: &AppState, user_id: Uuid, slug: &str) -> Result<OrgAuth, Error> {
-    let row = sqlx::query_as::<_, (Uuid, String, bool, i16)>(
+    let row = sqlx::query_as::<_, (Uuid, String, bool, bool, i16)>(
         r#"
-        SELECT o.id, o.slug, u.email_verified, m.permissions
+        SELECT o.id, o.slug, u.email_verified, o.owner_user_id = $1, m.permissions
         FROM organizations o
         JOIN organization_members m ON m.organization_id = o.id AND m.user_id = $1
         JOIN users u ON u.id = m.user_id
@@ -139,11 +140,12 @@ async fn resolve_org(state: &AppState, user_id: Uuid, slug: &str) -> Result<OrgA
     .fetch_optional(&state.db)
     .await
     .map_err(Error::internal)?;
-    let (org_id, slug, email_verified, raw) = row.ok_or(Error::NotFound)?;
+    let (org_id, slug, email_verified, owner, raw) = row.ok_or(Error::NotFound)?;
     Ok(OrgAuth {
         org_id,
         slug,
         email_verified,
+        owner,
         perms: PermissionSet(raw),
     })
 }
@@ -155,13 +157,15 @@ pub struct OrgSummary {
     pub id: Uuid,
     pub slug: String,
     pub name: Option<String>,
+    pub avatar_url: Option<String>,
     pub is_personal: bool,
     pub plan_tier: String,
+    pub owner_user_id: Uuid,
 }
 
 async fn load_org(pool: &sqlx::PgPool, slug: &str) -> Result<OrgSummary, Error> {
-    let r = sqlx::query_as::<_, (Uuid, String, Option<String>, bool, String)>(
-        "SELECT id, slug, name, is_personal, plan_tier FROM organizations WHERE slug = $1",
+    let r = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, bool, String, Uuid)>(
+        "SELECT id, slug, name, avatar_url, is_personal, plan_tier, owner_user_id FROM organizations WHERE slug = $1",
     )
     .bind(slug)
     .fetch_optional(pool)
@@ -172,8 +176,10 @@ async fn load_org(pool: &sqlx::PgPool, slug: &str) -> Result<OrgSummary, Error> 
         id: r.0,
         slug: r.1,
         name: r.2,
-        is_personal: r.3,
-        plan_tier: r.4,
+        avatar_url: r.3,
+        is_personal: r.4,
+        plan_tier: r.5,
+        owner_user_id: r.6,
     })
 }
 
@@ -190,6 +196,8 @@ pub async fn get_org(
 #[serde(deny_unknown_fields)]
 pub struct RenameOrg {
     name: String,
+    #[serde(default)]
+    avatar_url: Option<String>,
 }
 
 pub async fn rename_org(
@@ -199,13 +207,24 @@ pub async fn rename_org(
     Json(req): Json<RenameOrg>,
 ) -> Result<Json<OrgSummary>, Error> {
     let auth = resolve_org(&state, user_id, &org).await?;
+    if !auth.is_owner() {
+        return Err(Error::Forbidden);
+    }
     auth.require_verified()?;
-    sqlx::query("UPDATE organizations SET name = $2, updated_at = now() WHERE id = $1")
-        .bind(auth.org_id)
-        .bind(req.name.trim())
-        .execute(&state.db)
-        .await
-        .map_err(Error::internal)?;
+    sqlx::query(
+        "UPDATE organizations SET name = $2, avatar_url = $3, updated_at = now() WHERE id = $1",
+    )
+    .bind(auth.org_id)
+    .bind(req.name.trim())
+    .bind(
+        req.avatar_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
+    .execute(&state.db)
+    .await
+    .map_err(Error::internal)?;
     Ok(Json(load_org(&state.db, &auth.slug).await?))
 }
 
@@ -218,11 +237,16 @@ pub async fn delete_org(
     if !auth.is_owner() {
         return Err(Error::Forbidden);
     }
-    sqlx::query("DELETE FROM organizations WHERE id = $1")
+    let deleted = sqlx::query("DELETE FROM organizations WHERE id = $1 AND owner_user_id = $2")
         .bind(auth.org_id)
+        .bind(user_id)
         .execute(&state.db)
         .await
-        .map_err(Error::internal)?;
+        .map_err(Error::internal)?
+        .rows_affected();
+    if deleted == 0 {
+        return Err(Error::Forbidden);
+    }
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
@@ -243,10 +267,11 @@ pub async fn create_org(
     let slug = unique_slug(&state.db, &base, 0).await?;
     let mut tx = state.db.begin().await.map_err(Error::internal)?;
     let org_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO organizations (slug, name, is_personal, plan_tier) VALUES ($1,$2,false,'free') RETURNING id",
+        "INSERT INTO organizations (slug, name, is_personal, plan_tier, owner_user_id) VALUES ($1,$2,false,'free',$3) RETURNING id",
     )
     .bind(&slug)
     .bind(req.name.trim())
+    .bind(user_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(unique_or_conflict)?;
@@ -285,7 +310,7 @@ async fn unique_slug(pool: &sqlx::PgPool, base: &str, mut attempt: u32) -> Resul
 
 // ---- Members ------------------------------------------------------------------------
 
-type MemberRow = (Uuid, Uuid, String, Option<String>, i16, DateTime<Utc>);
+type MemberRow = (Uuid, Uuid, String, Option<String>, i16, DateTime<Utc>, bool);
 
 #[derive(Serialize)]
 pub struct MemberSummary {
@@ -294,10 +319,11 @@ pub struct MemberSummary {
     pub email: String,
     pub username: Option<String>,
     pub permissions: Vec<Permission>,
+    pub is_owner: bool,
 }
 
-const MEMBER_SELECT: &str = "SELECT m.id, m.user_id, u.email, u.username, m.permissions, m.created_at \
-     FROM organization_members m JOIN users u ON u.id = m.user_id";
+const MEMBER_SELECT: &str = "SELECT m.id, m.user_id, u.email, u.username, m.permissions, m.created_at, o.owner_user_id = m.user_id \
+     FROM organization_members m JOIN users u ON u.id = m.user_id JOIN organizations o ON o.id = m.organization_id";
 
 async fn fetch_members_paged(
     pool: &sqlx::PgPool,
@@ -339,6 +365,7 @@ pub async fn list_members(
             email: r.2.clone(),
             username: r.3.clone(),
             permissions: PermissionSet(r.4).iter(),
+            is_owner: r.6,
         })
         .collect();
     Ok(Json(into_page(data, cursors, limit, had_cursor)))
@@ -348,6 +375,21 @@ pub async fn list_members(
 #[serde(deny_unknown_fields)]
 pub struct InviteMemberRequest {
     email: String,
+    #[serde(default)]
+    permissions: Vec<Permission>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InviteMemberResponse {
+    Member(MemberSummary),
+    Invitation {
+        id: Uuid,
+        email: String,
+        permissions: Vec<Permission>,
+        status: String,
+        created_at: DateTime<Utc>,
+    },
 }
 
 pub async fn invite_member(
@@ -355,31 +397,58 @@ pub async fn invite_member(
     AuthUser { user_id }: AuthUser,
     Path(org): Path<String>,
     Json(req): Json<InviteMemberRequest>,
-) -> Result<Json<MemberSummary>, Error> {
+) -> Result<Json<InviteMemberResponse>, Error> {
     let auth = resolve_org(&state, user_id, &org).await?;
     auth.require(Permission::ManageMembers)?;
     auth.require_verified()?;
 
     let email = req.email.trim().to_lowercase();
+    let permissions = PermissionSet::from(&req.permissions[..]);
     let target_user = sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email = $1")
         .bind(&email)
         .fetch_optional(&state.db)
         .await
-        .map_err(Error::internal)?
-        .ok_or(Error::BadRequest("no user with that email".into()))?;
+        .map_err(Error::internal)?;
+
+    let Some(target_user) = target_user else {
+        let row = sqlx::query_as::<_, (Uuid, i16, String, DateTime<Utc>)>(
+            r#"
+            INSERT INTO organization_invitations (organization_id, email, permissions, invited_by, status)
+            VALUES ($1,$2,$3,$4,'pending')
+            ON CONFLICT (organization_id, email)
+            DO UPDATE SET permissions = EXCLUDED.permissions, invited_by = EXCLUDED.invited_by, status = 'pending', updated_at = now()
+            RETURNING id, permissions, status, created_at
+            "#,
+        )
+        .bind(auth.org_id)
+        .bind(&email)
+        .bind(permissions.raw())
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(Error::internal)?;
+        return Ok(Json(InviteMemberResponse::Invitation {
+            id: row.0,
+            email,
+            permissions: PermissionSet(row.1).iter(),
+            status: row.2,
+            created_at: row.3,
+        }));
+    };
 
     let member_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO organization_members (organization_id, user_id, permissions) VALUES ($1,$2,0) RETURNING id",
+        "INSERT INTO organization_members (organization_id, user_id, permissions) VALUES ($1,$2,$3) RETURNING id",
     )
     .bind(auth.org_id)
     .bind(target_user)
+    .bind(permissions.raw())
     .fetch_one(&state.db)
     .await
     .map_err(unique_or_conflict)?;
 
-    Ok(Json(
+    Ok(Json(InviteMemberResponse::Member(
         member_summary(auth.org_id, member_id, &state.db).await?,
-    ))
+    )))
 }
 
 #[derive(Deserialize)]
@@ -397,6 +466,28 @@ pub async fn patch_member(
     let auth = resolve_org(&state, user_id, &org).await?;
     auth.require(Permission::ManageMembers)?;
     auth.require_verified()?;
+    let mut tx = state.db.begin().await.map_err(Error::internal)?;
+    let owner_user_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT owner_user_id FROM organizations WHERE id = $1 FOR UPDATE",
+    )
+    .bind(auth.org_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(Error::internal)?;
+    let target_user_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM organization_members WHERE organization_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(auth.org_id)
+    .bind(member_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    if target_user_id == owner_user_id {
+        return Err(Error::BadRequest(
+            "the organization owner cannot be modified; transfer ownership first".into(),
+        ));
+    }
     let perms = PermissionSet::from(&req.permissions[..]).raw();
     sqlx::query(
         "UPDATE organization_members SET permissions = $3 WHERE organization_id = $1 AND id = $2",
@@ -404,9 +495,10 @@ pub async fn patch_member(
     .bind(auth.org_id)
     .bind(member_id)
     .bind(perms)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(Error::internal)?;
+    tx.commit().await.map_err(Error::internal)?;
     Ok(Json(
         member_summary(auth.org_id, member_id, &state.db).await?,
     ))
@@ -419,17 +511,40 @@ pub async fn remove_member(
 ) -> Result<Json<serde_json::Value>, Error> {
     let auth = resolve_org(&state, user_id, &org).await?;
     auth.require(Permission::ManageMembers)?;
+    let mut tx = state.db.begin().await.map_err(Error::internal)?;
+    let owner_user_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT owner_user_id FROM organizations WHERE id = $1 FOR UPDATE",
+    )
+    .bind(auth.org_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(Error::internal)?;
+    let target_user_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM organization_members WHERE organization_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(auth.org_id)
+    .bind(member_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    if target_user_id == owner_user_id {
+        return Err(Error::BadRequest(
+            "the organization owner cannot be removed; transfer ownership first".into(),
+        ));
+    }
     let gone =
         sqlx::query("DELETE FROM organization_members WHERE organization_id = $1 AND id = $2")
             .bind(auth.org_id)
             .bind(member_id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await
             .map_err(Error::internal)?
             .rows_affected();
     if gone == 0 {
         return Err(Error::NotFound);
     }
+    tx.commit().await.map_err(Error::internal)?;
     Ok(Json(serde_json::json!({ "removed": true })))
 }
 
@@ -439,8 +554,8 @@ async fn member_summary(
     member_id: Uuid,
     pool: &sqlx::PgPool,
 ) -> Result<MemberSummary, Error> {
-    let r = sqlx::query_as::<_, (Uuid, String, Option<String>, i16)>(
-        "SELECT m.user_id, u.email, u.username, m.permissions FROM organization_members m JOIN users u ON u.id = m.user_id WHERE m.organization_id = $1 AND m.id = $2",
+    let r = sqlx::query_as::<_, (Uuid, String, Option<String>, i16, bool)>(
+        "SELECT m.user_id, u.email, u.username, m.permissions, o.owner_user_id = m.user_id FROM organization_members m JOIN users u ON u.id = m.user_id JOIN organizations o ON o.id = m.organization_id WHERE m.organization_id = $1 AND m.id = $2",
     )
     .bind(org_id)
     .bind(member_id)
@@ -454,7 +569,65 @@ async fn member_summary(
         email: r.1,
         username: r.2,
         permissions: PermissionSet(r.3).iter(),
+        is_owner: r.4,
     })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransferOwnershipRequest {
+    member_id: Uuid,
+}
+
+pub async fn transfer_ownership(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path(org): Path<String>,
+    Json(req): Json<TransferOwnershipRequest>,
+) -> Result<Json<OrgSummary>, Error> {
+    let auth = resolve_org(&state, user_id, &org).await?;
+    if !auth.is_owner() {
+        return Err(Error::Forbidden);
+    }
+    auth.require_verified()?;
+
+    let mut tx = state.db.begin().await.map_err(Error::internal)?;
+    let current_owner = sqlx::query_scalar::<_, Uuid>(
+        "SELECT owner_user_id FROM organizations WHERE id = $1 FOR UPDATE",
+    )
+    .bind(auth.org_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(Error::internal)?;
+    if current_owner != user_id {
+        return Err(Error::Forbidden);
+    }
+
+    let next_owner = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM organization_members WHERE organization_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(auth.org_id)
+    .bind(req.member_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    sqlx::query("UPDATE organization_members SET permissions = $3 WHERE organization_id = $1 AND user_id = $2")
+        .bind(auth.org_id)
+        .bind(next_owner)
+        .bind(PermissionSet::all().raw())
+        .execute(&mut *tx)
+        .await
+        .map_err(Error::internal)?;
+    sqlx::query("UPDATE organizations SET owner_user_id = $2, updated_at = now() WHERE id = $1")
+        .bind(auth.org_id)
+        .bind(next_owner)
+        .execute(&mut *tx)
+        .await
+        .map_err(Error::internal)?;
+    tx.commit().await.map_err(Error::internal)?;
+
+    Ok(Json(load_org(&state.db, &auth.slug).await?))
 }
 
 // ---- Access tokens -------------------------------------------------------------------

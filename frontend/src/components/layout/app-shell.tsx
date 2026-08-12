@@ -69,7 +69,7 @@ function ContextSwitcher({ collapsed }: { collapsed: boolean }) {
           <>
             <div className="flex-1 min-w-0 text-left">
               <div className="text-sm font-semibold text-gray-900 truncate">{activeContext.type === 'project' && activeProject ? activeProject.name : displayUser.name}</div>
-              <div className="text-[11px] text-gray-400">{activeContext.type === 'project' ? 'Project page' : 'Personal account'}</div>
+              <div className="text-[11px] text-gray-400">{activeContext.type === 'project' ? 'Project' : 'Organization'}</div>
             </div>
             <ChevronDown size={14} className="text-gray-400 shrink-0" />
           </>
@@ -80,7 +80,7 @@ function ContextSwitcher({ collapsed }: { collapsed: boolean }) {
         <div className={cx('absolute top-full mt-1 bg-[#111113] border border-white/10 rounded-xl shadow-xl z-50 py-1.5 seidar-animate-in overflow-hidden w-64', collapsed ? 'left-3' : 'left-3 right-3 w-auto')}>
             <button onClick={() => { switchTo('user'); setOpen(false); }} className={cx('w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-white/5', activeContext.type === 'user' && 'bg-violet-600/15')}>
               <Avatar name={displayUser.name} color={displayUser.color} size={7} />
-              <div className="flex-1 min-w-0"><div className="text-sm font-medium text-gray-900 truncate">{displayUser.name}</div><div className="text-[11px] text-gray-400">Personal account</div></div>
+              <div className="flex-1 min-w-0"><div className="text-sm font-medium text-gray-900 truncate">{displayUser.name}</div><div className="text-[11px] text-gray-400">Organization</div></div>
               {activeContext.type === 'user' && <Check size={14} className="text-violet-600" />}
             </button>
 
@@ -305,7 +305,7 @@ function TopBar({ setCommandOpen, setMobileNavOpen, collapsed, setCollapsed }: T
                       <Avatar name={user?.name || CURRENT_USER.name} color={user?.color || CURRENT_USER.color} size={7} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-zinc-200 truncate">{user?.name || CURRENT_USER.name}</div>
-                        <div className="text-[11px] text-zinc-500">Personal account</div>
+                        <div className="text-[11px] text-zinc-500">Organization</div>
                       </div>
                       {activeContext.type === 'user' && <Check size={14} className="text-violet-600 shrink-0" />}
                     </button>

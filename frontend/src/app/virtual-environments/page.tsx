@@ -1,5 +1,3 @@
-import ReleeveApp from "@/components/app/releeve-app";
-
-export default function VirtualEnvironmentsPage() {
-  return <ReleeveApp />;
+export default function VirtualEnvironmentsRoutePage() {
+  return null;
 }

@@ -50,6 +50,8 @@ pub struct TxRecord {
     /// Explicit target decoded from the classic operation, separate from asset flow.
     pub operation_target_address: Option<String>,
     pub operation_target_kind: Option<String>,
+    /// Requested operation data is separate from applied fund-flow effects.
+    pub operation_details: serde_json::Value,
     pub fee_charged: Option<String>,
     pub sequence_number: Option<String>,
     pub application_order: i64,

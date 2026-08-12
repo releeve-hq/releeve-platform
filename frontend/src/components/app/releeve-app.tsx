@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { AddressLink, LedgerLink, TxHashLink } from "@/components/explorer/entity-links";
 import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
-import { truncateEntity } from "@/lib/explorer-routes";
+import { truncateEntity, isContractAddress } from "@/lib/explorer-routes";
+import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -33,6 +35,7 @@ import {
   type ExplorerLedger,
   type ExplorerTransaction,
 } from "@/lib/explorer-demo-data";
+import { OrganizationSettingsPage, ProjectSettingsPage } from "@/components/app/settings-pages";
 
 /* ─── types ─── */
 type PageKey =
@@ -48,19 +51,16 @@ type PageKey =
   | "alerts"
   | "docs"
   | "settings"
-  | "settings-profile"
-  | "settings-notifications"
-  | "settings-apikeys"
-  | "settings-billing"
-  | "settings-team";
+  | "organization-settings";
 
 type WorkspaceOrganization = {
   id: string;
   slug: string;
   name: string | null;
   is_personal: boolean;
-  // Reserved display slot for the account's uploaded profile photo.
   avatar_url?: string | null;
+  plan_tier?: string;
+  is_owner?: boolean;
 };
 
 type WorkspaceProject = {
@@ -68,6 +68,7 @@ type WorkspaceProject = {
   slug: string;
   name: string;
   network: "mainnet" | "testnet" | "futurenet";
+  created_at?: string;
 };
 
 type Paged<T> = { data: T[] };
@@ -79,6 +80,16 @@ type StoredWorkspace = {
 };
 
 const ACTIVE_WORKSPACE_KEY = "releeve-active-workspace";
+
+function readStoredWorkspace(): StoredWorkspace | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+    return stored ? JSON.parse(stored) as StoredWorkspace : null;
+  } catch {
+    return null;
+  }
+}
 
 /* ─── helper: svg icon wrapper ─── */
 function Icon({ children, size = 17 }: { children: React.ReactNode; size?: number }) {
@@ -97,6 +108,22 @@ function Icon({ children, size = 17 }: { children: React.ReactNode; size?: numbe
       {children}
     </svg>
   );
+}
+
+function DashboardToastPopup({ message, kind = "error", onDone }: { message: string | null; kind?: "success" | "error"; onDone: () => void }) {
+  if (!message || typeof document === "undefined") return null;
+  const symbol = kind === "error" ? "x" : "check";
+  return createPortal((
+    <div className="pw-toast-container" role="status" aria-live="polite">
+      <div className={`pw-toast pw-toast-${kind}`} key={message}>
+        <div className="pw-toast-fill" onAnimationEnd={onDone} />
+        <div className="pw-toast-content">
+          <span aria-hidden="true" style={{ display: "grid", width: 16, height: 16, placeItems: "center", color: kind === "error" ? "var(--red)" : "var(--green)", fontSize: 14, fontWeight: 800 }}>{symbol}</span>
+          <span>{message}</span>
+        </div>
+      </div>
+    </div>
+  ), document.body);
 }
 
 function getNavIcon(key: string) {
@@ -206,6 +233,7 @@ const APP_ROUTE_BY_PAGE: Partial<Record<PageKey, string>> = {
   contracts: "/contracts",
   docs: "/docs",
   settings: "/settings",
+  "organization-settings": "/settings/organization",
 };
 
 const PAGE_BY_APP_ROUTE: Record<string, PageKey> = {
@@ -218,6 +246,7 @@ const PAGE_BY_APP_ROUTE: Record<string, PageKey> = {
   "/wallets": "wallets",
   "/contracts": "contracts",
   "/settings": "settings",
+  "/settings/organization": "organization-settings",
 };
 
 const CRUMBS: Record<PageKey, string> = {
@@ -232,12 +261,8 @@ const CRUMBS: Record<PageKey, string> = {
   activity: "Activity",
   alerts: "Alerts",
   docs: "Documentation",
-  settings: "Settings",
-  "settings-profile": "Settings / Profile",
-  "settings-notifications": "Settings / Notifications",
-  "settings-apikeys": "Settings / API keys",
-  "settings-billing": "Settings / Billing",
-  "settings-team": "Settings / Team members",
+  settings: "Project settings",
+  "organization-settings": "Organization settings",
 };
 
 /* ─── Bar chart ─── */
@@ -396,7 +421,7 @@ function NotifPanel({ id, open, onClose }: { id: string; open: boolean; onClose:
 
 /* ─── Switch panel (workspace / project) ─── */
 function WorkspaceAvatar({ organization, size = 30, profileAvatarUrl }: { organization: WorkspaceOrganization; size?: number; profileAvatarUrl?: string }) {
-  const label = organization.name || organization.slug || "Workspace";
+  const label = organization.name || organization.slug || "Organization";
   const avatarUrl = organization.is_personal ? profileAvatarUrl || organization.avatar_url : organization.avatar_url;
   return avatarUrl ? (
     <img
@@ -422,6 +447,7 @@ function WorkspaceSwitcher({
   onSelect,
   onCreate,
   onHome,
+  onSettings,
   profileAvatarUrl,
 }: {
   open: boolean;
@@ -431,13 +457,13 @@ function WorkspaceSwitcher({
   onSelect: (organization: WorkspaceOrganization) => void;
   onCreate: () => void;
   onHome: () => void;
+  onSettings: () => void;
   profileAvatarUrl?: string;
 }) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const matches = (organization: WorkspaceOrganization) => !needle || `${organization.name || ""} ${organization.slug}`.toLowerCase().includes(needle);
-  const personalAccounts = organizations.filter((organization) => organization.is_personal && matches(organization));
-  const teams = organizations.filter((organization) => !organization.is_personal && matches(organization));
+  const visibleOrganizations = organizations.filter(matches);
   if (!open) return null;
   return (
     <div
@@ -461,11 +487,11 @@ function WorkspaceSwitcher({
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </Icon>
-        <input aria-label="Find workspace" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find team" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
+        <input aria-label="Find organization" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find organization" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
       </div>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "16px 14px 8px" }}>Personal accounts</div>
-      {personalAccounts.length === 0 && <div style={{ padding: "2px 14px 14px", color: "var(--text-faint)", fontSize: 13 }}>No personal account found.</div>}
-      {personalAccounts.map((organization) => (
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "16px 14px 8px" }}>Organizations</div>
+      {visibleOrganizations.length === 0 && <div style={{ padding: "2px 14px 14px", color: "var(--text-faint)", fontSize: 13 }}>No organization found.</div>}
+      {visibleOrganizations.map((organization) => (
         <button
           key={organization.id}
           type="button"
@@ -478,23 +504,17 @@ function WorkspaceSwitcher({
         </button>
       ))}
       <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "16px 14px 8px" }}>Teams</div>
-      {teams.length === 0 && <div style={{ padding: "4px 14px 18px", color: "var(--text-faint)", fontSize: 14 }}>No teams found</div>}
-      {teams.map((organization) => (
-        <button key={organization.id} type="button" onClick={() => { onSelect(organization); onClose(); }} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 10, padding: "10px", margin: "0 8px 8px", border: 0, borderRadius: 7, background: organization.slug === activeOrganization ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-          <WorkspaceAvatar organization={organization} size={30} />
-          <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{organization.name || organization.slug}</span>
-        </button>
-      ))}
-      <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
       <button type="button" onClick={() => { onHome(); onClose(); }} style={{ display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
         <Icon size={16}><path d="M4 11l8-7 8 7M6 10v9h5v-5h2v5h5v-9" /></Icon> Home
+      </button>
+      <button type="button" onClick={() => { onSettings(); onClose(); }} style={{ display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
+        <Icon size={16}>{getNavIcon("settings")}</Icon> Organization settings
       </button>
       <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
         <Icon size={15}>
           <path d="M12 5v14M5 12h14" />
         </Icon>{" "}
-        New workspace
+        New organization
       </button>
     </div>
   );
@@ -690,7 +710,7 @@ function SearchModal({ open, onClose, onNavigate }: { open: boolean; onClose: ()
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search workspace or use cmd + k"
+            placeholder="Search organization or project"
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }}
           />
         </div>
@@ -808,20 +828,6 @@ function BlockRow({ sequence, txs, gas, pct, gwei, time, network = DEMO_NETWORK 
   );
 }
 
-const TOKEN_GRADIENTS = [
-  "linear-gradient(135deg,#e5484d,#f5d90a)",
-  "linear-gradient(135deg,#6e56cf,#12a594)",
-  "linear-gradient(135deg,#12a594,#e5484d)",
-  "linear-gradient(135deg,#2f6fed,#e5484d)",
-  "linear-gradient(135deg,#f5a623,#6e56cf)",
-  "linear-gradient(135deg,#6e56cf,#2f6fed)",
-  "linear-gradient(135deg,#6e56cf,#f5d90a)",
-  "linear-gradient(135deg,#2f6fed,#12a594)",
-  "linear-gradient(135deg,#f5d90a,#12a594)",
-  "linear-gradient(135deg,#f2efec,#6e56cf)",
-  "linear-gradient(135deg,#f5a623,#6e56cf)",
-];
-
 function TxRow({ method, hash, from, to, time, network = DEMO_NETWORK }: ExplorerTransaction & { network?: string }) {
   const renderEntity = (value: string) => {
     const clean = value.trim();
@@ -846,25 +852,29 @@ function TxRow({ method, hash, from, to, time, network = DEMO_NETWORK }: Explore
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, flex: 1, minWidth: 116, textAlign: "center" }}>
         {[
-          [TOKEN_GRADIENTS[0], from],
-          [TOKEN_GRADIENTS[1], to],
-        ].map(([grad, address], i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, minWidth: 0, width: "100%" }}>
-            <span style={{ width: 13, height: 13, borderRadius: 3, background: grad, flexShrink: 0, display: "inline-block" }} />
-            <span
-              style={{
-                fontSize: 10.5,
-                color: "var(--text)",
-                fontFamily: "monospace",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {renderEntity(address)}
-            </span>
-          </div>
-        ))}
+          ["from", from],
+          ["to", to],
+        ].map(([, address], i) => {
+          const clean = address.trim();
+          const isAddress = /^[GC][A-Z2-7]{55}$/.test(clean);
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, minWidth: 0, width: "100%" }}>
+              {isAddress && <EntityIdenticon value={clean} kind={isContractAddress(clean) ? "contract" : "account"} size={13} className="tx-entity-identicon" />}
+              <span
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text)",
+                  fontFamily: "monospace",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {renderEntity(address)}
+              </span>
+            </div>
+          );
+        })}
       </div>
       <span style={{ fontSize: 10.5, color: "var(--text-faint)", textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" }}>{time}</span>
     </div>
@@ -906,19 +916,26 @@ function txRow(tx: ExplorerFeedTransaction, network: string): ExplorerTransactio
   const operationType = tx.operation_type
     ? Array.from(new Set(tx.operation_type.split(",").map((part) => part.trim()).filter(Boolean))).join(", ")
     : "operation";
+  const asset = displayAssetCode(tx.asset);
   return {
     method: operationType,
     hash: tx.hash,
     from: tx.source_account || "Unknown source",
-    to: tx.destination_account || (tx.affected_account ? `Affected: ${tx.affected_account}` : "No address target"),
+    to: tx.destination_account || "No transfer",
     ledger: String(tx.ledger_sequence ?? ""),
     time: timeAgo(tx.timestamp),
     status: tx.status === "failed" ? "failed" : "success",
     fee: tx.fee_charged ?? "n/a",
-    amount: tx.amount ? `${tx.amount} ${tx.asset ?? ""}`.trim() : "No asset transfer",
+    amount: tx.amount ? `${tx.amount} ${asset}`.trim() : "No asset transfer",
     contractCalls: [],
     network,
   };
+}
+
+function displayAssetCode(asset?: string | null) {
+  if (!asset) return "";
+  const [code] = asset.split(":");
+  return code.trim() || asset;
 }
 
 function ledgerChartPoints(ledgers: ExplorerFeedLedger[]) {
@@ -940,7 +957,7 @@ function transactionChartPoints(transactions: ExplorerFeedTransaction[]) {
   return points.map((tx, index) => ({
     height: Math.max(12, Math.round((values[index] / max) * 100)),
     label: truncateEntity(tx.hash, 8, 6),
-    value: tx.amount ? `${tx.amount} ${tx.asset ?? ""}`.trim() : tx.operation_type,
+    value: tx.amount ? `${tx.amount} ${displayAssetCode(tx.asset)}`.trim() : tx.operation_type,
   }));
 }
 
@@ -1047,6 +1064,7 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
     : null;
   return (
     <div>
+      <DashboardToastPopup message={feedError} kind="error" onDone={() => setFeedError(null)} />
       <h1 style={{ fontSize: 21, fontWeight: 700, lineHeight: 1.28, margin: "2px 3px 14px", letterSpacing: -0.2 }}>
         Find any address, token, or transaction — decoded
       </h1>
@@ -1087,12 +1105,6 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
           </div>
         ))}
       </div>
-      {feedError && (
-        <div style={{ margin: "0 3px 14px", color: "var(--red)", fontSize: 12 }}>
-          {feedError}
-        </div>
-      )}
-
       {/* Charts row */}
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 240 }}>
@@ -1773,147 +1785,6 @@ function AlertsPage() {
   );
 }
 
-function SettingsPage({ navigate }: { navigate: (k: PageKey) => void }) {
-  return (
-    <div>
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Settings</h1>
-      <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Manage your account, team, and preferences.</p>
-      <Card header="Account">
-        <div style={{ padding: "0 8px" }}>
-          <div style={{ borderTop: "none" }}>
-            <ChevRow onClick={() => navigate("settings-profile")}>Profile</ChevRow>
-          </div>
-          <ChevRow onClick={() => navigate("settings-notifications")}>Notifications</ChevRow>
-          <ChevRow onClick={() => navigate("settings-apikeys")}>API keys</ChevRow>
-          <ChevRow onClick={() => navigate("settings-billing")}>Billing</ChevRow>
-          <ChevRow onClick={() => navigate("settings-team")}>Team members</ChevRow>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function DeployRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 8px", borderTop: "1px solid var(--border)", fontSize: 12 }}>
-      <span style={{ color: "var(--text-dim)" }}>{label}</span>
-      <span style={{ color: "var(--text)", fontWeight: 600 }}>{value}</span>
-    </div>
-  );
-}
-
-function BackRow({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <div onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--text-dim)", fontSize: 12.5, fontWeight: 600, margin: "2px 3px 12px", cursor: "pointer", width: "fit-content" }}>
-      <Icon size={15}>
-        <path d="M15 6l-6 6 6 6" />
-      </Icon>{" "}
-      {label}
-    </div>
-  );
-}
-
-function SettingsProfilePage({ navigate }: { navigate: (k: PageKey) => void }) {
-  return (
-    <div>
-      <BackRow label="Settings" onClick={() => navigate("settings")} />
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Profile</h1>
-      <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Update your personal information and how it appears across Releeve.</p>
-      <Card header="Personal info">
-        <div style={{ padding: "0 8px" }}>
-          <div style={{ borderTop: "none" }}>
-            <DeployRow label="Name" value="Kingsley" />
-          </div>
-          <DeployRow label="Username" value="@kingsley" />
-          <DeployRow label="Email" value="kingsley@••••.dev" />
-          <DeployRow label="Plan" value="Free" />
-        </div>
-      </Card>
-      <button style={{ margin: "0 3px", background: "transparent", border: "1px solid var(--border)", color: "var(--text)", fontSize: 12, fontWeight: 600, padding: "7px 12px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer" }}>Edit profile</button>
-    </div>
-  );
-}
-
-function SettingsNotificationsPage({ navigate }: { navigate: (k: PageKey) => void }) {
-  return (
-    <div>
-      <BackRow label="Settings" onClick={() => navigate("settings")} />
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Notifications</h1>
-      <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Choose what you want to be notified about.</p>
-      <Card header="Email notifications">
-        <div style={{ padding: "0 8px" }}>
-          <div style={{ borderTop: "none" }}>
-            <ToggleRow label="Product updates" on={true} />
-          </div>
-          <ToggleRow label="Deployment failures" on={true} />
-          <ToggleRow label="Weekly summary" on={false} />
-          <ToggleRow label="Security alerts" on={true} />
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function SettingsApiKeysPage({ navigate }: { navigate: (k: PageKey) => void }) {
-  return (
-    <div>
-      <BackRow label="Settings" onClick={() => navigate("settings")} />
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>API keys</h1>
-      <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Manage keys used to access the Releeve API.</p>
-      <Card header="Your keys">
-        <div>
-          <StatusRow dot="#2fa84f" name="Production key" sub="rlv_live_••••3a1f" value="Jan 2026" />
-          <StatusRow dot="#2fa84f" name="CI/CD key" sub="rlv_live_••••9c02" value="Mar 2026" />
-        </div>
-      </Card>
-      <button style={{ margin: "0 3px", background: "transparent", border: "1px solid var(--border)", color: "var(--text)", fontSize: 12, fontWeight: 600, padding: "7px 12px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer" }}>Generate new key</button>
-    </div>
-  );
-}
-
-function SettingsBillingPage({ navigate }: { navigate: (k: PageKey) => void }) {
-  return (
-    <div>
-      <BackRow label="Settings" onClick={() => navigate("settings")} />
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Billing</h1>
-      <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>View your plan, usage, and payment details.</p>
-      <Card header="Current plan">
-        <div style={{ padding: "0 8px" }}>
-          <div style={{ borderTop: "none" }}>
-            <DeployRow label="Plan" value="Free" />
-          </div>
-          <DeployRow label="Renews" value="—" />
-        </div>
-      </Card>
-      <Card>
-        <div style={{ padding: "0 8px" }}>
-          <div style={{ borderTop: "none" }}>
-            <ChevRow>Payment methods</ChevRow>
-          </div>
-          <ChevRow>Invoices</ChevRow>
-          <ChevRow>Upgrade plan</ChevRow>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function SettingsTeamPage({ navigate }: { navigate: (k: PageKey) => void }) {
-  return (
-    <div>
-      <BackRow label="Settings" onClick={() => navigate("settings")} />
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Team members</h1>
-      <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Manage who has access to this workspace.</p>
-      <Card header="Members (1)">
-        <div>
-          <StatusRow dot="#2fa84f" name="Kingsley (You)" sub="kingsley@••••.dev" value="Owner" />
-        </div>
-      </Card>
-      <button style={{ margin: "0 3px", background: "transparent", border: "1px solid var(--border)", color: "var(--text)", fontSize: 12, fontWeight: 600, padding: "7px 12px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer" }}>Invite member</button>
-    </div>
-  );
-}
-
 /* ─── Main dashboard ─── */
 export default function ReleeveApp() {
   const router = useRouter();
@@ -1943,8 +1814,9 @@ export default function ReleeveApp() {
   const [netOpen, setNetOpen] = useState<"production" | "create" | null>(null);
   const [organizations, setOrganizations] = useState<WorkspaceOrganization[]>([]);
   const [projects, setProjects] = useState<WorkspaceProject[]>([]);
-  const [activeOrganization, setActiveOrganization] = useState<string | null>(null);
-  const [activeProject, setActiveProject] = useState<string | null>(null);
+  const [activeOrganization, setActiveOrganization] = useState<string | null>(() => readStoredWorkspace()?.organization ?? null);
+  const [activeProject, setActiveProject] = useState<string | null>(() => readStoredWorkspace()?.project ?? null);
+  const previousOrganizationRef = useRef<string | null>(null);
 
   useEffect(() => {
     setPage(pageForPath(pathname));
@@ -1982,6 +1854,15 @@ export default function ReleeveApp() {
       setProjects([]);
       setActiveProject(null);
       return;
+    }
+    // Only reset the scoped project when the organization actually changed.
+    // On initial mount the persisted project is already restored synchronously,
+    // so clearing it here would flash the "select a project" placeholder.
+    const organizationChanged = previousOrganizationRef.current !== null && previousOrganizationRef.current !== activeOrganization;
+    previousOrganizationRef.current = activeOrganization;
+    if (organizationChanged) {
+      setProjects([]);
+      setActiveProject(null);
     }
     let cancelled = false;
     const stored = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
@@ -2057,8 +1938,9 @@ export default function ReleeveApp() {
     const appRoute = APP_ROUTE_BY_PAGE[k];
     if (appRoute && appRoute !== pathname) {
       router.push(appRoute);
+    } else {
+      setPage(k);
     }
-    setPage(k);
     setNavOpen(false);
     setWsOpen(false);
     setProjOpen(false);
@@ -2100,7 +1982,7 @@ export default function ReleeveApp() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  const topNavKey = page.startsWith("settings") ? "settings" : page;
+  const topNavKey = page === "settings" ? "settings" : page;
 
   const css = `
     :root {
@@ -2116,6 +1998,14 @@ export default function ReleeveApp() {
     }
     .db-root * { box-sizing: border-box; }
     .db-root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; font-size: 12.5px; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .pw-toast-container { position: fixed; top: 20px; left: 50%; z-index: 9999; display: flex; width: min(400px, 92vw); flex-direction: column; gap: 8px; pointer-events: none; transform: translateX(-50%); }
+    .pw-toast { position: relative; height: 52px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--panel) 84%, var(--bg) 16%); box-shadow: 0 8px 20px rgb(0 0 0 / 48%); animation: pwToastIn 260ms ease forwards; pointer-events: auto; }
+    .pw-toast-fill { position: absolute; inset: 0; width: 0%; background: color-mix(in srgb, var(--text) 10%, var(--panel)); animation: pwToastFill 4s linear forwards; }
+    .pw-toast-error .pw-toast-fill { background: color-mix(in srgb, var(--red) 16%, var(--panel)); }
+    .pw-toast-content { position: relative; display: flex; height: 100%; align-items: center; gap: 10px; padding: 0 14px; color: var(--text); font-size: 13px; font-weight: 560; white-space: nowrap; }
+    .pw-toast-content span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    @keyframes pwToastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pwToastFill { from { width: 0%; } to { width: 100%; } }
     .db-nav-item:hover { background: var(--panel) !important; }
     .db-content {
       scrollbar-width: none;
@@ -2407,7 +2297,7 @@ export default function ReleeveApp() {
                 <circle cx="11" cy="11" r="7" />
                 <path d="M21 21l-4.3-4.3" />
               </Icon>
-              <span style={{ color: "var(--text-faint)", fontSize: 12.5, flex: 1 }}>Search workspace or use cmd + k</span>
+              <span style={{ color: "var(--text-faint)", fontSize: 12.5, flex: 1 }}>Search organization or project</span>
               <span style={{ color: "var(--text-faint)", fontSize: 10.5, fontWeight: 600, border: "1px solid var(--border)", borderRadius: 5, padding: "2px 6px" }}>⌘K</span>
             </div>
           </div>
@@ -2484,9 +2374,9 @@ export default function ReleeveApp() {
                 }}
                 style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "none", border: "none", padding: 0, fontFamily: "inherit", color: "inherit" }}
               >
-                <WorkspaceAvatar organization={organizations.find((organization) => organization.slug === activeOrganization) || { id: "active", slug: activeOrganization || "workspace", name: activeOrganization, is_personal: true }} size={30} profileAvatarUrl={user?.avatar_url} />
+                <WorkspaceAvatar organization={organizations.find((organization) => organization.slug === activeOrganization) || { id: "active", slug: activeOrganization || "organization", name: activeOrganization, is_personal: true }} size={30} profileAvatarUrl={user?.avatar_url} />
                 <span style={{ fontWeight: 650, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 145 }}>
-                  {organizations.find((organization) => organization.slug === activeOrganization)?.name || activeOrganization || "Workspace"}
+                  {organizations.find((organization) => organization.slug === activeOrganization)?.name || activeOrganization || "Organization"}
                 </span>
                 <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, flexShrink: 0 }}>
                   Free
@@ -2505,6 +2395,7 @@ export default function ReleeveApp() {
                 onSelect={selectOrganization}
                 onCreate={() => router.push("/onboarding")}
                 onHome={() => navigate("home")}
+                onSettings={() => navigate("organization-settings")}
                 profileAvatarUrl={user?.avatar_url}
               />
             </div>
@@ -2644,12 +2535,33 @@ export default function ReleeveApp() {
           {page === "virtualenv" && <ProjectVirtualEnvPage scope={projectScope} />}
           {page === "activity" && <ActivityPage />}
           {page === "alerts" && <ProjectAlertsPage scope={projectScope} />}
-          {page === "settings" && <SettingsPage navigate={navigate} />}
-          {page === "settings-profile" && <SettingsProfilePage navigate={navigate} />}
-          {page === "settings-notifications" && <SettingsNotificationsPage navigate={navigate} />}
-          {page === "settings-apikeys" && <SettingsApiKeysPage navigate={navigate} />}
-          {page === "settings-billing" && <SettingsBillingPage navigate={navigate} />}
-          {page === "settings-team" && <SettingsTeamPage navigate={navigate} />}
+          {page === "settings" && (
+            <ProjectSettingsPage
+              organizationSlug={activeOrganization}
+              projectSlug={activeProject}
+              fallbackProject={projects.find((project) => project.slug === activeProject) ?? null}
+              onProjectUpdated={(updated) => setProjects((current) => current.map((project) => project.id === updated.id ? { ...project, ...updated } : project))}
+              onProjectDeleted={() => {
+                setProjects((current) => current.filter((project) => project.slug !== activeProject));
+                setActiveProject(null);
+                navigate("home");
+              }}
+            />
+          )}
+          {page === "organization-settings" && (
+            <OrganizationSettingsPage
+              organizationSlug={activeOrganization}
+              canManageOwnership={organizations.find((organization) => organization.slug === activeOrganization)?.is_owner === true}
+              onOrganizationUpdated={(updated) => setOrganizations((current) => current.map((organization) => organization.id === updated.id ? { ...organization, ...updated, is_owner: updated.owner_user_id === user?.id } : organization))}
+              onOrganizationDeleted={() => {
+                const remaining = organizations.filter((organization) => organization.slug !== activeOrganization);
+                setOrganizations(remaining);
+                if (remaining[0]) selectOrganization(remaining[0]);
+                else router.push("/onboarding");
+                navigate("home");
+              }}
+            />
+          )}
         </div>
       </div>
     </>

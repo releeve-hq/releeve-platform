@@ -106,6 +106,17 @@ pub fn decode_classic_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
     };
     let hash = as_str(v, "hash")?.to_string();
 
+    let operation_details = v
+        .get("operations")
+        .and_then(Value::as_array)
+        .or_else(|| {
+            v.get("_embedded")
+                .and_then(|value| value.get("operations"))
+                .and_then(Value::as_array)
+        })
+        .cloned()
+        .map(Value::Array)
+        .unwrap_or_else(|| Value::Array(Vec::new()));
     let ops = operations(v).unwrap_or_default();
     let operation_type = v
         .get("operation_type")
@@ -127,10 +138,13 @@ pub fn decode_classic_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
         })
         .unwrap_or_else(|| "transaction".to_string());
     let (operation_target_address, operation_target_kind) = operation_target(v);
-    let mut fund_flow: Vec<FundFlowEdge> = ops
-        .into_iter()
-        .filter_map(|op| op.fund_flow_edge())
-        .collect();
+    let mut fund_flow: Vec<FundFlowEdge> = if status == TxStatus::Success {
+        ops.into_iter()
+            .filter_map(|op| op.fund_flow_edge())
+            .collect()
+    } else {
+        Vec::new()
+    };
     for (sequence, edge) in fund_flow.iter_mut().enumerate() {
         edge.sequence = sequence as i64;
     }
@@ -157,6 +171,7 @@ pub fn decode_classic_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
         operation_type,
         operation_target_address,
         operation_target_kind,
+        operation_details,
         fee_charged: v
             .get("fee_charged")
             .and_then(Value::as_str)
@@ -617,6 +632,7 @@ pub fn decode_invoke_tx(v: &Value, network: &str) -> DecodeResult<TxRecord> {
         operation_type: "invoke_host_function".to_string(),
         operation_target_address: None,
         operation_target_kind: None,
+        operation_details: Value::Array(Vec::new()),
         fee_charged: v
             .get("fee_charged")
             .and_then(Value::as_str)
@@ -900,12 +916,23 @@ mod tests {
     #[test]
     fn failed_classic_tx_is_failed_status() {
         let v = json(
-            r#"{"hash":"h3","ledger":1,"successful":false,"source_account":"GA","fee_charged":"100","created_at":"2023-08-01T00:00:00Z"}"#,
+            r#"{
+                "hash":"h3","ledger":1,"successful":false,"source_account":"GA",
+                "fee_charged":"100","created_at":"2023-08-01T00:00:00Z",
+                "operations":[{
+                    "type":"path_payment_strict_receive","from":"GA","to":"GB",
+                    "amount":"5","source_max":"4","source_asset_type":"native",
+                    "asset_type":"credit_alphanum4","asset_code":"USDC","asset_issuer":"GI"
+                }]
+            }"#,
         );
-        assert_eq!(
-            decode_classic_tx(&v, "testnet").unwrap().status,
-            TxStatus::Failed
+        let tx = decode_classic_tx(&v, "testnet").unwrap();
+        assert_eq!(tx.status, TxStatus::Failed);
+        assert!(
+            tx.fund_flow.is_empty(),
+            "failed intent is not applied fund flow"
         );
+        assert_eq!(tx.operation_details.as_array().map(Vec::len), Some(1));
     }
 
     #[test]

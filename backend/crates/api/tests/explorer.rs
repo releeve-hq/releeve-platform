@@ -54,6 +54,7 @@ fn tx(
         operation_type: "payment".into(),
         operation_target_address: target,
         operation_target_kind: Some("account".into()),
+        operation_details: serde_json::json!([]),
         fee_charged: Some("150".into()),
         sequence_number: None,
         application_order: 1,

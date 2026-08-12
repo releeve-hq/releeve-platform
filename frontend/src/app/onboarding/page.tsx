@@ -77,7 +77,7 @@ export default function OnboardingPage() {
           }
         }
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof ApiError ? reason.message : 'Unable to load your workspaces.');
+        if (!cancelled) setError(reason instanceof ApiError ? reason.message : 'Unable to load your organizations and projects.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -131,7 +131,7 @@ export default function OnboardingPage() {
           // Fall through to the original user-safe conflict message.
         }
       }
-      setError(reason instanceof ApiError ? reason.message : 'Unable to create your workspace.');
+      setError(reason instanceof ApiError ? reason.message : 'Unable to create your organization and project.');
     } finally {
       setSubmitting(false);
     }
@@ -148,14 +148,14 @@ export default function OnboardingPage() {
           <h1>Set up your first project.</h1>
           <p className="onboarding-copy">Your project is the private home for simulations, tracked contracts, investigations, and team work.</p>
 
-          {loading ? <p className="onboarding-muted">Loading your workspaces...</p> : (
+          {loading ? <p className="onboarding-muted">Loading your organizations...</p> : (
             <form onSubmit={submit}>
               <fieldset className="onboarding-fieldset">
                 <legend>Organization</legend>
                 {organizations.length > 0 && !newOrg && <div className="onboarding-org-list">
                   {organizations.map((organization) => <label key={organization.id} className="onboarding-org-option">
                     <input type="radio" name="organization" checked={selectedOrg === organization.slug} onChange={() => setSelectedOrg(organization.slug)} />
-                    <span><strong>{organization.name || organization.slug}</strong><small>{organization.is_personal ? 'Personal workspace' : organization.slug}</small></span>
+                    <span><strong>{organization.name || organization.slug}</strong><small>{organization.slug}</small></span>
                   </label>)}
                 </div>}
                 <button className="onboarding-link onboarding-create-link" type="button" onClick={() => setNewOrg((value) => !value)}>
@@ -170,13 +170,13 @@ export default function OnboardingPage() {
               <fieldset className="onboarding-fieldset">
                 <legend>First project</legend>
                 <div className="onboarding-grid">
-                  <label>Project name<input value={projectName} onChange={(event) => { setProjectName(event.target.value); if (!projectSlug) setProjectSlug(slugify(event.target.value)); }} placeholder="Protocol workspace" /></label>
-                  <label>Project slug<input value={projectSlug} onChange={(event) => setProjectSlug(slugify(event.target.value))} placeholder="protocol-workspace" /></label>
+                  <label>Project name<input value={projectName} onChange={(event) => { setProjectName(event.target.value); if (!projectSlug) setProjectSlug(slugify(event.target.value)); }} placeholder="Protocol project" /></label>
+                  <label>Project slug<input value={projectSlug} onChange={(event) => setProjectSlug(slugify(event.target.value))} placeholder="protocol-project" /></label>
                 </div>
               </fieldset>
 
               {error && <p className="onboarding-error" role="alert">{error}</p>}
-              <button className="onboarding-submit" type="submit" disabled={submitting}>{submitting ? 'Creating workspace...' : 'Create project'}</button>
+              <button className="onboarding-submit" type="submit" disabled={submitting}>{submitting ? 'Creating project...' : 'Create project'}</button>
             </form>
           )}
         </div>

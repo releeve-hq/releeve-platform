@@ -1,5 +1,3 @@
-import ReleeveApp from "@/components/app/releeve-app";
-
-export default function SettingsPage() {
-  return <ReleeveApp />;
+export default function SettingsRoutePage() {
+  return null;
 }

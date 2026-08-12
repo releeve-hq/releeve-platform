@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import AppShell from '@/components/layout/app-shell';
+import ReleeveApp from '@/components/app/releeve-app';
 
 const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'];
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
@@ -20,8 +21,11 @@ const APP_ROUTES = [
   '/wallets',
   '/contracts',
   '/settings',
+  '/debugger',
   '/onboarding',
 ];
+
+const DASHBOARD_SHELL_ROUTES = APP_ROUTES.filter(route => route !== '/onboarding');
 
 function isAuthRoute(pathname: string): boolean {
   if (AUTH_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'))) {
@@ -47,6 +51,10 @@ function isAppRoute(pathname: string): boolean {
   return APP_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
 }
 
+function isDashboardShellRoute(pathname: string): boolean {
+  return DASHBOARD_SHELL_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
+}
+
 export default function ConditionalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -65,6 +73,7 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
 
   if (isAppRoute(pathname)) {
     if (isLoading || !isAuthenticated) return null;
+    if (isDashboardShellRoute(pathname)) return <ReleeveApp />;
     return <>{children}</>;
   }
 

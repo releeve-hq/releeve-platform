@@ -89,8 +89,8 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         </h1>
         <p className="auth-description">
           {isLogin
-            ? 'Access your workspace, simulations, and investigations.'
-            : 'Build, simulate, and investigate on Stellar with one developer workspace.'}
+            ? 'Access your organizations, projects, simulations, and investigations.'
+            : 'Build, simulate, and investigate on Stellar with an organization and project.'}
         </p>
 
         {(error || validationError) && <div className="auth-alert" role="alert">{validationError || error}</div>}

@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowRight, Box, CircleDollarSign } from "lucide-react";
+import { ArrowRight, CircleDollarSign } from "lucide-react";
 import type { ExplorerTxDetail, TxFundFlowEdge } from "@/lib/explorer-api";
+import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import {
   addressRoute,
   isContractAddress,
@@ -70,14 +71,10 @@ function Identity({
   tx: ExplorerTxDetail;
 }) {
   const system = ["Mint", "Burn", "Network fee"].includes(address);
+  const kind = system ? "system" : isContractAddress(address) ? "contract" : "account";
   return (
     <span className="transfer-identity">
-      <span
-        className="transfer-avatar"
-        data-contract={isContractAddress(address)}
-      >
-        <Box />
-      </span>
+      <EntityIdenticon className="transfer-avatar" value={address} kind={kind} size={18} />
       {system ? (
         <span className="mono">{address}</span>
       ) : (
@@ -342,20 +339,10 @@ export function AssetTransfers({
           text-underline-offset: 3px;
         }
         .transfer-scroll :global(.transfer-avatar) {
-          display: inline-grid;
-          place-items: center;
-          width: 22px;
-          height: 22px;
-          border: 1px solid #5b4d45;
-          border-radius: 4px;
-          background: #352d29;
-          color: #e8823c;
+          width: 18px;
+          height: 18px;
+          flex-shrink: 0;
         }
-        .transfer-scroll :global(.transfer-avatar[data-contract="true"]) {
-          background: #29342c;
-          color: #a3ff5f;
-        }
-        .transfer-scroll :global(.transfer-avatar svg),
         .token-icon :global(svg) {
           width: 12px;
           height: 12px;

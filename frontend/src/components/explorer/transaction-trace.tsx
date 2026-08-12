@@ -15,6 +15,7 @@ import type {
   JsonValue,
   TxCallTreeNode,
 } from "@/lib/explorer-api";
+import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import { truncateEntity } from "@/lib/explorer-routes";
 
 type DetailTab = "input" | "output" | "state" | "events";
@@ -82,6 +83,7 @@ function TraceNode({
         </span>
         <span className="trace-kind">CALL</span>
         <span className="trace-sequence">{String(index).padStart(2, "0")}</span>
+        <EntityIdenticon className="trace-identicon" value={node.contract_id} kind="contract" size={16} />
         <span className="trace-code">
           <b>{truncateEntity(node.contract_id, 9, 6)}</b>
           <span>.{node.function_name}</span>
@@ -318,7 +320,7 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
         .trace-list :global(.trace-main) {
           position: relative;
           display: grid;
-          grid-template-columns: 20px 58px 28px minmax(0, 1fr) auto;
+          grid-template-columns: 20px 58px 28px 16px minmax(0, 1fr) auto;
           align-items: center;
           gap: 8px;
           width: 100%;
@@ -354,6 +356,11 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
           font:
             10px ui-monospace,
             monospace;
+        }
+        .trace-list :global(.trace-identicon) {
+          width: 16px;
+          height: 16px;
+          flex-shrink: 0;
         }
         .trace-list :global(.trace-code) {
           min-width: 0;
@@ -456,7 +463,7 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
             padding-bottom: 2px;
           }
           .trace-list :global(.trace-main) {
-            grid-template-columns: 18px 48px 22px minmax(140px, 1fr) auto;
+            grid-template-columns: 18px 48px 22px 16px minmax(140px, 1fr) auto;
           }
           .trace-list :global(.trace-detail) {
             margin-left: 12px;

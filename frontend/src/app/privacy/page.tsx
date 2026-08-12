@@ -59,7 +59,7 @@ const sections: LegalSection[] = [
   {
     heading: '8. Your Rights',
     paragraphs: [
-      'Depending on your jurisdiction, you may have rights to access, correct, delete, or export your personal information, and to object to or restrict certain processing. You can update much of your information directly through your account settings. To exercise any of these rights, please contact us using the details below.',
+      'Depending on your jurisdiction, you may have rights to access, correct, delete, or export your personal information, and to object to or restrict certain processing. Organization owners can update organization information through organization settings. To exercise personal data rights, please contact us using the details below.',
       'You may also have the right to lodge a complaint with a data protection authority in your jurisdiction.',
     ],
   },

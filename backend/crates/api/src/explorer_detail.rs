@@ -428,7 +428,8 @@ async fn load_tx_detail(
     // A Soroban invocation can legitimately move no asset. Its empty flow must
     // not trigger the classic Horizon fallback, which only has the envelope
     // root and would overwrite a decoded nested RPC trace.
-    if flow.is_empty()
+    let transaction_failed = row.get::<String, _>("status") == "failed";
+    if (flow.is_empty() || transaction_failed)
         && !is_soroban_invocation
         && let Ok((horizon_tx, horizon_flow)) = fetch_horizon_tx_with_fund_flow(network, hash).await
     {
@@ -482,6 +483,7 @@ async fn load_tx_detail(
         "operation_type": row.get::<String, _>("operation_type"),
         "operation_target_address": row.get::<Option<String>, _>("operation_target_address"),
         "operation_target_kind": row.get::<Option<String>, _>("operation_target_kind"),
+        "operation_details": row.get::<Value, _>("operation_details"),
         "fee_charged": numeric_str(&row, "fee_charged"),
         "sequence_number": row.get::<Option<String>, _>("sequence_number"),
         "application_order": row.get::<Option<i32>, _>("application_order"),
@@ -515,7 +517,7 @@ async fn tx_header_row(
     sqlx::query(
         r#"
         SELECT hash, network, ledger_sequence, status, source_account, operation_type,
-               operation_target_address, operation_target_kind,
+               operation_target_address, operation_target_kind, operation_details,
                fee_charged::text, sequence_number, application_order, timestamp,
                cpu_instructions, memory_bytes, invoke_time_nsecs, disk_read_bytes,
                write_bytes, max_rw_key_byte, max_rw_data_byte,
@@ -1409,7 +1411,37 @@ async fn validate_target(pool: &PgPool, hash: &str, target: &TargetRef) -> Resul
 pub struct AddEntityRequest {
     pub address: String,
     #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub appearance_color: Option<String>,
+    #[serde(default)]
     pub tags: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteWalletsRequest {
+    pub addresses: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenameAccountRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteContractsRequest {
+    pub addresses: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenameContractRequest {
+    pub name: String,
 }
 
 pub async fn public_account(
@@ -1466,12 +1498,27 @@ pub async fn add_account(
 ) -> Result<Json<Value>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
     auth.require_mutation()?;
+    let base = horizon_url_for_network(&auth.network).ok_or_else(|| {
+        Error::BadRequest(format!("unsupported explorer network: {}", auth.network))
+    })?;
+    if !upstream_exists(&format!("{base}/accounts/{}", req.address.trim())).await {
+        return Err(Error::BadRequest(
+            "wallet does not exist on the selected Stellar network".into(),
+        ));
+    }
+    let display_name = req
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Wallet");
     let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO wallets (project_id, address, network) VALUES ($1,$2,$3) ON CONFLICT (project_id, address) DO UPDATE SET network = EXCLUDED.network RETURNING id",
+        "INSERT INTO wallets (project_id, address, network, display_name) VALUES ($1,$2,$3,$4) ON CONFLICT (project_id, address) DO UPDATE SET network = EXCLUDED.network, display_name = EXCLUDED.display_name RETURNING id",
     )
     .bind(auth.project_id)
     .bind(req.address.trim())
     .bind(&auth.network)
+    .bind(display_name)
     .fetch_one(&state.db)
     .await
     .map_err(unique_or_conflict)?;
@@ -1487,6 +1534,24 @@ pub async fn add_account(
     ))
 }
 
+pub async fn delete_accounts(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project)): Path<(String, String)>,
+    Json(req): Json<DeleteWalletsRequest>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_mutation()?;
+    let addresses = req
+        .addresses
+        .into_iter()
+        .map(|address| address.trim().to_string())
+        .filter(|address| !address.is_empty())
+        .collect::<Vec<_>>();
+    let deleted = delete_wallet_rows(&state.db, auth.project_id, &addresses).await?;
+    Ok(Json(json!({ "deleted": deleted })))
+}
+
 pub async fn project_account(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
@@ -1496,6 +1561,88 @@ pub async fn project_account(
     Ok(Json(
         account_summary(&state.db, Some(auth.project_id), &auth.network, &address).await?,
     ))
+}
+
+pub async fn delete_account(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, address)): Path<(String, String, String)>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_mutation()?;
+    let deleted = delete_wallet_rows(&state.db, auth.project_id, &[address]).await?;
+    Ok(Json(json!({ "deleted": deleted > 0 })))
+}
+
+pub async fn rename_account(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, address)): Path<(String, String, String)>,
+    Json(req): Json<RenameAccountRequest>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_mutation()?;
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(Error::BadRequest("wallet name cannot be empty".into()));
+    }
+    sqlx::query("UPDATE wallets SET display_name = $1 WHERE project_id = $2 AND address = $3")
+        .bind(name)
+        .bind(auth.project_id)
+        .bind(&address)
+        .execute(&state.db)
+        .await
+        .map_err(Error::internal)?;
+    Ok(Json(
+        account_summary(&state.db, Some(auth.project_id), &auth.network, &address).await?,
+    ))
+}
+
+async fn delete_wallet_rows(
+    pool: &PgPool,
+    project_id: Uuid,
+    addresses: &[String],
+) -> Result<u64, Error> {
+    if addresses.is_empty() {
+        return Ok(0);
+    }
+    let wallet_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM wallets WHERE project_id = $1 AND address = ANY($2)",
+    )
+    .bind(project_id)
+    .bind(addresses)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::internal)?;
+    if wallet_ids.is_empty() {
+        return Ok(0);
+    }
+    sqlx::query("DELETE FROM tag_attachments WHERE entity_type = 'wallet' AND entity_id = ANY($1)")
+        .bind(&wallet_ids)
+        .execute(pool)
+        .await
+        .map_err(Error::internal)?;
+    sqlx::query(
+        r#"
+        UPDATE simulation_runs
+        SET impersonated_wallet_id = CASE WHEN impersonated_wallet_id = ANY($1) THEN NULL ELSE impersonated_wallet_id END,
+            sender_wallet_id = CASE WHEN sender_wallet_id = ANY($1) THEN NULL ELSE sender_wallet_id END
+        WHERE project_id = $2
+        "#,
+    )
+    .bind(&wallet_ids)
+    .bind(project_id)
+    .execute(pool)
+    .await
+    .map_err(Error::internal)?;
+    let deleted = sqlx::query("DELETE FROM wallets WHERE project_id = $1 AND id = ANY($2)")
+        .bind(project_id)
+        .bind(&wallet_ids)
+        .execute(pool)
+        .await
+        .map_err(Error::internal)?
+        .rows_affected();
+    Ok(deleted)
 }
 
 pub async fn account_transactions(
@@ -1532,13 +1679,13 @@ async fn account_summary(
     address: &str,
 ) -> Result<Value, Error> {
     let tracked = match project_id {
-        Some(project_id) => sqlx::query("SELECT id, last_synced_at FROM wallets WHERE project_id = $1 AND address = $2")
+        Some(project_id) => sqlx::query("SELECT id, display_name, last_synced_at FROM wallets WHERE project_id = $1 AND address = $2")
             .bind(project_id)
             .bind(address)
             .fetch_optional(pool)
             .await
             .map_err(Error::internal)?,
-        None => sqlx::query("SELECT id, last_synced_at FROM wallets WHERE network = $1 AND address = $2 ORDER BY last_synced_at DESC NULLS LAST LIMIT 1")
+        None => sqlx::query("SELECT id, display_name, last_synced_at FROM wallets WHERE network = $1 AND address = $2 ORDER BY last_synced_at DESC NULLS LAST LIMIT 1")
             .bind(network)
             .bind(address)
             .fetch_optional(pool)
@@ -1546,6 +1693,14 @@ async fn account_summary(
             .map_err(Error::internal)?,
     };
     let wallet_id = tracked.as_ref().map(|r| r.get::<Uuid, _>("id"));
+    let display_name = tracked
+        .as_ref()
+        .and_then(|r| {
+            r.try_get::<Option<String>, _>("display_name")
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_else(|| "Wallet".to_string());
     let tags = match (project_id, wallet_id) {
         (Some(project_id), Some(id)) => entity_tags(pool, project_id, "wallet", id).await?,
         _ => Vec::new(),
@@ -1559,6 +1714,7 @@ async fn account_summary(
     let token_holdings = holdings(pool, network, address).await?;
     Ok(json!({
         "address": address,
+        "name": display_name,
         "network": network,
         "tracked": wallet_id.is_some(),
         "xlm_balance": xlm.as_ref().map(|h| h.0.clone()),
@@ -1701,12 +1857,38 @@ pub async fn add_contract(
 ) -> Result<Json<Value>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
     auth.require_mutation()?;
+    let network = req
+        .network
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&auth.network);
+    let base = horizon_url_for_network(network).ok_or_else(|| {
+        Error::BadRequest(format!("unsupported explorer network: {network}"))
+    })?;
+    if !upstream_exists(&format!("{base}/contracts/{}", req.address.trim())).await {
+        return Err(Error::BadRequest(
+            "contract does not exist on the selected Stellar network".into(),
+        ));
+    }
+    let display_name = req
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let appearance_color = req
+        .appearance_color
+        .as_deref()
+        .map(str::trim)
+        .filter(|color| !color.is_empty());
     let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO contracts (project_id, address, network) VALUES ($1,$2,$3) ON CONFLICT (project_id, address) DO UPDATE SET network = EXCLUDED.network RETURNING id",
+        "INSERT INTO contracts (project_id, address, network, display_name, appearance_color) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (project_id, address) DO UPDATE SET network = EXCLUDED.network, display_name = EXCLUDED.display_name, appearance_color = EXCLUDED.appearance_color RETURNING id",
     )
     .bind(auth.project_id)
     .bind(req.address.trim())
-    .bind(&auth.network)
+    .bind(network)
+    .bind(display_name)
+    .bind(appearance_color)
     .fetch_one(&state.db)
     .await
     .map_err(unique_or_conflict)?;
@@ -1715,7 +1897,7 @@ pub async fn add_contract(
         contract_summary(
             &state.db,
             Some(auth.project_id),
-            &auth.network,
+            network,
             req.address.trim(),
         )
         .await?,
@@ -1733,6 +1915,101 @@ pub async fn project_contract(
     ))
 }
 
+pub async fn delete_contracts(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project)): Path<(String, String)>,
+    Json(req): Json<DeleteContractsRequest>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_mutation()?;
+    let addresses = req
+        .addresses
+        .into_iter()
+        .map(|address| address.trim().to_owned())
+        .filter(|address| !address.is_empty())
+        .collect::<Vec<_>>();
+    let deleted = delete_contract_rows(&state.db, auth.project_id, &addresses).await?;
+    Ok(Json(json!({ "deleted": deleted })))
+}
+
+pub async fn delete_contract(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, address)): Path<(String, String, String)>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_mutation()?;
+    let deleted = delete_contract_rows(&state.db, auth.project_id, &[address]).await?;
+    Ok(Json(json!({ "deleted": deleted > 0 })))
+}
+
+pub async fn rename_contract(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, address)): Path<(String, String, String)>,
+    Json(req): Json<RenameContractRequest>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_mutation()?;
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(Error::BadRequest("contract name is required".into()));
+    }
+    let updated = sqlx::query("UPDATE contracts SET display_name = $1 WHERE project_id = $2 AND address = $3")
+        .bind(name)
+        .bind(auth.project_id)
+        .bind(address.trim())
+        .execute(&state.db)
+        .await
+        .map_err(Error::internal)?
+        .rows_affected();
+    if updated == 0 {
+        return Err(Error::NotFound);
+    }
+    Ok(Json(json!({ "updated": true, "name": name })))
+}
+
+async fn delete_contract_rows(
+    pool: &PgPool,
+    project_id: Uuid,
+    addresses: &[String],
+) -> Result<u64, Error> {
+    if addresses.is_empty() {
+        return Ok(0);
+    }
+    let contract_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM contracts WHERE project_id = $1 AND address = ANY($2)",
+    )
+    .bind(project_id)
+    .bind(addresses)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::internal)?;
+    if contract_ids.is_empty() {
+        return Ok(0);
+    }
+    sqlx::query("DELETE FROM tag_attachments WHERE entity_type = 'contract' AND entity_id = ANY($1)")
+        .bind(&contract_ids)
+        .execute(pool)
+        .await
+        .map_err(Error::internal)?;
+    sqlx::query("UPDATE simulation_runs SET contract_id = NULL WHERE project_id = $1 AND contract_id = ANY($2)")
+        .bind(project_id)
+        .bind(&contract_ids)
+        .execute(pool)
+        .await
+        .map_err(Error::internal)?;
+    let deleted = sqlx::query("DELETE FROM contracts WHERE project_id = $1 AND id = ANY($2)")
+        .bind(project_id)
+        .bind(&contract_ids)
+        .execute(pool)
+        .await
+        .map_err(Error::internal)?
+        .rows_affected();
+    Ok(deleted)
+}
+
 async fn contract_summary(
     pool: &PgPool,
     project_id: Option<Uuid>,
@@ -1742,7 +2019,7 @@ async fn contract_summary(
     let row = match project_id {
         Some(project_id) => sqlx::query(
             r#"
-            SELECT id, contract_type, deployment_tx_hash, deployment_timestamp,
+            SELECT id, display_name, appearance_color, contract_type, deployment_tx_hash, deployment_timestamp,
                    verification_status, verification_type, verified_at,
                    rust_version, soroban_sdk_version, wasm_target, opt_level,
                    wasm_opt_applied, debug_symbols_present, current_wasm_hash
@@ -1756,7 +2033,7 @@ async fn contract_summary(
         .map_err(Error::internal)?,
         None => sqlx::query(
             r#"
-            SELECT id, contract_type, deployment_tx_hash, deployment_timestamp,
+            SELECT id, display_name, appearance_color, contract_type, deployment_tx_hash, deployment_timestamp,
                    verification_status, verification_type, verified_at,
                    rust_version, soroban_sdk_version, wasm_target, opt_level,
                    wasm_opt_applied, debug_symbols_present, current_wasm_hash
@@ -1778,6 +2055,8 @@ async fn contract_summary(
     Ok(match row {
         Some(row) => json!({
             "address": address,
+            "name": row.try_get::<Option<String>, _>("display_name").ok().flatten(),
+            "appearance_color": row.try_get::<Option<String>, _>("appearance_color").ok().flatten(),
             "network": network,
             "tracked": true,
             "type": row.get::<String, _>("contract_type"),
@@ -2781,11 +3060,11 @@ async fn entity_list(
     };
     let (select, order) = match table {
         "wallets" => (
-            "SELECT w.id, w.address, w.network, w.last_synced_at FROM wallets w WHERE w.project_id = $1",
+            "SELECT w.id, w.address, w.display_name, w.network, w.last_synced_at FROM wallets w WHERE w.project_id = $1",
             "ORDER BY w.address ASC, w.id ASC",
         ),
         "contracts" => (
-            "SELECT c.id, c.address, c.network, c.last_synced_at FROM contracts c WHERE c.project_id = $1",
+            "SELECT c.id, c.address, c.display_name, c.appearance_color, c.network, c.last_synced_at FROM contracts c WHERE c.project_id = $1",
             "ORDER BY c.address ASC, c.id ASC",
         ),
         _ => {
@@ -2841,10 +3120,14 @@ async fn entity_list(
     for row in rows {
         let id = row.get::<Uuid, _>("id");
         let address = row.get::<String, _>("address");
+        let tags = entity_tags(pool, project_id, entity_type, id).await?;
         cursors.push((address.clone(), id.to_string()));
         data.push(json!({
             "id": id,
             "address": address,
+            "name": row.try_get::<Option<String>, _>("display_name").ok().flatten(),
+            "appearance_color": row.try_get::<Option<String>, _>("appearance_color").ok().flatten(),
+            "tags": tags,
             "network": row.get::<String, _>("network"),
             "last_synced_at": row.get::<Option<DateTime<Utc>>, _>("last_synced_at")
         }));

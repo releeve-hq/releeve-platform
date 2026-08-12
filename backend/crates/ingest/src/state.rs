@@ -56,13 +56,13 @@ pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sq
         r#"
         INSERT INTO transactions (
             hash, network, ledger_sequence, status, source_account, operation_type,
-            operation_target_address, operation_target_kind,
+            operation_target_address, operation_target_kind, operation_details,
             fee_charged, sequence_number, application_order, timestamp,
             cpu_instructions, memory_bytes, invoke_time_nsecs, disk_read_bytes,
             write_bytes, max_rw_key_byte, max_rw_data_byte,
             cpu_instruction_limit, disk_read_bytes_limit, write_bytes_limit, resource_fee,
             raw_result_meta_xdr, raw_envelope_xdr
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::numeric,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::numeric,$24,$25)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::numeric,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::numeric,$25,$26)
         ON CONFLICT (hash) DO UPDATE SET
             network = EXCLUDED.network,
             ledger_sequence = EXCLUDED.ledger_sequence,
@@ -71,6 +71,7 @@ pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sq
             operation_type = EXCLUDED.operation_type,
             operation_target_address = COALESCE(EXCLUDED.operation_target_address, transactions.operation_target_address),
             operation_target_kind = COALESCE(EXCLUDED.operation_target_kind, transactions.operation_target_kind),
+            operation_details = CASE WHEN EXCLUDED.operation_details = '[]'::jsonb THEN transactions.operation_details ELSE EXCLUDED.operation_details END,
             fee_charged = COALESCE(EXCLUDED.fee_charged, transactions.fee_charged),
             sequence_number = COALESCE(EXCLUDED.sequence_number, transactions.sequence_number),
             application_order = EXCLUDED.application_order,
@@ -99,6 +100,7 @@ pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sq
     .bind(&tx.operation_type)
     .bind(&tx.operation_target_address)
     .bind(&tx.operation_target_kind)
+    .bind(&tx.operation_details)
     .bind(&tx.fee_charged)
     .bind(&tx.sequence_number)
     .bind(tx.application_order)
@@ -134,7 +136,7 @@ pub async fn upsert_tx(pool: &PgPool, tx: &TxRecord) -> Result<UpsertOutcome, sq
     } else {
         Vec::new()
     };
-    if new || !tx.fund_flow.is_empty() {
+    if new || tx.status == TxStatus::Failed || !tx.fund_flow.is_empty() {
         delete_fund_flow(&mut db, &tx.hash).await?;
         insert_fund_flow(&mut db, &tx.hash, &tx.fund_flow, &node_ids).await?;
     }

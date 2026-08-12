@@ -111,6 +111,7 @@ async fn seed_chain_fixture(app: &TestApp) -> (String, Uuid, Uuid, Uuid) {
         operation_type: "invoke_host_function".into(),
         operation_target_address: Some("CCONTRACT".into()),
         operation_target_kind: Some("contract".into()),
+        operation_details: serde_json::json!([]),
         fee_charged: Some("300".into()),
         sequence_number: Some("12345".into()),
         application_order: 2,

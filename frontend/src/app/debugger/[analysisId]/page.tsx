@@ -1,5 +1,3 @@
-import ReleeveApp from "@/components/app/releeve-app";
-
-export default function DebuggerPage() {
-  return <ReleeveApp />;
+export default function DebuggerRoutePage() {
+  return null;
 }

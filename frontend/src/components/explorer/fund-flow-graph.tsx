@@ -14,6 +14,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import ELK from "elkjs/lib/elk.bundled.js";
 import { Crosshair, Expand, Search, X } from "lucide-react";
+import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import type { ExplorerTxDetail, TxFundFlowEdge } from "@/lib/explorer-api";
 import { isContractAddress, truncateEntity } from "@/lib/explorer-routes";
 
@@ -25,14 +26,18 @@ function entityKind(address: string) {
 }
 
 function nodeFor(address: string): Node {
+  const kind = isContractAddress(address) ? "contract" : "account";
   return {
     id: address,
     position: { x: 0, y: 0 },
     data: {
       label: (
         <div className="flow-node-label">
-          <span>{entityKind(address)}</span>
-          <strong>{truncateEntity(address, 10, 7)}</strong>
+          <EntityIdenticon value={address} kind={kind} size={22} />
+          <span>
+            <small>{entityKind(address)}</small>
+            <strong>{truncateEntity(address, 10, 7)}</strong>
+          </span>
         </div>
       ),
     },
@@ -58,7 +63,7 @@ async function layout(nodes: Node[], edges: Edge[]) {
       "elk.layered.spacing.nodeNodeBetweenLayers": "145",
       "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
     },
-    children: nodes.map((node) => ({ id: node.id, width: 260, height: 58 })),
+    children: nodes.map((node) => ({ id: node.id, width: 260, height: 66 })),
     edges: edges.map((edge) => ({
       id: edge.id,
       sources: [edge.source],
@@ -304,6 +309,7 @@ function GraphCanvas({
             <TransferDetail edge={selectedTransfer} network={network} />
           ) : selectedNode ? (
             <>
+              <EntityIdenticon value={selectedNode} kind={isContractAddress(selectedNode) ? "contract" : "account"} size={26} />
               <span className="aside-kind">{entityKind(selectedNode)}</span>
               <h3>{truncateEntity(selectedNode, 12, 9)}</h3>
               <code>{selectedNode}</code>
@@ -551,14 +557,21 @@ function GraphCanvas({
         }
         .fund-flow-experience :global(.flow-node-label) {
           display: flex;
+          align-items: center;
+          gap: 9px;
+          padding: 5px 8px;
+        }
+        .fund-flow-experience :global(.flow-node-label > span) {
+          min-width: 0;
+          display: flex;
           flex-direction: column;
           align-items: flex-start;
-          padding: 4px 7px;
         }
-        .fund-flow-experience :global(.flow-node-label span) {
+        .fund-flow-experience :global(.flow-node-label small) {
           color: #918985;
           font-size: 9px;
           text-transform: uppercase;
+          font-weight: 650;
         }
         .fund-flow-experience :global(.flow-node-label strong) {
           margin-top: 4px;
@@ -631,7 +644,9 @@ export function FundFlowGraph({
   if (!tx.fund_flow.length && !tx.call_tree.length)
     return (
       <div className="rx-empty">
-        No asset transfer or contract invocation was decoded for this transaction.
+        {tx.status.toLowerCase() === "failed"
+          ? "The transaction failed before any fund movement was applied. The requested operation path is shown in Summary."
+          : "No asset transfer or contract invocation was decoded for this transaction."}
       </div>
     );
   return (

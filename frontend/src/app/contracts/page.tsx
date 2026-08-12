@@ -1,5 +1,3 @@
-import ReleeveApp from "@/components/app/releeve-app";
-
-export default function ContractsPage() {
-  return <ReleeveApp />;
+export default function ContractsRoutePage() {
+  return null;
 }

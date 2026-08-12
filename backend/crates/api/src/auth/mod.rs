@@ -681,8 +681,10 @@ pub struct MyOrg {
     pub id: Uuid,
     pub slug: String,
     pub name: Option<String>,
+    pub avatar_url: Option<String>,
     pub is_personal: bool,
     pub permissions: Vec<shared::Permission>,
+    pub is_owner: bool,
 }
 
 #[utoipa::path(
@@ -699,9 +701,9 @@ pub async fn my_organizations(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
 ) -> Result<Json<Vec<MyOrg>>, Error> {
-    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, bool, i16)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, bool, i16, bool)>(
         r#"
-        SELECT o.id, o.slug, o.name, o.is_personal, m.permissions
+        SELECT o.id, o.slug, o.name, o.avatar_url, o.is_personal, m.permissions, o.owner_user_id = $1
         FROM organization_members m
         JOIN organizations o ON o.id = m.organization_id
         WHERE m.user_id = $1
@@ -718,8 +720,10 @@ pub async fn my_organizations(
                 id: r.0,
                 slug: r.1,
                 name: r.2,
-                is_personal: r.3,
-                permissions: shared::PermissionSet(r.4).iter(),
+                avatar_url: r.3,
+                is_personal: r.4,
+                permissions: shared::PermissionSet(r.5).iter(),
+                is_owner: r.6,
             })
             .collect(),
     ))

@@ -135,12 +135,8 @@ function TransactionTable({
                   <Link href={addressRoute(network, tx.destination_account)}>
                     <code>{truncateEntity(tx.destination_account, 6, 5)}</code>
                   </Link>
-                ) : tx.affected_account ? (
-                  <span>
-                    Affected {truncateEntity(tx.affected_account, 6, 5)}
-                  </span>
                 ) : (
-                  "No address target"
+                  "No transfer"
                 )}
               </td>
               <td>{tx.call_trace?.root_function ?? tx.operation_type}</td>
