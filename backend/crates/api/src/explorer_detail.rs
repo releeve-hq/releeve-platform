@@ -3,6 +3,7 @@
 //! contract call routing.
 
 use std::collections::HashSet;
+use std::str::FromStr;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -17,6 +18,10 @@ use serde_json::{Value, json};
 use shared::{Cursor, Error, Paged, Pagination, Permission, PermissionSet, clamp_limit};
 use sqlx::{PgPool, Row};
 use std::time::Duration;
+use stellar_xdr::{
+    ContractDataDurability, ContractId, LedgerKey, LedgerKeyContractData, Limits, ScAddress, ScVal,
+    WriteXdr,
+};
 use uuid::Uuid;
 
 use crate::extract::AuthUser;
@@ -1498,8 +1503,14 @@ pub async fn add_account(
 ) -> Result<Json<Value>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
     auth.require_mutation()?;
-    let base = horizon_url_for_network(&auth.network).ok_or_else(|| {
-        Error::BadRequest(format!("unsupported explorer network: {}", auth.network))
+    let network = req
+        .network
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&auth.network);
+    let base = horizon_url_for_network(network).ok_or_else(|| {
+        Error::BadRequest(format!("unsupported explorer network: {network}"))
     })?;
     if !upstream_exists(&format!("{base}/accounts/{}", req.address.trim())).await {
         return Err(Error::BadRequest(
@@ -1517,7 +1528,7 @@ pub async fn add_account(
     )
     .bind(auth.project_id)
     .bind(req.address.trim())
-    .bind(&auth.network)
+    .bind(network)
     .bind(display_name)
     .fetch_one(&state.db)
     .await
@@ -1527,7 +1538,7 @@ pub async fn add_account(
         account_summary(
             &state.db,
             Some(auth.project_id),
-            &auth.network,
+            network,
             req.address.trim(),
         )
         .await?,
@@ -1558,8 +1569,17 @@ pub async fn project_account(
     Path((org, project, address)): Path<(String, String, String)>,
 ) -> Result<Json<Value>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
+    let network = sqlx::query_scalar::<_, String>(
+        "SELECT network FROM wallets WHERE project_id = $1 AND address = $2",
+    )
+    .bind(auth.project_id)
+    .bind(&address)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .unwrap_or_else(|| auth.network.clone());
     Ok(Json(
-        account_summary(&state.db, Some(auth.project_id), &auth.network, &address).await?,
+        account_summary(&state.db, Some(auth.project_id), &network, &address).await?,
     ))
 }
 
@@ -1593,8 +1613,17 @@ pub async fn rename_account(
         .execute(&state.db)
         .await
         .map_err(Error::internal)?;
+    let network = sqlx::query_scalar::<_, String>(
+        "SELECT network FROM wallets WHERE project_id = $1 AND address = $2",
+    )
+    .bind(auth.project_id)
+    .bind(&address)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .unwrap_or_else(|| auth.network.clone());
     Ok(Json(
-        account_summary(&state.db, Some(auth.project_id), &auth.network, &address).await?,
+        account_summary(&state.db, Some(auth.project_id), &network, &address).await?,
     ))
 }
 
@@ -1652,9 +1681,18 @@ pub async fn account_transactions(
     Query(q): Query<AccountTxQuery>,
 ) -> Result<Json<Paged<Value>>, Error> {
     let auth = resolve_project(&state, user_id, &org, &project).await?;
+    let network = sqlx::query_scalar::<_, String>(
+        "SELECT network FROM wallets WHERE project_id = $1 AND address = $2",
+    )
+    .bind(auth.project_id)
+    .bind(&address)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .unwrap_or_else(|| auth.network.clone());
     let limit = clamp_limit(q.limit);
     let cursor = parse_time_cursor(q.cursor.as_deref())?;
-    let page = transaction_page(&state.db, &auth.network, limit, cursor, |sql, binds| {
+    let page = transaction_page(&state.db, &network, limit, cursor, |sql, binds| {
         binds.push(json!(address));
         let n = binds.len();
         sql.push_str(&format!(
@@ -1863,10 +1901,13 @@ pub async fn add_contract(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(&auth.network);
-    let base = horizon_url_for_network(network).ok_or_else(|| {
-        Error::BadRequest(format!("unsupported explorer network: {network}"))
-    })?;
-    if !upstream_exists(&format!("{base}/contracts/{}", req.address.trim())).await {
+    let address = req.address.trim().to_uppercase();
+    if !address.starts_with('C') || address.len() != 56 {
+        return Err(Error::BadRequest("invalid Stellar contract ID".into()));
+    }
+    let rpc_url = rpc_url_for_network(network, &state.settings.soroban_rpc_url)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported Soroban network: {network}")))?;
+    if !contract_exists_on_network(&rpc_url, &address).await? {
         return Err(Error::BadRequest(
             "contract does not exist on the selected Stellar network".into(),
         ));
@@ -1885,7 +1926,7 @@ pub async fn add_contract(
         "INSERT INTO contracts (project_id, address, network, display_name, appearance_color) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (project_id, address) DO UPDATE SET network = EXCLUDED.network, display_name = EXCLUDED.display_name, appearance_color = EXCLUDED.appearance_color RETURNING id",
     )
     .bind(auth.project_id)
-    .bind(req.address.trim())
+    .bind(&address)
     .bind(network)
     .bind(display_name)
     .bind(appearance_color)
@@ -1894,14 +1935,29 @@ pub async fn add_contract(
     .map_err(unique_or_conflict)?;
     attach_tags_checked(&state.db, auth.project_id, "contract", id, &req.tags).await?;
     Ok(Json(
-        contract_summary(
-            &state.db,
-            Some(auth.project_id),
-            network,
-            req.address.trim(),
-        )
-        .await?,
+        contract_summary(&state.db, Some(auth.project_id), network, &address).await?,
     ))
+}
+
+async fn contract_exists_on_network(rpc_url: &str, address: &str) -> Result<bool, Error> {
+    let contract = ContractId::from_str(address)
+        .map_err(|_| Error::BadRequest("invalid Stellar contract ID".into()))?;
+    let key = LedgerKey::ContractData(LedgerKeyContractData {
+        contract: ScAddress::Contract(contract),
+        key: ScVal::LedgerKeyContractInstance,
+        durability: ContractDataDurability::Persistent,
+    })
+    .to_xdr_base64(Limits::none())
+    .map_err(Error::internal)?;
+    let mut rpc = SorobanRpcClient::new(rpc_url, explorer_backoff(), explorer_breaker());
+    let result = rpc
+        .call("getLedgerEntries", json!({ "keys": [key] }))
+        .await
+        .map_err(|err| Error::ServiceUnavailable(format!("soroban_rpc: {err:?}")))?;
+    Ok(result
+        .get("entries")
+        .and_then(Value::as_array)
+        .is_some_and(|entries| !entries.is_empty()))
 }
 
 pub async fn project_contract(
@@ -1956,14 +2012,16 @@ pub async fn rename_contract(
     if name.is_empty() {
         return Err(Error::BadRequest("contract name is required".into()));
     }
-    let updated = sqlx::query("UPDATE contracts SET display_name = $1 WHERE project_id = $2 AND address = $3")
-        .bind(name)
-        .bind(auth.project_id)
-        .bind(address.trim())
-        .execute(&state.db)
-        .await
-        .map_err(Error::internal)?
-        .rows_affected();
+    let updated = sqlx::query(
+        "UPDATE contracts SET display_name = $1 WHERE project_id = $2 AND address = $3",
+    )
+    .bind(name)
+    .bind(auth.project_id)
+    .bind(address.trim())
+    .execute(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .rows_affected();
     if updated == 0 {
         return Err(Error::NotFound);
     }
@@ -1989,11 +2047,13 @@ async fn delete_contract_rows(
     if contract_ids.is_empty() {
         return Ok(0);
     }
-    sqlx::query("DELETE FROM tag_attachments WHERE entity_type = 'contract' AND entity_id = ANY($1)")
-        .bind(&contract_ids)
-        .execute(pool)
-        .await
-        .map_err(Error::internal)?;
+    sqlx::query(
+        "DELETE FROM tag_attachments WHERE entity_type = 'contract' AND entity_id = ANY($1)",
+    )
+    .bind(&contract_ids)
+    .execute(pool)
+    .await
+    .map_err(Error::internal)?;
     sqlx::query("UPDATE simulation_runs SET contract_id = NULL WHERE project_id = $1 AND contract_id = ANY($2)")
         .bind(project_id)
         .bind(&contract_ids)

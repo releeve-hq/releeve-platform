@@ -66,6 +66,12 @@ function assetLabel(type: string | null, code: string | null, issuer: string | n
   return issuer ? `${code}:${truncateEntity(issuer, 6, 5)}` : code;
 }
 
+function displayAsset(value?: string | null) {
+  if (!value) return null;
+  if (value === "CALL") return value;
+  return value.split(":", 1)[0] || value;
+}
+
 function operationAsset(operation: ClassicOperation, prefix: "source_" | "") {
   return assetLabel(
     textField(operation, `${prefix}asset_type`),
@@ -224,7 +230,7 @@ function EntityAnchor({ network, value, type, className }: { network: string; va
   );
 }
 
-function TopBar({ network, kind, value }: { network: string; kind: "tx" | "account" | "contract" | "ledger"; value: string | number }) {
+function TopBar({ network, kind, value, onBack }: { network: string; kind: "tx" | "account" | "contract" | "ledger"; value: string | number; onBack?: () => void }) {
   const share = async () => {
     const url = window.location.href;
     if (navigator.share) await navigator.share({ title: `Releeve ${kind}`, url });
@@ -232,9 +238,7 @@ function TopBar({ network, kind, value }: { network: string; kind: "tx" | "accou
   };
   return (
     <div className="rx-topbar">
-      <Link className="rx-back-btn" href="/home">
-        <ArrowLeft /> Back to project
-      </Link>
+      {onBack ? <button className="rx-back-btn" type="button" onClick={onBack}><ArrowLeft /> Back to project</button> : <Link className="rx-back-btn" href="/home"><ArrowLeft /> Back to project</Link>}
       <div className="rx-tb-search"><GlobalExplorerSearch network={network} compact /></div>
       <div className="rx-topbar-actions"><button type="button" className="rx-share-item" onClick={() => void share()}><Share2 /> Share</button><a className="rx-icon-only-btn" href={stellarExpertRoute(network, kind, value)} target="_blank" rel="noreferrer" title="View in explorer" aria-label="View in explorer"><Globe2 /></a></div>
       <style jsx>{`.rx-tb-search{border:0!important;background:transparent!important;padding:0!important}.rx-share-item{border:0;background:transparent;font:inherit}.rx-icon-only-btn{padding:5px}`}</style>
@@ -265,6 +269,10 @@ function ExplorerDesignStyles() {
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="rx-detail-row"><span className="rx-dl">{label}</span><span className="rx-dv">{children}</span></div>;
+}
+
+function StellarNetworkLabel({ network }: { network: string }) {
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 7, textTransform: "capitalize" }}><img src="/stellar-logo.jpg" alt="" width={14} height={14} style={{ width: 14, height: 14, display: "block", objectFit: "cover", mixBlendMode: "screen", filter: "invert(1)" }} />{network}</span>;
 }
 
 export function TransactionExplorerDesign({ tx, network }: { tx: ExplorerTxDetail; network: string }) {
@@ -312,7 +320,7 @@ export function TransactionExplorerDesign({ tx, network }: { tx: ExplorerTxDetai
         <div className="rx-subheader-right">
           <div className="rx-dev-toggle"><label className="rx-switch"><input type="checkbox" checked={devMode} onChange={(event) => { const enabled = event.target.checked; setDevMode(enabled); if (!enabled) setTab("summary"); }} /><span className="rx-slider" /></label><span className="rx-dev-label">Dev mode</span></div>
           <Link className="rx-btn rx-btn-outline" href={`/simulator?${simulatorParams.toString()}&environment=new`}>Run on Environment</Link>
-          <Link className="rx-btn rx-btn-outline" href={`/simulator?${simulatorParams.toString()}`}>Re-Simulate</Link>
+          <Link className="rx-btn rx-btn-green" href={`/simulator?${simulatorParams.toString()}`}>Re-Simulate</Link>
           <Link className="rx-btn rx-btn-green" href={`/debugger?tx=${encodeURIComponent(tx.hash)}`}>Debug</Link>
         </div>
       </div>
@@ -320,7 +328,7 @@ export function TransactionExplorerDesign({ tx, network }: { tx: ExplorerTxDetai
         <div className="rx-detail-grid">
           <div className="rx-detail-col">
             <DetailRow label="Hash"><span className="mono">{tx.hash}</span></DetailRow>
-            <DetailRow label="Network"><span className="rx-net-dot" />{tx.network}</DetailRow>
+            <DetailRow label="Network"><StellarNetworkLabel network={tx.network} /></DetailRow>
             <DetailRow label="Status"><span className={tx.status.toLowerCase() === "success" ? "rx-success" : "rx-failed"}>{tx.status.toLowerCase() === "success" ? <Check /> : <X />}{tx.status}</span></DetailRow>
             <DetailRow label="Ledger"><EntityAnchor network={network} value={tx.ledger} type="ledger" /></DetailRow>
             <DetailRow label="Timestamp">{formatTimestamp(tx.timestamp)}</DetailRow>
@@ -395,7 +403,7 @@ function ResourcePanel({ tx }: { tx: ExplorerTxDetail }) {
   return <div className="rx-card"><div className="rx-card-header-row"><span>Resource usage <span className="rx-dim">(measured against declared Soroban limits)</span></span></div><ResourceUsagePanel usage={tx.resource_usage} /></div>;
 }
 
-export function WalletExplorerDesign({ account, network, address }: { account: ExplorerAccountDetail; network: string; address: string }) {
+export function WalletExplorerDesign({ account, network, address, embedded = false, onBack }: { account: ExplorerAccountDetail; network: string; address: string; embedded?: boolean; onBack?: () => void }) {
   const [tab, setTab] = useState("transactions");
   const [limit, setLimit] = useState(20);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -403,6 +411,7 @@ export function WalletExplorerDesign({ account, network, address }: { account: E
   const [history, setHistory] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -441,32 +450,41 @@ export function WalletExplorerDesign({ account, network, address }: { account: E
     setCursor(null);
     setHistory([]);
   };
+  const copyAddress = async () => {
+    await navigator.clipboard.writeText(address);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
 
   return (
-    <div className="rx-root">
+    <div className={`rx-root ${embedded ? "rx-root-embedded" : ""}`}>
       <ExplorerDesignStyles />
-      <TopBar network={network} kind="account" value={address} />
+      <style>{`.rx-wallet-identity{display:flex;flex-direction:column;gap:3px;min-width:0}.rx-wallet-identity .rx-waddr{display:block}.rx-address-line{position:relative;display:inline-flex;align-items:center;flex-wrap:nowrap;gap:7px;min-width:0;white-space:nowrap}.rx-address-line .rx-waddr{min-width:0;overflow:hidden;text-overflow:ellipsis}.rx-address-line .rx-icon-only-btn{width:16px;height:16px;flex:0 0 16px;padding:0;color:var(--text-faint);border:0;background:transparent}.rx-address-line .rx-icon-only-btn svg{width:14px;height:14px}.rx-address-line .rx-icon-only-btn:hover{color:var(--text)}.rx-root-embedded .rx-copy-tip{display:none}.rx-root-embedded{min-height:0;background:transparent}.rx-root-embedded .rx-page{max-width:none;padding:0}.rx-root-embedded .rx-subheader{padding:0 0 16px}.rx-root-embedded .rx-chat-fab{display:none}.rx-root-embedded .rx-back-btn{width:44px;height:30px;justify-content:center;align-self:center;border:1px solid var(--border);border-radius:6px;background:var(--panel);font-size:0}.rx-root-embedded .rx-back-btn svg{width:14px;height:14px}.rx-root-embedded .rx-subheader-right .rx-share-item{height:34px;padding:0 12px;border:1px solid var(--border);border-radius:7px;background:var(--panel);font:inherit;font-size:12.5px;font-weight:600}`}</style>
+      <style>{`.rx-root-embedded{position:relative;top:-14px;margin:0 -36px}.rx-root-embedded .rx-page{padding:0 36px 60px}.rx-root-embedded .rx-subheader{padding:0 36px 16px;border-bottom:1px solid var(--border)}@media(max-width:899px){.rx-root-embedded{top:-3px;margin:0 -3px}.rx-root-embedded .rx-page{padding:0 3px 45px}.rx-root-embedded .rx-subheader{padding-inline:3px}}`}</style>
+      {!embedded && <TopBar network={network} kind="account" value={address} />}
       <div className="rx-subheader">
         <div className="rx-subheader-left">
+          {embedded && onBack && <button className="rx-back-btn" type="button" onClick={onBack}><ArrowLeft /> Back to project</button>}
           <div className="rx-wallet-crumb">
             <EntityIdenticon value={address} kind={isContractAddress(address) ? "contract" : "account"} size={26} />
-            <span className="rx-wtag">Wallet</span>
-            <span className="rx-waddr mono">{truncateEntity(address, 8, 6)}</span>
-            <button className="rx-icon-only-btn" type="button" aria-label="Copy wallet address" onClick={() => navigator.clipboard.writeText(address)}><Copy /></button>
+            <span className="rx-wallet-identity">
+              <span className="rx-wtag">Wallet</span>
+              <span className="rx-address-line"><span className="rx-waddr mono">{truncateEntity(address, 8, 6)}</span><button className="rx-icon-only-btn" type="button" aria-label="Copy wallet address" title={copied ? "Copied" : "Copy wallet address"} onClick={() => void copyAddress()}>{copied ? <Check /> : <Copy />}</button></span>
+            </span>
           </div>
         </div>
         <div className="rx-subheader-right">
-          <span className="rx-icon-btn-round"><MoreHorizontal size={15} /></span>
-          <button className="rx-btn rx-btn-outline" type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>
+          <button className={embedded ? "rx-share-item" : "rx-btn rx-btn-outline"} type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>
+          {embedded && <a className="rx-btn rx-btn-outline" href={stellarExpertRoute(network, "account", address)} target="_blank" rel="noreferrer"><Globe2 /> Explorer</a>}
           <button className="rx-btn rx-btn-outline" type="button"><Bell /> Create Alert</button>
-          <button className="rx-btn rx-btn-outline" type="button">Add to Project</button>
+          {!embedded && <button className="rx-btn rx-btn-outline" type="button">Add to Project</button>}
           <Link className="rx-btn rx-btn-outline" href={`/simulator?impersonate=${encodeURIComponent(address)}`}>Impersonate</Link>
-          <Link className="rx-btn rx-btn-purple" href={`/simulator?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
+          <Link className="rx-btn rx-btn-green" href={`/simulator?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
         </div>
       </div>
       <div className="rx-page">
         <div className="rx-stat-row-wallet">
-          <div className="rx-sw-item"><span className="rx-sw-label">Network</span><span className="rx-sw-value"><span className="rx-sw-net-dot" />{network}</span></div>
+          <div className="rx-sw-item"><span className="rx-sw-label">Network</span><span className="rx-sw-value"><StellarNetworkLabel network={network} /></span></div>
           <div className="rx-sw-item"><span className="rx-sw-label">XLM balance</span><span className="rx-sw-value">{account.xlm_balance ?? "Not indexed"}</span></div>
           <div className="rx-sw-item"><span className="rx-sw-label">USD value</span><span className="rx-sw-value">{account.usd_value ?? "Not available"}</span></div>
           <div className="rx-sw-item"><span className="rx-sw-label">Token holdings</span><span className="rx-sw-value">{account.token_holdings.length}<span className="rx-sub">assets</span></span></div>
@@ -482,7 +500,7 @@ export function WalletExplorerDesign({ account, network, address }: { account: E
           <div className="rx-wallet-table-wrap">
             <table className="rx-wtable">
               <thead><tr><th>Asset</th><th>Balance</th><th>USD value</th><th>Network</th></tr></thead>
-              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{holding.asset}</td><td className="mono">{holding.balance ?? "Not indexed"}</td><td>{holding.usd_value ?? "Not available"}</td><td>{network}</td></tr>) : <tr><td colSpan={4} className="rx-empty">No token holdings indexed for this wallet yet.</td></tr>}</tbody>
+              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{displayAsset(holding.asset)}</td><td className="mono">{holding.balance ?? "Not indexed"}</td><td>{holding.usd_value ?? "Not available"}</td><td><StellarNetworkLabel network={network} /></td></tr>) : <tr><td colSpan={4} className="rx-empty">No token holdings indexed for this wallet yet.</td></tr>}</tbody>
             </table>
           </div>
         ) : (
@@ -497,7 +515,7 @@ export function WalletExplorerDesign({ account, network, address }: { account: E
                     <td className="mono">{tx.source_account ? <EntityAnchor network={network} value={tx.source_account} type="address" /> : "Not indexed"}</td>
                     <td className="mono">{tx.destination_account ? <EntityAnchor network={network} value={tx.destination_account} type="address" /> : <span className="rx-dim">No transfer</span>}</td>
                     <td>{tx.call_trace?.root_function ? <span>{tx.call_trace.root_function}<span className="rx-dim"> ({tx.call_trace.count} call{tx.call_trace.count === 1 ? "" : "s"})</span></span> : tx.operation_type}</td>
-                    <td>{tx.asset === "CALL" ? "Contract call" : tx.amount ? `${tx.amount} ${tx.asset ?? ""}` : "No asset transfer"}</td>
+                    <td>{tx.asset === "CALL" ? "Contract call" : tx.amount ? `${tx.amount} ${displayAsset(tx.asset) ?? ""}` : "No asset transfer"}</td>
                   </tr>
                 )) : <tr><td colSpan={6} className="rx-empty">No transactions indexed for this wallet yet.</td></tr>}
               </tbody>
@@ -511,7 +529,7 @@ export function WalletExplorerDesign({ account, network, address }: { account: E
           <button className="rx-btn rx-btn-outline" type="button" disabled={!canGoNext} onClick={goNext}>Next</button>
         </div>
       </div>
-      <div className="rx-chat-fab"><Search /></div>
+      {!embedded && <div className="rx-chat-fab"><Search /></div>}
     </div>
   );
 }

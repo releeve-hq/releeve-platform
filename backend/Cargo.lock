@@ -81,6 +81,7 @@ dependencies = [
  "sim",
  "source-lens-client",
  "sqlx",
+ "stellar-xdr",
  "test-support",
  "tokio",
  "tower",

@@ -13,6 +13,7 @@ import {
   Play,
   Share2,
 } from "lucide-react";
+import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
 import {
   getContractEvents,
@@ -27,6 +28,7 @@ import {
 import {
   addressRoute,
   explorerRoutes,
+  isContractAddress,
   stellarExpertRoute,
   truncateEntity,
 } from "@/lib/explorer-routes";
@@ -41,11 +43,13 @@ function ExplorerEntityShell({
   network,
   kind,
   value,
+  embedded = false,
   children,
 }: {
   network: string;
   kind: "ledger" | "contract";
   value: string | number;
+  embedded?: boolean;
   children: React.ReactNode;
 }) {
   const share = async () =>
@@ -53,8 +57,8 @@ function ExplorerEntityShell({
       ? navigator.share({ title: `Releeve ${kind}`, url: window.location.href })
       : navigator.clipboard.writeText(window.location.href);
   return (
-    <main className="entity-root">
-      <header className="entity-top">
+    <main className={`entity-root ${embedded ? "entity-root-embedded" : ""}`}>
+      {!embedded && <header className="entity-top">
         <Link href="/home">
           <ArrowLeft /> Back to project
         </Link>
@@ -75,7 +79,7 @@ function ExplorerEntityShell({
             <Globe2 />
           </a>
         </div>
-      </header>
+      </header>}
       {children}
       <EntityStyles />
     </main>
@@ -84,9 +88,14 @@ function ExplorerEntityShell({
 
 function EntityStyles() {
   return (
+    <>
     <style>{`
-    .entity-root{--bg:#1d1918;--panel:#262221;--border:#4a423c;--text:#f2efec;--dim:#9b9490;--faint:#716a66;--green:#2fa84f;--signal:#a3ff5f;min-height:100dvh;background:var(--bg);color:var(--text);font-family:var(--font-inter),system-ui,sans-serif;font-size:13px}.entity-root *{box-sizing:border-box}.entity-root a{color:inherit;text-decoration:none}.entity-top{height:65px;display:flex;align-items:center;gap:18px;padding:0 28px;border-bottom:1px solid var(--border)}.entity-top>a{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}.entity-top svg{width:14px;height:14px}.entity-search{width:min(520px,100%);margin:auto}.entity-actions{display:flex;align-items:center;gap:13px}.entity-actions button,.entity-actions a{display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--dim);font:inherit;font-size:12px;cursor:pointer}.entity-subhead{min-height:65px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 28px;border-bottom:1px solid var(--border)}.entity-title{display:flex;align-items:center;gap:9px;min-width:0}.entity-title>span:first-child{color:var(--dim);font-size:15px}.entity-title h1{margin:0;font:600 13px var(--font-mono),monospace;overflow:hidden;text-overflow:ellipsis}.entity-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.entity-button{height:34px;display:inline-flex;align-items:center;gap:6px;padding:0 11px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);font:600 11px inherit;cursor:pointer}.entity-button.primary{background:#6e56cf;border-color:#6e56cf}.entity-button svg{width:13px}.entity-page{max-width:1400px;margin:auto;padding:25px 28px 60px}.entity-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 58px}.entity-field{display:grid;grid-template-columns:145px minmax(0,1fr);gap:15px;align-items:baseline;padding:7px 0}.entity-field dt{color:var(--faint);font-size:12px}.entity-field dd{min-width:0;margin:0;overflow-wrap:anywhere}.entity-field code{font:11px var(--font-mono),monospace}.entity-field a{text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:3px}.entity-tabs{display:flex;gap:5px;margin-top:25px;padding-top:18px;border-bottom:1px solid var(--border)}.entity-tabs button{height:38px;padding:0 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:transparent;color:var(--dim);font:inherit;font-size:11.5px;cursor:pointer}.entity-tabs button.active{border-color:var(--border);background:var(--bg);color:var(--text);font-weight:700;margin-bottom:-1px}.entity-table-wrap{margin-top:18px;border:1px solid var(--border);border-radius:7px;overflow:auto}.entity-table-head{min-height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--border)}.entity-table-head h2{margin:0;font-size:12.5px}.entity-table-head input,.entity-table-head select{height:30px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);padding:0 8px;font:inherit;font-size:10.5px}.entity-table{width:100%;min-width:850px;border-collapse:collapse}.entity-table th,.entity-table td{text-align:left;padding:11px 13px;border-bottom:1px solid var(--border);font-size:11px}.entity-table th{color:var(--faint);font-size:9.5px}.entity-table td{color:var(--dim)}.entity-table tr:last-child td{border-bottom:0}.entity-table code{font:10.5px var(--font-mono),monospace}.entity-table a{text-decoration:underline;text-decoration-color:var(--border)}.status-ok{color:var(--green)}.entity-empty{padding:28px 14px;color:var(--faint);font-size:11.5px}.entity-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px}.entity-pagination button,.entity-pagination select{height:30px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--text);font:inherit;font-size:10px;padding:0 8px}.entity-pagination button:disabled{opacity:.4}.verify-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;padding:12px 14px;border:1px solid #536c48;border-radius:6px;background:#22291f}.verify-banner>div{display:flex;align-items:center;gap:10px}.verify-banner svg{width:17px;color:var(--signal)}.verify-banner strong,.verify-banner span{display:block}.verify-banner strong{font-size:11.5px}.verify-banner span{margin-top:3px;color:var(--dim);font-size:10px}.json-cell{max-width:460px;max-height:170px;overflow:auto;white-space:pre-wrap;font:10px/1.5 var(--font-mono),monospace}@media(max-width:760px){.entity-top{height:auto;min-height:65px;align-items:flex-start;flex-wrap:wrap;padding:14px}.entity-search{order:3;flex-basis:100%}.entity-actions{margin-left:auto}.entity-subhead{align-items:flex-start;flex-direction:column;padding:14px}.entity-page{padding:20px 14px 45px}.entity-grid{grid-template-columns:1fr}.entity-field{grid-template-columns:112px minmax(0,1fr)}.entity-tabs{overflow-x:auto}.verify-banner{align-items:flex-start;flex-direction:column}}
+    .entity-root{--bg:#1d1918;--panel:#262221;--border:#4a423c;--text:#f2efec;--dim:#9b9490;--faint:#716a66;--green:#2fa84f;--signal:#a3ff5f;min-height:100dvh;background:var(--bg);color:var(--text);font-family:var(--font-inter),system-ui,sans-serif;font-size:13px}.entity-root *{box-sizing:border-box}.entity-root a{color:inherit;text-decoration:none}.entity-top{height:65px;display:flex;align-items:center;gap:18px;padding:0 28px;border-bottom:1px solid var(--border)}.entity-top>a{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}.entity-top svg{width:14px;height:14px}.entity-search{width:min(520px,100%);margin:auto}.entity-actions{display:flex;align-items:center;gap:13px}.entity-actions button,.entity-actions a{display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--dim);font:inherit;font-size:12px;cursor:pointer}.entity-subhead{min-height:65px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 28px;border-bottom:1px solid var(--border)}.entity-title{display:flex;align-items:center;gap:9px;min-width:0}.entity-title>span:first-child{color:var(--dim);font-size:15px}.entity-title h1{margin:0;font:600 13px var(--font-mono),monospace;overflow:hidden;text-overflow:ellipsis}.entity-identity{display:flex;flex-direction:column;gap:4px;min-width:0}.entity-identity>span{color:var(--dim);font-size:15px}.entity-address-line{display:flex;align-items:center;gap:7px;min-width:0}.entity-address-line h1{min-width:0;white-space:nowrap}.entity-copy-inline{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:0 0 16px;padding:0;border:0;background:transparent;color:var(--dim);cursor:pointer}.entity-copy-inline:hover{color:var(--text)}.entity-copy-inline svg{width:14px;height:14px}.entity-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.entity-button{height:34px;display:inline-flex;align-items:center;gap:6px;padding:0 11px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);font:600 11px inherit;cursor:pointer}.entity-button.primary{background:#2fa84f;border-color:#2fa84f;color:#fff}.entity-button svg{width:13px}.entity-page{max-width:1400px;margin:auto;padding:25px 28px 60px}.entity-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 58px}.entity-field{display:grid;grid-template-columns:145px minmax(0,1fr);gap:15px;align-items:baseline;padding:7px 0}.entity-field dt{color:var(--faint);font-size:12px}.entity-field dd{min-width:0;margin:0;overflow-wrap:anywhere}.entity-field code{font:11px var(--font-mono),monospace}.entity-field a{text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:3px}.entity-tabs{display:flex;gap:5px;margin-top:25px;padding-top:18px;border-bottom:1px solid var(--border)}.entity-tabs button{height:38px;padding:0 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:transparent;color:var(--dim);font:inherit;font-size:11.5px;cursor:pointer}.entity-tabs button.active{border-color:var(--border);background:var(--bg);color:var(--text);font-weight:700;margin-bottom:-1px}.entity-table-wrap{margin-top:18px;border:1px solid var(--border);border-radius:7px;overflow:auto}.entity-table-head{min-height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--border)}.entity-table-head h2{margin:0;font-size:12.5px}.entity-table-head input,.entity-table-head select{height:30px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);padding:0 8px;font:inherit;font-size:10.5px}.entity-table{width:100%;min-width:850px;border-collapse:collapse}.entity-table th,.entity-table td{text-align:left;padding:11px 13px;border-bottom:1px solid var(--border);font-size:11px}.entity-table th{color:var(--faint);font-size:9.5px}.entity-table td{color:var(--dim)}.entity-table tr:last-child td{border-bottom:0}.entity-table code{font:10.5px var(--font-mono),monospace}.entity-table a{text-decoration:underline;text-decoration-color:var(--border)}.status-ok{color:var(--green)}.entity-empty{padding:28px 14px;color:var(--faint);font-size:11.5px}.entity-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px}.entity-pagination button,.entity-pagination select{height:30px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--text);font:inherit;font-size:10px;padding:0 8px}.entity-pagination button:disabled{opacity:.4}.verify-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;padding:12px 14px;border:1px solid #536c48;border-radius:6px;background:#22291f}.verify-banner>div{display:flex;align-items:center;gap:10px}.verify-banner svg{width:17px;color:var(--signal)}.verify-banner strong,.verify-banner span{display:block}.verify-banner strong{font-size:11.5px}.verify-banner span{margin-top:3px;color:var(--dim);font-size:10px}.json-cell{max-width:460px;max-height:170px;overflow:auto;white-space:pre-wrap;font:10px/1.5 var(--font-mono),monospace}@media(max-width:760px){.entity-top{height:auto;min-height:65px;align-items:flex-start;flex-wrap:wrap;padding:14px}.entity-search{order:3;flex-basis:100%}.entity-actions{margin-left:auto}.entity-subhead{align-items:flex-start;flex-direction:column;padding:14px}.entity-page{padding:20px 14px 45px}.entity-grid{grid-template-columns:1fr}.entity-field{grid-template-columns:112px minmax(0,1fr)}.entity-tabs{overflow-x:auto}.verify-banner{align-items:flex-start;flex-direction:column}.entity-address-line h1{max-width:calc(100vw - 110px);overflow:hidden;text-overflow:ellipsis}}
+    .verify-banner{border-color:var(--border);background:var(--bg)}.verify-banner svg{color:var(--dim)}.entity-identity{gap:3px}.entity-identity>span{font-size:14px}.entity-address-line h1{font:600 13px var(--font-mono),monospace;overflow:hidden;text-overflow:ellipsis}.entity-address-cell{display:inline-flex;align-items:center;gap:6px}.entity-address-cell svg{flex:0 0 auto}.contract-transactions-table thead th{background:var(--panel);font-size:12.5px;color:var(--text);font-weight:700}.entity-root-embedded{position:relative;top:-12px;min-height:0;margin:0 -36px;background:transparent}.entity-root-embedded .entity-page{max-width:none;padding:0 36px 32px}.entity-root-embedded .entity-subhead{padding:0 36px 16px;min-height:48px;border-bottom:1px solid var(--border)}.entity-root-embedded .entity-embedded-back{width:44px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer}.entity-root-embedded .entity-embedded-back svg{width:14px;height:14px}.entity-root-embedded .entity-embedded-back span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.entity-root-embedded .entity-subhead{gap:14px}.entity-root-embedded .entity-title{flex:1}.entity-root-embedded .entity-buttons{justify-content:flex-end}.entity-root-embedded .entity-button{height:34px}
   `}</style>
+    <style>{`.entity-root-embedded{top:-14px}.verify-banner{margin-top:18px}`}</style>
+    <style>{`@media(max-width:899px){.entity-root-embedded{top:-3px;margin:0 -3px}.entity-root-embedded .entity-page{padding-inline:3px}.entity-root-embedded .entity-subhead{padding-inline:3px}}`}</style>
+    </>
   );
 }
 
@@ -100,7 +109,7 @@ function TransactionTable({
   loading: boolean;
 }) {
   return (
-    <table className="entity-table">
+    <table className="entity-table contract-transactions-table">
       <thead>
         <tr>
           <th>Transaction hash</th>
@@ -127,13 +136,19 @@ function TransactionTable({
               </td>
               <td>
                 <Link href={addressRoute(network, tx.source_account)}>
-                  <code>{truncateEntity(tx.source_account, 6, 5)}</code>
+                  <span className="entity-address-cell">
+                    <EntityIdenticon value={tx.source_account} kind="account" size={16} />
+                    <code>{truncateEntity(tx.source_account, 6, 5)}</code>
+                  </span>
                 </Link>
               </td>
               <td>
                 {tx.destination_account ? (
                   <Link href={addressRoute(network, tx.destination_account)}>
-                    <code>{truncateEntity(tx.destination_account, 6, 5)}</code>
+                    <span className="entity-address-cell">
+                      <EntityIdenticon value={tx.destination_account} kind={isContractAddress(tx.destination_account) ? "contract" : "account"} size={16} />
+                      <code>{truncateEntity(tx.destination_account, 6, 5)}</code>
+                    </span>
                   </Link>
                 ) : (
                   "No transfer"
@@ -399,14 +414,19 @@ export function ContractExplorerDesign({
   contract,
   network,
   address,
+  embedded = false,
+  onBack,
 }: {
   contract: ExplorerContractDetail;
   network: string;
   address: string;
+  embedded?: boolean;
+  onBack?: () => void;
 }) {
   const [tab, setTab] = useState<"transactions" | "events" | "overview">(
     "transactions",
   );
+  const [copied, setCopied] = useState(false);
   const txLoader = useState(
     () => (limit: number, cursor: string | null) =>
       getContractTransactions(network, address, limit, cursor),
@@ -426,22 +446,36 @@ export function ContractExplorerDesign({
       active = false;
     };
   }, [address, network, tab]);
+  const copyAddress = async () => {
+    await navigator.clipboard.writeText(address);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
   return (
-    <ExplorerEntityShell network={network} kind="contract" value={address}>
+    <ExplorerEntityShell network={network} kind="contract" value={address} embedded={embedded}>
       <section className="entity-subhead">
+        {embedded && onBack && <button className="entity-embedded-back" type="button" aria-label="Back to contracts" onClick={onBack}><ArrowLeft /><span>Back to contracts</span></button>}
         <div className="entity-title">
-          <span>Contract</span>
-          <h1>{address}</h1>
-          <button
-            className="entity-button"
-            type="button"
-            aria-label="Copy contract address"
-            onClick={() => void navigator.clipboard.writeText(address)}
-          >
-            <Copy />
-          </button>
+          <EntityIdenticon value={address} kind="contract" size={26} />
+          <div className="entity-identity">
+            <span>{contract.name || "Contract"}</span>
+            <div className="entity-address-line">
+              <h1 title={address}>{truncateEntity(address, 8, 6)}</h1>
+              <button
+                className="entity-copy-inline"
+                type="button"
+                aria-label="Copy contract address"
+                title={copied ? "Copied" : "Copy contract address"}
+                onClick={() => void copyAddress()}
+              >
+                {copied ? <Check /> : <Copy />}
+              </button>
+            </div>
+          </div>
         </div>
         <div className="entity-buttons">
+          {embedded && <button className="entity-button" type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>}
+          {embedded && <a className="entity-button" href={stellarExpertRoute(network, "contract", address)} target="_blank" rel="noreferrer"><Globe2 /> Explorer</a>}
           <Link
             className="entity-button"
             href={`/alerts?contract=${encodeURIComponent(address)}`}
@@ -543,9 +577,6 @@ export function ContractExplorerDesign({
         {tab === "transactions" ? (
           <>
             <div className="entity-table-wrap">
-              <div className="entity-table-head">
-                <h2>Contract transactions</h2>
-              </div>
               {paging.error ? (
                 <div className="entity-empty">{paging.error}</div>
               ) : (

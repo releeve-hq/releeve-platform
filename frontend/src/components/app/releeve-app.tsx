@@ -565,7 +565,7 @@ function ProjectSwitcher({
         <button key={project.id} type="button" onClick={() => onSelect(project)} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 9, padding: "12px 10px", margin: "8px", border: 0, borderRadius: 7, background: project.slug === activeProject ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
           <span style={{ width: 24, height: 24, borderRadius: "50%", background: "#111", color: "#f2efec", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700 }}>{project.name.slice(0, 1).toUpperCase()}</span>
           <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
-          <span style={{ color: "var(--text-faint)", fontSize: 11 }}>{project.network}</span>
+          <span style={{ color: "var(--text-faint)", fontSize: 11 }}><StellarNetworkLabel network={project.network} size={11} /></span>
         </button>
       ))}
       <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
@@ -584,6 +584,10 @@ function StellarLogo({ size = 14 }: { size?: number }) {
   return (
     <img src="/stellar-logo.jpg" alt="Stellar" width={size} height={size} style={{ width: size, height: size, display: "block", flexShrink: 0, objectFit: "cover", mixBlendMode: "screen", filter: "invert(1)" }} />
   );
+}
+
+function StellarNetworkLabel({ network, size = 13 }: { network: string; size?: number }) {
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 6, textTransform: "capitalize" }}><StellarLogo size={size} />{network}</span>;
 }
 
 function NetworkMenu({
@@ -644,7 +648,7 @@ function NetworkMenu({
             fontSize: 13,
           }}
         >
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: network === n.key ? "var(--green)" : "var(--text-faint)", flexShrink: 0, display: "inline-block" }} />
+          <StellarLogo size={13} />
           {n.label}
           {network === n.key && (
             <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" fill="none" width={12} height={12} style={{ marginLeft: "auto" }}>
@@ -1320,7 +1324,7 @@ function WalletsPage() {
             </svg>{" "}
             Impersonate
           </button>
-          <button className="btn-ex btn-ex-purple">
+          <button className="btn-ex btn-ex-green">
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>{" "}
@@ -2362,8 +2366,8 @@ export default function ReleeveApp() {
         </div>
 
         {/* ── Crumb / account bar ── */}
-        <div className="db-crumbbar" style={{ position: "relative", zIndex: 300, overflow: "visible", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", borderBottom: "1px solid var(--border)", gap: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: 1, overflow: "visible" }}>
+        <div className="db-crumbbar" style={{ position: "relative", zIndex: 300, overflow: "visible", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", borderBottom: "1px solid var(--border)", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: "0 1 auto", overflow: "visible" }}>
             {/* Workspace switcher */}
             <div data-dashboard-popover style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
               <button
@@ -2434,6 +2438,12 @@ export default function ReleeveApp() {
             <span style={{ color: "var(--text-dim)", fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{CRUMBS[page]}</span>
           </div>
 
+          {page !== "home" && (
+            <div className="db-crumb-search" style={{ flex: "1 1 420px", maxWidth: 560, minWidth: 260 }}>
+              <GlobalExplorerSearch network={network} compact />
+            </div>
+          )}
+
           {/* Right: network buttons */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
             <div data-dashboard-popover style={{ position: "relative" }}>
@@ -2461,8 +2471,7 @@ export default function ReleeveApp() {
                   cursor: "pointer",
                 }}
               >
-                <StellarLogo size={13} />
-                {network[0].toUpperCase() + network.slice(1)}{" "}
+                <StellarNetworkLabel network={network} size={13} />{" "}
                 <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none" width={12} height={12}>
                   <path d="M6 9l6 6 6-6" />
                 </svg>

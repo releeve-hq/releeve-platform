@@ -487,6 +487,148 @@ button.pw-row:hover {
   }
 }
 
+/* Final page-level treatments for empty alert and simulator entry states. */
+.pw-alert-empty {
+  display: none !important;
+}
+
+.pw-simulator-entry {
+  display: block;
+  min-height: 0;
+}
+
+.pw-simulator-entry .pw-simulator-hero {
+  position: relative;
+  display: block;
+  min-height: 0;
+  margin: -36px -36px 0;
+  padding: 28px 36px 24px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.pw-simulator-entry .pw-simulator-hero::after {
+  display: none;
+}
+
+.pw-simulator-entry .pw-simulator-hero > div {
+  max-width: none;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 18px;
+}
+
+.pw-simulator-entry .pw-simulator-hero .pw-empty-icon {
+  grid-row: 1 / span 3;
+  width: 46px;
+  height: 46px;
+}
+
+.pw-simulator-entry .pw-simulator-hero .pw-empty-icon svg {
+  width: 21px;
+  height: 21px;
+}
+
+.pw-simulator-entry .pw-simulator-hero h1 {
+  grid-column: 2;
+  margin: 0;
+  font-size: 20px;
+}
+
+.pw-simulator-entry .pw-simulator-hero p {
+  grid-column: 2;
+  max-width: 760px;
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.pw-simulator-entry .pw-simulator-hero .pw-button {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.pw-simulator-entry .pw-capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.pw-simulator-entry .pw-capability {
+  min-height: 132px;
+  padding: 18px;
+  border-right: 1px solid var(--border);
+}
+
+.pw-simulator-entry .pw-capability:last-child {
+  border-right: 0;
+}
+
+.pw-simulator-entry .pw-capability > svg {
+  color: var(--text-dim);
+}
+
+.pw-simulator-entry .pw-capability h3 {
+  margin: 10px 0 6px;
+}
+
+.pw-simulator-entry .pw-capability p {
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 680px) {
+  .pw-simulator-entry .pw-simulator-hero {
+    margin: -18px -14px 0;
+    padding: 22px 14px;
+  }
+
+  .pw-simulator-entry .pw-simulator-hero > div {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 4px 13px;
+  }
+
+  .pw-simulator-entry .pw-simulator-hero .pw-empty-icon {
+    grid-row: 1 / span 2;
+    width: 38px;
+    height: 38px;
+  }
+
+  .pw-simulator-entry .pw-simulator-hero h1,
+  .pw-simulator-entry .pw-simulator-hero p {
+    grid-column: 2;
+  }
+
+  .pw-simulator-entry .pw-simulator-hero .pw-button {
+    grid-column: 2;
+    grid-row: auto;
+    justify-self: start;
+    margin-top: 10px;
+  }
+
+  .pw-simulator-entry .pw-capabilities {
+    grid-template-columns: 1fr;
+  }
+
+  .pw-simulator-entry .pw-capability {
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .pw-simulator-entry .pw-capability:last-child {
+    border-bottom: 0;
+  }
+}
+
 .pw-header {
   position: relative;
   min-height: 134px;
@@ -524,6 +666,10 @@ button.pw-row:hover {
 }
 
 .pw-contracts-page .pw-empty {
+  display: none;
+}
+
+.pw-contracts-page .pw-header::after {
   display: none;
 }
 
@@ -1041,13 +1187,23 @@ button.pw-row:hover {
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
-.pw-clickable-row:hover,
-.pw-clickable-row:focus-visible {
-  border-color: color-mix(in srgb, var(--border) 58%, var(--text) 42%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, var(--text) 45%);
+.pw-wallets-page .pw-clickable-row:hover,
+.pw-contracts-page .pw-clickable-row:hover {
+  border-color: transparent;
+  box-shadow: none;
   background: color-mix(in srgb, var(--panel) 72%, var(--text) 8%);
   transform: translateY(-1px);
   outline: none;
+}
+
+.pw-wallets-page .pw-clickable-row:focus-visible,
+.pw-contracts-page .pw-clickable-row:focus-visible {
+  outline: 2px solid var(--text-faint);
+  outline-offset: -2px;
+}
+
+.pw-alert-empty {
+  display: none;
 }
 
 .pw-spin {
@@ -2457,4 +2613,15 @@ button.pw-row:hover {
     width: 100%;
     flex-direction: column;
   }
+}
+
+/* Keep these page overrides last because this stylesheet retains legacy page rules above. */
+.pw-alert-empty {
+  display: none !important;
+}
+
+.pw-simulator-entry {
+  display: block !important;
+  min-height: 0 !important;
+  grid-template-rows: none !important;
 }

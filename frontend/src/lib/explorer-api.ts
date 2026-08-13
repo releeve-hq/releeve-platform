@@ -128,6 +128,7 @@ export type ExplorerContractDetail = {
   address: string;
   network: string;
   tracked: boolean;
+  name?: string | null;
   type: string;
   current_wasm_hash?: string | null;
   verification: { status: string; type?: string | null; timestamp?: string | null };

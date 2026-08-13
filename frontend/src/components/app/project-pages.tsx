@@ -47,7 +47,10 @@ import {
 
 import { ApiError, api } from "@/lib/api";
 import { EntityIdenticon } from "@/components/explorer/entity-identicon";
+import { ContractExplorerDesign } from "@/components/explorer/entity-design-views";
+import { WalletExplorerDesign } from "@/components/explorer/explorer-design-views";
 import { getRecentLedgers, lookupExplorer } from "@/lib/explorer-api";
+import type { ExplorerAccountDetail, ExplorerContractDetail } from "@/lib/explorer-api";
 import { truncateEntity } from "@/lib/explorer-routes";
 
 import "./project-workflows.css";
@@ -236,7 +239,11 @@ function timeLabel(value?: string | null) {
 }
 
 function errorMessage(cause: unknown, fallback: string) {
-  if (cause instanceof Error) console.error(cause);
+  if (cause instanceof ApiError) return cause.message || fallback;
+  if (cause instanceof Error) {
+    console.error(cause);
+    return cause.message || fallback;
+  }
   return fallback;
 }
 
@@ -298,7 +305,8 @@ function Modal({ title, children, onClose, footer }: { title: string; children: 
 }
 
 function EmptyState({ icon, title, body, action }: { icon: ReactNode; title: string; body: string; action?: ReactNode }) {
-  return <div className="pw-empty"><div className="pw-empty-inner"><span className="pw-empty-icon">{icon}</span><h2>{title}</h2><p>{body}</p>{action}</div></div>;
+  const alertEmpty = title.toLowerCase().includes("alert") || body.toLowerCase().includes("monitoring rules are scoped");
+  return <div className={`pw-empty${alertEmpty ? " pw-alert-empty" : ""}`}><div className="pw-empty-inner"><span className="pw-empty-icon">{icon}</span><h2>{title}</h2><p>{body}</p>{action}</div></div>;
 }
 
 function CreatePrompt({ onAction, label }: { onAction: () => void; label: string }) {
@@ -334,7 +342,9 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const [walletVerified, setWalletVerified] = useState(false);
   const [verifyingWallet, setVerifyingWallet] = useState(false);
   const [walletVerifyError, setWalletVerifyError] = useState<string | null>(null);
+  const [walletSaveError, setWalletSaveError] = useState<string | null>(null);
   const [walletNetworkChecks, setWalletNetworkChecks] = useState<Record<WalletCheckNetwork, WalletNetworkCheck>>(() => emptyWalletNetworkChecks());
+  const [walletNetwork, setWalletNetwork] = useState<WalletCheckNetwork | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -389,18 +399,22 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const track = async (event: FormEvent) => {
     event.preventDefault();
     const path = scopePath(scope, "/accounts");
-    if (!path || !address.trim() || !walletVerified) return;
+    if (!path || !address.trim() || !walletVerified || !walletNetwork) return;
     setLoading(true);
     try {
-      await api.post(path, { address: address.trim(), name: walletName.trim() || "Wallet", tags: [] });
+      await api.post(path, { address: address.trim(), network: walletNetwork, name: walletName.trim() || "Wallet", tags: [] });
       setAddress("");
       setWalletName("Wallet");
       setWalletVerified(false);
+      setWalletNetwork(null);
       setShowAdd(false);
       setError(null);
+      setWalletSaveError(null);
       await load();
     } catch (cause) {
-      setError(errorMessage(cause, "Could not add this wallet."));
+      const message = errorMessage(cause, "Could not add this wallet.");
+      setWalletSaveError(message);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -410,6 +424,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
     if (!showAdd) return;
     const value = address.trim();
     setWalletVerified(false);
+    setWalletNetwork(null);
     setWalletVerifyError(null);
     if (!value) {
       setVerifyingWallet(false);
@@ -430,27 +445,27 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
       }));
       if (controller.signal.aborted) return;
       const nextChecks = Object.fromEntries(results) as Record<WalletCheckNetwork, WalletNetworkCheck>;
-      const activeNetwork = walletCheckNetworks.includes(scope.network as WalletCheckNetwork) ? scope.network as WalletCheckNetwork : null;
-      const activeExists = activeNetwork ? nextChecks[activeNetwork].exists : false;
-      const foundAnyNetwork = walletCheckNetworks.some((network) => nextChecks[network].exists);
+      const foundNetworks = walletCheckNetworks.filter((network) => nextChecks[network].exists);
+      const detectedNetwork = foundNetworks[0] ?? null;
       setWalletNetworkChecks(nextChecks);
-      setWalletVerified(activeExists);
-      setWalletVerifyError(foundAnyNetwork ? null : "This account was not found on mainnet or testnet.");
+      setWalletNetwork(detectedNetwork);
+      setWalletVerified(Boolean(detectedNetwork));
+      setWalletVerifyError(detectedNetwork ? null : "This account was not found on mainnet or testnet.");
       setVerifyingWallet(false);
     }, 300);
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [address, scope.network, showAdd]);
+  }, [address, showAdd]);
 
-  const openWallet = async (value: string) => {
+  const openWallet = async (value: string, network: string = scope.network) => {
     const base = scopePath(scope, `/accounts/${encodeURIComponent(value)}`);
     if (!base) return;
     setLoading(true);
     try {
-      const [summary, txPage] = await Promise.all([api.get<Record<string, unknown>>(base), api.get<CursorPage<ProjectTransaction>>(`${base}/transactions?limit=20`)]);
-      setSelected(summary); setTransactions(txPage); setTab("overview"); setError(null);
+      const [summary, txPage] = await Promise.all([api.get<Record<string, unknown>>(base), api.get<CursorPage<ProjectTransaction>>(`${base}/transactions?limit=20&network=${encodeURIComponent(network)}`)]);
+      setSelected({ ...summary, network }); setTransactions(txPage); setTab("overview"); setError(null);
     } catch (cause) { setError(errorMessage(cause, "Could not open this wallet.")); } finally { setLoading(false); }
   };
 
@@ -590,43 +605,12 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const selectedAddress = selected ? String(selected.address) : "";
   const holdings = Array.isArray(selected?.token_holdings) ? selected.token_holdings as Array<Record<string, unknown>> : [];
   const foundWalletNetworks = walletCheckNetworks.filter((network) => walletNetworkChecks[network].exists);
-  const activeWalletNetwork = walletCheckNetworks.includes(scope.network as WalletCheckNetwork) ? scope.network as WalletCheckNetwork : null;
 
   if (selected) {
+    const walletDetail = selected as unknown as ExplorerAccountDetail;
     return (
       <div className="pw-page pw-wallets-page">
-        <div className="pw-detail-head">
-          <div className="pw-inline">
-            <Button iconOnly aria-label="Back to wallets" onClick={() => setSelected(null)}><ArrowLeft size={16} /></Button>
-            <EntityIdenticon value={selectedAddress} kind="account" size={34} />
-            <div className="pw-detail-title">
-              <p>Wallet</p>
-              <h1 className="pw-mono">{selectedAddress}</h1>
-              <p>{scope.network} / shared project address book</p>
-            </div>
-          </div>
-          <div className="pw-actions">
-            <Button onClick={() => navigator.clipboard.writeText(selectedAddress)}><Copy size={14} /> Copy</Button>
-            <Button onClick={() => router.push(`/explorer/${scope.network}/account/${encodeURIComponent(selectedAddress)}`)}>Explorer</Button>
-            <Button primary onClick={() => router.push(`/simulator?impersonate=${encodeURIComponent(selectedAddress)}`)}><Play size={14} /> Simulate as wallet</Button>
-          </div>
-        </div>
-        <div className="pw-surface">
-          <div className="pw-stats">
-            <div className="pw-stat"><span>XLM balance</span><strong>{String(selected.xlm_balance ?? "Unavailable")}</strong></div>
-            <div className="pw-stat"><span>Assets</span><strong>{holdings.length}</strong></div>
-            <div className="pw-stat"><span>Network</span><strong>{String(selected.network ?? scope.network)}</strong></div>
-            <div className="pw-stat"><span>Project tracking</span><strong>{selected.tracked ? "Tracked" : "Not tracked"}</strong></div>
-          </div>
-          <div className="pw-tabs">
-            <button data-active={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
-            <button data-active={tab === "transactions"} onClick={() => setTab("transactions")}>Transactions</button>
-            <button data-active={tab === "assets"} onClick={() => setTab("assets")}>Assets</button>
-          </div>
-          {tab === "overview" && <div className="pw-panel-body"><div className="pw-kv"><span>Account ID</span><span className="pw-mono">{selectedAddress}</span><span>Network</span><span>{String(selected.network ?? scope.network)}</span><span>Source map</span><span>{String(selected.source_map_status ?? "not available")}</span><span>Last indexed activity</span><span>{transactions.data[0] ? timeLabel(transactions.data[0].timestamp) : "No indexed activity"}</span></div></div>}
-          {tab === "transactions" && <><TxRows page={transactions} network={scope.network} onOpen={(hash) => router.push(`/explorer/${scope.network}/transaction/${encodeURIComponent(hash)}`)} /><Pagination page={transactions} onPage={async (cursor) => { const path = scopePath(scope, `/accounts/${encodeURIComponent(selectedAddress)}/transactions?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`); if (path) setTransactions(await api.get(path)); }} /></>}
-          {tab === "assets" && <div className="pw-table">{holdings.length ? holdings.map((holding, index) => <div className="pw-row" style={{ gridTemplateColumns: "minmax(160px, 1fr) 180px 180px" }} key={index}><span className="pw-mono">{String(holding.asset ?? "XLM")}</span><span>{String(holding.balance ?? "Unavailable")}</span><span>{holding.usd_value ? `$${String(holding.usd_value)}` : "No price"}</span></div>) : <EmptyState icon={<CircleDollarSign size={22} />} title="No indexed balances" body="Asset balances will appear after this account has been observed by the indexer." />}</div>}
-        </div>
+        <WalletExplorerDesign account={walletDetail} network={String(walletDetail.network ?? scope.network)} address={selectedAddress} embedded onBack={() => setSelected(null)} />
       </div>
     );
   }
@@ -647,7 +631,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
             <Button iconOnly aria-label="Refresh wallets" title="Refresh wallets" disabled={loading || refreshing} onClick={() => void refreshList()}><RotateCcw className={refreshing ? "pw-spin" : ""} size={15} /></Button>
             <Button iconOnly aria-label="Tag selected wallets" title="Tag selected wallets" disabled={!selectedVisible.length} onClick={() => { setBulkTagging(true); setTagTarget(null); setTagName(""); }}><Tag size={15} /></Button>
             <Button iconOnly danger aria-label="Delete selected wallets" title="Delete selected wallets" disabled={!selectedVisible.length || loading} onClick={() => { setDeleteTargets(null); setDeleteConfirm(true); }}><Trash2 size={15} /></Button>
-            <Button onClick={() => { setAddress(""); setWalletName("Wallet"); setWalletVerified(false); setWalletVerifyError(null); setShowAdd(true); }}><Plus size={15} /> Add wallet</Button>
+            <Button onClick={() => { setAddress(""); setWalletName("Wallet"); setWalletVerified(false); setWalletNetwork(null); setWalletVerifyError(null); setShowAdd(true); }}><Plus size={15} /> Add wallet</Button>
           </div>
         </div>
 
@@ -665,7 +649,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
               const tags = walletTagNames(entity);
               const label = entity.name?.trim() || "Wallet";
               return (
-                <div className="pw-row pw-wallet-row pw-clickable-row" role="button" tabIndex={0} style={{ gridTemplateColumns: walletColumns }} key={entity.address} onClick={() => void openWallet(entity.address)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openWallet(entity.address); } }}>
+                <div className="pw-row pw-wallet-row pw-clickable-row" role="button" tabIndex={0} style={{ gridTemplateColumns: walletColumns }} key={entity.address} onClick={() => void openWallet(entity.address, entity.network || scope.network)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openWallet(entity.address, entity.network || scope.network); } }}>
                   <span className="pw-select-cell" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${entity.address}`} checked={selectedWallets.has(entity.address)} onChange={() => toggleWallet(entity.address)} /></span>
                   <div className="pw-entity-cell">
                     <EntityIdenticon value={entity.address} kind="account" size={28} />
@@ -696,7 +680,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
       <Pagination page={page} onPage={load} />
 
       {showAdd && (
-        <Modal title="Add wallet" onClose={() => setShowAdd(false)} footer={<><Button onClick={() => setShowAdd(false)}>Cancel</Button><Button primary disabled={loading || verifyingWallet || !walletVerified || !address.trim()} onClick={() => document.getElementById("add-wallet-form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))}>{(loading || verifyingWallet) && <LoaderCircle size={14} />} Add wallet</Button></>}>
+        <Modal title="Add wallet" onClose={() => setShowAdd(false)} footer={<><Button onClick={() => setShowAdd(false)}>Cancel</Button><Button type="submit" form="add-wallet-form" primary disabled={loading || verifyingWallet || !walletVerified || !walletNetwork || !address.trim()}>{(loading || verifyingWallet) && <LoaderCircle size={14} />} Add wallet</Button></>}>
           <form id="add-wallet-form" onSubmit={track}>
             <label className="pw-label">Stellar account ID<input autoFocus className="pw-field pw-mono" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="G..." /></label>
             {address.trim() && (verifyingWallet || walletCheckNetworks.some((network) => walletNetworkChecks[network].exists)) && (
@@ -704,9 +688,9 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                 {walletCheckNetworks.filter((network) => verifyingWallet || walletNetworkChecks[network].exists).map((network) => {
                   const check = walletNetworkChecks[network];
                   return (
-                    <div className="pw-wallet-network-row" key={network} data-active={scope.network === network}>
+                    <div className="pw-wallet-network-row" key={network} data-active={walletNetwork === network}>
                       <label className="pw-wallet-network-check">
-                        <input type="checkbox" checked={check.exists} readOnly />
+                        <input type="checkbox" checked={walletNetwork === network} disabled={!check.exists} onChange={() => { if (check.exists) setWalletNetwork(network); }} />
                         <span><NetworkLabel network={network} /><small>{check.loading ? "Checking..." : "Found on network"}</small></span>
                       </label>
                       {check.exists && <button type="button" className="pw-rename-link" onClick={() => walletNameRef.current?.focus()}><Pencil size={12} /> Rename</button>}
@@ -718,9 +702,10 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
             <label className="pw-label">Name<input ref={walletNameRef} className="pw-field" value={walletName} onChange={(event) => setWalletName(event.target.value)} placeholder="Wallet" /></label>
           </form>
           {address.trim() && verifyingWallet && <Message>Checking mainnet and testnet...</Message>}
-          {address.trim() && !verifyingWallet && foundWalletNetworks.length > 0 && activeWalletNetwork && !walletNetworkChecks[activeWalletNetwork].exists && <Message>This project is set to {scope.network}. Switch project network to add the wallet from {foundWalletNetworks.join(" or ")}.</Message>}
+          {address.trim() && !verifyingWallet && foundWalletNetworks.length > 0 && walletNetwork && <Message>This wallet will be added on {walletNetwork}, independently of the project network.</Message>}
           {walletVerifyError && <Message error>{walletVerifyError}</Message>}
-          <Message>The account is verified on {scope.network} before it is saved to this project. Releeve never stores its secret key.</Message>
+          {walletSaveError && <Message error>{walletSaveError}</Message>}
+          <Message>The account is verified on its selected Stellar network before it is saved to this project. Releeve never stores its secret key.</Message>
         </Modal>
       )}
 
@@ -759,6 +744,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
   const router = useRouter();
   const [page, setPage] = useState<CursorPage<TrackedEntity>>({ data: [] });
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
+  const [selectedNetwork, setSelectedNetwork] = useState<ProjectScope["network"]>(scope.network);
   const [transactions, setTransactions] = useState<CursorPage<ProjectTransaction>>({ data: [] });
   const [events, setEvents] = useState<CursorPage<ContractEvent>>({ data: [] });
   const [source, setSource] = useState<Record<string, unknown> | null>(null);
@@ -830,7 +816,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
     try { await api.post(path, { address: address.trim().toUpperCase(), network: contractNetwork, name: contractName.trim() || null, appearance_color: contractColor || null, tags: [] }); setAddress(""); setContractName(""); setContractColor(""); setContractNetwork(scope.network); setShowAdd(false); setError(null); setToastError(null); await load(); } catch (cause) { setToastError(errorMessage(cause, "Could not add this contract.")); } finally { setLoading(false); }
   };
 
-  const openContract = async (value: string) => {
+  const openContract = async (value: string, network: ProjectScope["network"] = scope.network) => {
     const base = scopePath(scope, `/contracts/${encodeURIComponent(value)}`);
     if (!base) return;
     setLoading(true);
@@ -842,6 +828,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
         api.get<Record<string, unknown>>(`${base}/source`).catch(() => null),
         api.get<CursorPage<Record<string, any>>>(`${base}/verifications?limit=20`).catch(() => ({ data: [] })),
       ]);
+      setSelectedNetwork(network);
       setSelected(summary); setTransactions(txResult); setEvents(eventResult); setSource(sourceResult); setVerifications(verificationResult); setTab("overview"); setError(null);
     } catch (cause) { setError(errorMessage(cause, "Could not open this contract.")); } finally { setLoading(false); }
   };
@@ -1007,16 +994,30 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
     finally { setLoading(false); }
   };
 
-  if (hasContractDetail(selected)) return <ContractDetailView
-    selected={selected!} address={selectedAddress} network={scope.network} verification={verification}
-    toolchain={toolchain} transactions={transactions} events={events} source={source}
-    verifications={verifications} tab={tab} setTab={setTab} router={router}
-    onBack={() => setSelected(null)} sourceKind={sourceKind} setSourceKind={setSourceKind}
-    repository={repository} setRepository={setRepository} commit={commit} setCommit={setCommit}
-    packagePath={packagePath} setPackagePath={setPackagePath} visibility={visibility}
-    setVisibility={setVisibility} uploadId={uploadId} loading={loading}
-    onUpload={uploadArchive} onSubmit={submitVerification} onRefresh={refreshVerifications}
-  />;
+  if (hasContractDetail(selected)) {
+    const contract: ExplorerContractDetail = {
+      address: selectedAddress,
+      network: selectedNetwork,
+      tracked: true,
+      name: typeof selected?.name === "string" ? selected.name : null,
+      type: typeof selected?.type === "string" ? selected.type : "contract",
+      current_wasm_hash: typeof selected?.current_wasm_hash === "string" ? selected.current_wasm_hash : null,
+      verification: {
+        status: typeof verification?.status === "string" ? verification.status : "unverified",
+        type: typeof verification?.type === "string" ? verification.type : null,
+        timestamp: typeof verification?.timestamp === "string" ? verification.timestamp : null,
+      },
+      toolchain: {
+        rust_version: typeof toolchain?.rust_version === "string" ? toolchain.rust_version : null,
+        soroban_sdk_version: typeof toolchain?.soroban_sdk_version === "string" ? toolchain.soroban_sdk_version : null,
+        wasm_target: typeof toolchain?.wasm_target === "string" ? toolchain.wasm_target : null,
+        opt_level: typeof toolchain?.opt_level === "string" ? toolchain.opt_level : null,
+        wasm_opt_applied: typeof toolchain?.wasm_opt_applied === "boolean" ? toolchain.wasm_opt_applied : null,
+        debug_symbols_present: toolchain?.debug_symbols_present === true,
+      },
+    };
+    return <div className="pw-page pw-contract-detail-page"><ContractExplorerDesign contract={contract} network={selectedNetwork} address={selectedAddress} embedded onBack={() => setSelected(null)} /></div>;
+  }
 
   if (selected) return <div className="pw-page"><div className="pw-detail-head"><div className="pw-inline"><Button iconOnly aria-label="Back to contracts" onClick={() => setSelected(null)}><ArrowLeft size={16} /></Button><EntityIdenticon value={selectedAddress} kind="contract" size={34} /><div className="pw-detail-title"><p>Soroban contract</p><h1 className="pw-mono">{selectedAddress}</h1><p>{scope.network} / shared contract catalog</p></div></div><div className="pw-actions"><Button onClick={() => navigator.clipboard.writeText(selectedAddress)}><Copy size={14} /> Copy</Button><Button onClick={() => router.push(`/explorer/${scope.network}/contract/${encodeURIComponent(selectedAddress)}`)}>Explorer</Button><Button primary onClick={() => router.push(`/simulator?contract=${encodeURIComponent(selectedAddress)}`)}><Play size={14} /> Simulate</Button></div></div><div className="pw-surface"><div className="pw-stats"><div className="pw-stat"><span>Verification</span><strong>{String(verification?.status ?? "unverified")}</strong></div><div className="pw-stat"><span>WASM hash</span><strong className="pw-mono">{selected.current_wasm_hash ? truncateEntity(String(selected.current_wasm_hash), 8, 7) : "Unavailable"}</strong></div><div className="pw-stat"><span>Events indexed</span><strong>{events.data.length}</strong></div><div className="pw-stat"><span>Debug symbols</span><strong>{toolchain?.debug_symbols_present ? "Present" : "Not available"}</strong></div></div><div className="pw-tabs"><button data-active={tab === "overview"} onClick={() => setTab("overview")}>Overview</button><button data-active={tab === "transactions"} onClick={() => setTab("transactions")}>Transactions</button><button data-active={tab === "events"} onClick={() => setTab("events")}>Events</button><button data-active={tab === "source"} onClick={() => setTab("source")}>Source and WASM</button></div>{tab === "overview" && <div className="pw-panel-body"><div className="pw-kv"><span>Contract ID</span><span className="pw-mono">{selectedAddress}</span><span>Contract type</span><span>{String(selected.type ?? "contract")}</span><span>Soroban SDK</span><span>{String(toolchain?.soroban_sdk_version ?? "Unavailable")}</span><span>Rust version</span><span>{String(toolchain?.rust_version ?? "Unavailable")}</span><span>WASM target</span><span>{String(toolchain?.wasm_target ?? "Unavailable")}</span><span>Source mapping</span><span>{String(selected.source_map_status ?? "not available")}</span></div></div>}{tab === "transactions" && <TxRows page={transactions} network={scope.network} onOpen={(hash) => router.push(`/explorer/${scope.network}/transaction/${encodeURIComponent(hash)}`)} />}{tab === "events" && <div className="pw-table">{events.data.length ? events.data.map((event, index) => <button className="pw-row" style={{ gridTemplateColumns: "120px minmax(180px, 1fr) minmax(220px, 1fr) 130px" }} key={event.id || index} onClick={() => event.tx_hash && router.push(`/explorer/${scope.network}/transaction/${encodeURIComponent(event.tx_hash)}`)}><span>{event.ledger_sequence?.toLocaleString() || "-"}</span><span className="pw-mono">{JSON.stringify(event.topics)}</span><span className="pw-mono">{JSON.stringify(event.data)}</span><span>{timeLabel(event.timestamp)}</span></button>) : <EmptyState icon={<Activity size={22} />} title="No contract events" body="Indexed Soroban diagnostic and contract events will appear here." />}</div>}{tab === "source" && <div className="pw-panel-body">{source ? <pre className="pw-json">{JSON.stringify(source, null, 2)}</pre> : <EmptyState icon={<FileCode2 size={22} />} title="Source is not verified" body="Verified source, toolchain metadata, and WASM mapping will appear here when available." />}</div>}</div></div>;
 
@@ -1051,7 +1052,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
               const tags = contractTagNames(entity);
               const verified = String((entity as Record<string, unknown>).verification_status ?? (entity as Record<string, unknown>).status ?? "").toLowerCase() === "verified";
               return (
-                <div className="pw-row pw-clickable-row" role="button" tabIndex={0} style={{ gridTemplateColumns: "34px minmax(260px, 1fr) 128px minmax(150px, .55fr) 82px 36px" }} key={entity.address} onClick={() => void openContract(entity.address)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openContract(entity.address); } }}>
+                <div className="pw-row pw-clickable-row" role="button" tabIndex={0} style={{ gridTemplateColumns: "34px minmax(260px, 1fr) 128px minmax(150px, .55fr) 82px 36px" }} key={entity.address} onClick={() => { const network = entity.network === "mainnet" || entity.network === "testnet" || entity.network === "futurenet" ? entity.network : scope.network; void openContract(entity.address, network); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); const network = entity.network === "mainnet" || entity.network === "testnet" || entity.network === "futurenet" ? entity.network : scope.network; void openContract(entity.address, network); } }}>
                   <span className="pw-select-cell" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${entity.address}`} checked={selectedContracts.has(entity.address)} onChange={() => toggleContract(entity.address)} /></span>
                   <span className="pw-entity-cell">
                     <EntityIdenticon value={entity.address} kind="contract" size={28} color={entity.appearance_color} />
