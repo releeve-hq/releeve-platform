@@ -1,15 +1,3 @@
-# Releeve Platform — CI (Phase 0)
-#
-# - `lint`: fmt, clippy (-D warnings), unit tests. No infra needed.
-# - `integration`: the testcontainers-backed suite on a Docker-enabled runner.
-#   Containers are spawned in-process by `releeve-test-support`; no compose
-#   services are booted by CI.
-#
-# Note: `cargo sqlx prepare --check` is intentionally NOT wired yet — Phase 0
-# has no `sqlx::query!` macros (health uses a runtime `query_scalar`), so there
-# is no offline data to generate. It becomes mandatory in Phase 1 when the first
-# compile-time-checked query lands, together with committed `.sqlx/` artifacts.
-
 name: CI
 
 on:
@@ -17,22 +5,39 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
   RUSTFLAGS: "-D warnings"
 
 jobs:
   lint:
     name: Lint & unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: backend
+          cache-on-failure: false
       - name: Format
-        run: cargo fmt --all --check
+        run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Unit tests
@@ -40,10 +45,48 @@ jobs:
 
   integration:
     name: Integration tests (testcontainers)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: backend
+          cache-on-failure: false
       - name: Integration tests
         run: cargo test --workspace --test '*'
+
+  frontend:
+    name: Frontend quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:8080
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Typecheck
+        run: yarn typecheck
+      - name: Lint
+        run: yarn lint
+      - name: Production build
+        run: yarn build
