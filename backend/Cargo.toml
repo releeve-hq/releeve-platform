@@ -58,7 +58,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Auth (consumed from Phase 1; declared here so P1 has zero dependency churn)
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 argon2 = "0.5"
 sha2 = "0.10"
 rand = "0.8"
