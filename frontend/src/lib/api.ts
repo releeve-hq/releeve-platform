@@ -10,9 +10,11 @@ export function clearTokenPair() {
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code: string;
+  constructor(message: string, status: number, code = 'request_failed') {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -49,10 +51,10 @@ async function request<T = any>(
   method: string,
   path: string,
   body?: any,
-  opts?: { skipAuth?: boolean }
+  opts?: { skipAuth?: boolean; headers?: Record<string, string> }
 ): Promise<T> {
   const url = `${BASE_URL}${path}`;
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
 
   if (body && !(body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
@@ -94,22 +96,22 @@ async function request<T = any>(
       typeof data.error === 'string'
         ? data.error
         : data.error?.message || data.message || 'Request failed';
-    throw new ApiError(message, res.status);
+    throw new ApiError(message, res.status, data.error?.code || data.code);
   }
 
   return data as T;
 }
 
 export const api = {
-  get: <T = any>(path: string, opts?: { skipAuth?: boolean }) =>
+  get: <T = any>(path: string, opts?: { skipAuth?: boolean; headers?: Record<string, string> }) =>
     request<T>('GET', path, undefined, opts),
-  post: <T = any>(path: string, body?: any, opts?: { skipAuth?: boolean }) =>
+  post: <T = any>(path: string, body?: any, opts?: { skipAuth?: boolean; headers?: Record<string, string> }) =>
     request<T>('POST', path, body, opts),
-  put: <T = any>(path: string, body?: any, opts?: { skipAuth?: boolean }) =>
+  put: <T = any>(path: string, body?: any, opts?: { skipAuth?: boolean; headers?: Record<string, string> }) =>
     request<T>('PUT', path, body, opts),
-  patch: <T = any>(path: string, body?: any, opts?: { skipAuth?: boolean }) =>
+  patch: <T = any>(path: string, body?: any, opts?: { skipAuth?: boolean; headers?: Record<string, string> }) =>
     request<T>('PATCH', path, body, opts),
-  delete: <T = any>(path: string, opts?: { skipAuth?: boolean }) =>
+  delete: <T = any>(path: string, opts?: { skipAuth?: boolean; headers?: Record<string, string> }) =>
     request<T>('DELETE', path, undefined, opts),
   upload: async <T = any>(path: string, body: Blob): Promise<T> => {
     const response = await fetch(`${BASE_URL}${path}`, {
@@ -121,7 +123,7 @@ export const api = {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const message = typeof data.error === 'string' ? data.error : data.error?.message || data.message || 'Upload failed';
-      throw new ApiError(message, response.status);
+      throw new ApiError(message, response.status, data.error?.code || data.code);
     }
     return data as T;
   },

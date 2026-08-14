@@ -3,6 +3,7 @@
 import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { AuthStatusFrame } from '@/components/auth/auth-status-frame';
 import '../../auth.css';
@@ -43,7 +44,7 @@ function VerifyContent() {
 
   return (
     <AuthStatusFrame title="We could not verify that link." description={status || 'Please request a new verification email and try again.'}>
-      <a href="/signin" className="auth-email-button">Return to sign in</a>
+      <Link href="/signin" className="auth-email-button">Return to sign in</Link>
     </AuthStatusFrame>
   );
 }

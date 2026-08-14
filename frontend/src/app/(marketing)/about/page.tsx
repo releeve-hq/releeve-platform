@@ -49,7 +49,7 @@ export default function AboutPage() {
         <div><p className="marketing-section-index">THE BOUNDARY</p><h2>Releeve is not trying to be everything around Stellar.</h2></div>
         <div>
           <p>The embedded explorer exists so an alert or simulation can be investigated without breaking context. Monitoring exists so teams know when production behavior diverges from what they tested. The differentiated work remains state forking and hypothetical execution.</p>
-          <p>That focus also means no invented NFT layer, no EVM opcode theater, no L1/L2 panels, and no congestion-driven gas charts where Stellar's resource model calls for something different.</p>
+          <p>That focus also means no invented NFT layer, no EVM opcode theater, no L1/L2 panels, and no congestion-driven gas charts where Stellar&apos;s resource model calls for something different.</p>
           <Link href="/docs/simulations">Understand simulations <ArrowRight size={14} /></Link>
         </div>
       </section>

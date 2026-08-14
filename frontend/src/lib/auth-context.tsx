@@ -10,11 +10,6 @@ export interface User {
   username?: string;
   avatar_url?: string;
   color?: string;
-  availableBounties?: number;
-  earnings?: number;
-  activeContrib?: number;
-  completedContrib?: number;
-  pendingReviews?: number;
 }
 
 interface AuthContextType {
@@ -57,11 +52,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: userData.username,
       avatar_url: userData.avatar_url,
       color: 'bg-violet-600',
-      availableBounties: userData.available_bounties ?? 0,
-      earnings: parseFloat(userData.total_earned_usdc) || 0,
-      activeContrib: userData.active_contributions ?? 0,
-      completedContrib: userData.bounties_completed || 0,
-      pendingReviews: userData.pending_reviews ?? 0,
     };
     setUser(normalized);
     return normalized;

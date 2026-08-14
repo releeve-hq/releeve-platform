@@ -1,1 +1,0 @@
-export { ReleeveLogo as SeidarLogo } from './releeve-logo';

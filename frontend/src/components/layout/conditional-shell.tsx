@@ -3,7 +3,6 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import AppShell from '@/components/layout/app-shell';
 import ReleeveApp from '@/components/app/releeve-app';
 
 const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'];
@@ -115,5 +114,5 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
     return null;
   }
 
-  return <AppShell>{children}</AppShell>;
+  return <>{children}</>;
 }

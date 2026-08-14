@@ -4,7 +4,6 @@ import localFont from "next/font/local";
 import "./globals.css";
 import "./marketing.css";
 import "./cookie-consent.css";
-import { AppProvider } from "@/lib/app-context";
 import { AuthProvider } from "@/lib/auth-context";
 import ConditionalShell from "@/components/layout/conditional-shell";
 import CookieConsent from "@/components/layout/cookie-consent";
@@ -52,12 +51,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning className={`${inter.variable} ${jetbrainsMono.variable} ${alliance.variable}`}>
       <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>
       <body className="antialiased">
-        <AppProvider>
-          <AuthProvider>
-            <ConditionalShell>{children}</ConditionalShell>
-            <CookieConsent />
-          </AuthProvider>
-        </AppProvider>
+        <AuthProvider>
+          <ConditionalShell>{children}</ConditionalShell>
+          <CookieConsent />
+        </AuthProvider>
       </body>
     </html>
   );
