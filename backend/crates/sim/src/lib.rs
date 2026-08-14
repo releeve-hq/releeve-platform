@@ -122,6 +122,12 @@ pub struct AcceptedSimulation {
     pub job_id: Uuid,
     pub created: bool,
     pub status: String,
+    #[serde(default)]
+    pub stage: String,
+    #[serde(default)]
+    pub progress: i16,
+    #[serde(default)]
+    pub retry_after_ms: Option<u64>,
     pub simulation_url: String,
     pub status_url: String,
 }
@@ -172,6 +178,28 @@ impl ForkCoreClient {
             actor,
             Method::GET,
             &format!("/v1/simulations/{simulation_id}"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn get_job(&self, actor: &ServiceActor, job_id: Uuid) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/jobs/{job_id}"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn cancel_job(&self, actor: &ServiceActor, job_id: Uuid) -> Result<Value> {
+        self.request(
+            actor,
+            Method::DELETE,
+            &format!("/v1/jobs/{job_id}"),
             None,
             None,
         )
@@ -274,7 +302,7 @@ impl ForkCoreClient {
     ) -> Result<Value> {
         if !matches!(
             action,
-            "simulate" | "rollback" | "sync/start" | "sync/stop" | "sync/status" | "overrides"
+            "simulate" | "sync/start" | "sync/stop" | "sync/status" | "overrides"
         ) {
             return Err(Error::Configuration(
                 "unsupported environment action".into(),
@@ -306,6 +334,82 @@ impl ForkCoreClient {
             Method::DELETE,
             &format!("/v1/environments/{environment_id}/overrides/{override_id}"),
             None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn network_coverage(&self, actor: &ServiceActor, network: &str) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/networks/{network}/coverage"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn repair_network_coverage(
+        &self,
+        actor: &ServiceActor,
+        network: &str,
+        idempotency_key: &str,
+        body: &Value,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/networks/{network}/coverage/repair"),
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn environment_revisions(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/environments/{environment_id}/revisions"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn activate_environment_revision(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        revision_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/revisions/{revision_id}/activate"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn branch_environment_revision(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        revision_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/revisions/{revision_id}/branch"),
+            Some(body),
             None,
         )
         .await

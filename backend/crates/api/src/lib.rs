@@ -36,7 +36,9 @@ use axum::{
 use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
 use utoipa::openapi::path::Operation;
+use utoipa::openapi::request_body::RequestBodyBuilder;
 use utoipa::openapi::response::Response;
+use utoipa::openapi::{Content, Ref, Required};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::auth::oauth_routes;
@@ -311,6 +313,36 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             "Alert firing history",
         ),
         (
+            "/api/v1/{org}/{project}/simulations",
+            Get,
+            "List Fork Core simulations",
+        ),
+        (
+            "/api/v1/{org}/{project}/simulations",
+            Post,
+            "Queue authoritative Fork Core simulation",
+        ),
+        (
+            "/api/v1/{org}/{project}/simulations/{simulation_id}",
+            Get,
+            "Get Fork Core simulation status and results",
+        ),
+        (
+            "/api/v1/{org}/{project}/simulations/{simulation_id}",
+            Delete,
+            "Cancel Fork Core simulation",
+        ),
+        (
+            "/api/v1/{org}/{project}/jobs/{job_id}",
+            Get,
+            "Get Fork Core execution job status",
+        ),
+        (
+            "/api/v1/{org}/{project}/jobs/{job_id}",
+            Delete,
+            "Cancel Fork Core execution job",
+        ),
+        (
             "/api/v1/{org}/{project}/environments",
             Get,
             "List Fork Core environments",
@@ -371,12 +403,111 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             "Get Fork Core environment sync status",
         ),
         (
-            "/api/v1/{org}/{project}/environments/{environment_id}/rollback",
+            "/api/v1/{org}/{project}/networks/{network}/coverage",
+            Get,
+            "Get source-backed network coverage",
+        ),
+        (
+            "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
             Post,
-            "Rewind Fork Core environment sync cursor",
+            "Queue sparse historical coverage repair",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/revisions",
+            Get,
+            "List immutable environment revisions",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/activate",
+            Post,
+            "Activate immutable environment revision",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+            Post,
+            "Branch immutable environment revision",
         ),
     ] {
         add_phase3_path(openapi, path, method, summary);
+    }
+
+    for path in [
+        "/api/v1/{org}/{project}/simulations",
+        "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
+    ] {
+        if let Some(operation) = openapi
+            .paths
+            .paths
+            .get_mut(path)
+            .and_then(|item| item.post.as_mut())
+        {
+            operation.request_body = Some(
+                RequestBodyBuilder::new()
+                    .content(
+                        "application/json",
+                        Content::new(Some(Ref::from_schema_name("CreateSimulationRequest"))),
+                    )
+                    .required(Some(Required::True))
+                    .build(),
+            );
+        }
+    }
+
+    for path in [
+        "/api/v1/{org}/{project}/simulations",
+        "/api/v1/{org}/{project}/environments/{environment_id}/simulate",
+        "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",
+        "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
+    ] {
+        if let Some(operation) = openapi
+            .paths
+            .paths
+            .get_mut(path)
+            .and_then(|item| item.post.as_mut())
+        {
+            operation.responses.responses.clear();
+            operation.responses.responses.insert(
+                "202".to_owned(),
+                Response::new("Accepted for asynchronous processing").into(),
+            );
+        }
+    }
+
+    for path in [
+        "/api/v1/{org}/{project}/simulations/{simulation_id}",
+        "/api/v1/{org}/{project}/jobs/{job_id}",
+    ] {
+        if let Some(operation) = openapi
+            .paths
+            .paths
+            .get_mut(path)
+            .and_then(|item| item.delete.as_mut())
+        {
+            operation.responses.responses.clear();
+            operation.responses.responses.insert(
+                "202".to_owned(),
+                Response::new("Cancellation accepted").into(),
+            );
+        }
+    }
+
+    // Resource-creation proxied writes mirror Fork Core's 201 Created contract.
+    for path in [
+        "/api/v1/{org}/{project}/environments",
+        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+    ] {
+        if let Some(operation) = openapi
+            .paths
+            .paths
+            .get_mut(path)
+            .and_then(|item| item.post.as_mut())
+        {
+            operation.responses.responses.clear();
+            operation
+                .responses
+                .responses
+                .insert("201".to_owned(), Response::new("Created").into());
+        }
     }
 }
 
@@ -431,6 +562,9 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
         auth::oauth_routes::StartResponse,
         auth::oauth_routes::CallbackParams,
         shared::Permission,
+        simulations::CreateSimulationRequest,
+        simulations::StateSource,
+        simulations::Invocation,
     )),
     modifiers(&SecurityAddon),
     info(
@@ -618,6 +752,10 @@ pub fn app(state: AppState) -> Router {
             get(get_simulation).delete(cancel_simulation),
         )
         .route(
+            "/api/v1/{org}/{project}/jobs/{job_id}",
+            get(get_simulation_job).delete(cancel_simulation_job),
+        )
+        .route(
             "/api/v1/{org}/{project}/simulations/{simulation_id}/analysis",
             get(get_simulation_analysis).post(create_simulation_analysis),
         )
@@ -664,8 +802,24 @@ pub fn app(state: AppState) -> Router {
             post(environment_simulate),
         )
         .route(
-            "/api/v1/{org}/{project}/environments/{environment_id}/rollback",
-            post(environment_rollback),
+            "/api/v1/{org}/{project}/networks/{network}/coverage",
+            get(network_coverage),
+        )
+        .route(
+            "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
+            post(repair_network_coverage),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/revisions",
+            get(environment_revisions),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/activate",
+            post(activate_environment_revision),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+            post(branch_environment_revision),
         )
         .route(
             "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",

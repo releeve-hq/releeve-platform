@@ -70,10 +70,90 @@ async fn openapi_exposes_platform_routes_and_bearer_security() {
         "/api/v1/{org}/{project}/alerts",
         "/api/v1/{org}/{project}/alerts/{alert_id}",
         "/api/v1/{org}/{project}/alerts/{alert_id}/history",
+        "/api/v1/{org}/{project}/simulations",
+        "/api/v1/{org}/{project}/simulations/{simulation_id}",
+        "/api/v1/{org}/{project}/jobs/{job_id}",
+        "/api/v1/{org}/{project}/environments",
+        "/api/v1/{org}/{project}/networks/{network}/coverage",
+        "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
+        "/api/v1/{org}/{project}/environments/{environment_id}/revisions",
+        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/activate",
+        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
     ] {
         assert!(
             spec["paths"].get(path).is_some(),
             "expected path `{path}` in the OpenAPI spec"
+        );
+    }
+    for path in [
+        "/api/v1/{org}/{project}/simulations/{simulation_id}",
+        "/api/v1/{org}/{project}/jobs/{job_id}",
+    ] {
+        let responses = &spec["paths"][path]["delete"]["responses"];
+        assert!(
+            responses.get("202").is_some(),
+            "cancellation operation `{path}` must document HTTP 202"
+        );
+        assert!(
+            responses.get("200").is_none(),
+            "cancellation operation `{path}` must not document HTTP 200"
+        );
+    }
+
+    assert_eq!(
+        spec["paths"]["/api/v1/{org}/{project}/simulations"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/CreateSimulationRequest"
+    );
+    assert!(spec["components"]["schemas"].get("StateSource").is_some());
+    assert!(spec["components"]["schemas"].get("Invocation").is_some());
+    assert!(
+        spec["paths"]["/api/v1/{org}/{project}/jobs/{job_id}"]["delete"].is_object(),
+        "execution jobs must expose authenticated cancellation"
+    );
+    assert!(
+        spec["paths"]["/api/v1/{org}/{project}/networks/{network}/coverage/repair"]["post"]
+            .is_object(),
+        "historical coverage repair must be documented"
+    );
+    assert_eq!(
+        spec["paths"]["/api/v1/{org}/{project}/networks/{network}/coverage/repair"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/CreateSimulationRequest"
+    );
+    for path in [
+        "/api/v1/{org}/{project}/simulations",
+        "/api/v1/{org}/{project}/environments/{environment_id}/simulate",
+        "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",
+        "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
+    ] {
+        let responses = &spec["paths"][path]["post"]["responses"];
+        assert!(
+            responses.get("202").is_some(),
+            "queued operation `{path}` must document HTTP 202"
+        );
+        assert!(
+            responses.get("200").is_none(),
+            "queued operation `{path}` must not document HTTP 200"
+        );
+    }
+    assert!(
+        spec["paths"]
+            .get("/api/v1/{org}/{project}/environments/{environment_id}/rollback")
+            .is_none()
+    );
+    for path in [
+        "/api/v1/{org}/{project}/environments",
+        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+    ] {
+        let responses = &spec["paths"][path]["post"]["responses"];
+        assert!(
+            responses.get("201").is_some(),
+            "resource-creation operation `{path}` must document HTTP 201"
+        );
+        assert!(
+            responses.get("200").is_none(),
+            "resource-creation operation `{path}` must not document HTTP 200"
         );
     }
 

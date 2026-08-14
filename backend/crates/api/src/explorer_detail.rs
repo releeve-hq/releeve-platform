@@ -1509,9 +1509,8 @@ pub async fn add_account(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(&auth.network);
-    let base = horizon_url_for_network(network).ok_or_else(|| {
-        Error::BadRequest(format!("unsupported explorer network: {network}"))
-    })?;
+    let base = horizon_url_for_network(network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
     if !upstream_exists(&format!("{base}/accounts/{}", req.address.trim())).await {
         return Err(Error::BadRequest(
             "wallet does not exist on the selected Stellar network".into(),

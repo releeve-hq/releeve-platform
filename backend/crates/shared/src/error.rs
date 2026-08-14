@@ -2,7 +2,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use axum::Json;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 /// Domain error. Every handler returns `Result<T, Error>` and the API layer
@@ -48,6 +48,13 @@ pub enum Error {
 
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+
+    #[error("{message}")]
+    DependencyProblem {
+        status: u16,
+        code: String,
+        message: String,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -65,6 +72,7 @@ pub enum ErrorKind {
     RateLimited,
     Internal,
     ServiceUnavailable,
+    DependencyProblem,
 }
 
 impl Error {
@@ -80,10 +88,14 @@ impl Error {
             Error::RateLimited => ErrorKind::RateLimited,
             Error::Internal(_) => ErrorKind::Internal,
             Error::ServiceUnavailable(_) => ErrorKind::ServiceUnavailable,
+            Error::DependencyProblem { .. } => ErrorKind::DependencyProblem,
         }
     }
 
     pub fn status(&self) -> u16 {
+        if let Error::DependencyProblem { status, .. } = self {
+            return (*status).clamp(400, 599);
+        }
         match self.kind() {
             ErrorKind::NotFound => 404,
             ErrorKind::BadRequest => 400,
@@ -95,10 +107,14 @@ impl Error {
             ErrorKind::RateLimited => 429,
             ErrorKind::Internal => 500,
             ErrorKind::ServiceUnavailable => 503,
+            ErrorKind::DependencyProblem => unreachable!("handled above"),
         }
     }
 
-    pub fn code(&self) -> &'static str {
+    pub fn code(&self) -> &str {
+        if let Error::DependencyProblem { code, .. } = self {
+            return code;
+        }
         match self.kind() {
             ErrorKind::NotFound => "not_found",
             ErrorKind::BadRequest => "bad_request",
@@ -110,6 +126,7 @@ impl Error {
             ErrorKind::RateLimited => "rate_limited",
             ErrorKind::Internal => "internal",
             ErrorKind::ServiceUnavailable => "service_unavailable",
+            ErrorKind::DependencyProblem => unreachable!("handled above"),
         }
     }
 
@@ -123,7 +140,15 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status =
             StatusCode::from_u16(self.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        (status, Json(ErrorEnvelope::from_error(&self))).into_response()
+        let mut response = (status, Json(ErrorEnvelope::from_error(&self))).into_response();
+        // Upstream Fork Core problems are emitted as RFC 7807; the Platform
+        // envelope keeps its stable `error.code` shape but declares the same
+        // problem media type so consumers can rely on `application/problem+json`.
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/problem+json"),
+        );
+        response
     }
 }
 

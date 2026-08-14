@@ -121,6 +121,14 @@ impl TestApp {
         app(self.state.clone())
     }
 
+    /// Build a variant of this test app whose Fork Core client points at the
+    /// supplied endpoint (wiremock in runtime tests). Keeps the matching
+    /// Postgres/Redis containers alive.
+    pub fn with_fork_core(mut self, client: sim::ForkCoreClient) -> Self {
+        self.state.fork_core = Some(client);
+        self
+    }
+
     pub fn fail_next_mail(&self) {
         self.mailer.should_fail();
     }
