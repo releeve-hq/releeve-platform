@@ -61,7 +61,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 jsonwebtoken = "9"
 argon2 = "0.5"
 sha2 = "0.10"
-rand = "0.8"
+rand = "0.10"
 hex = "0.4"
 
 # HTTP client (OAuth token exchange + userinfo)
