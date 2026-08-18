@@ -14,10 +14,12 @@ import {
   Radar,
   Rocket,
   ScanSearch,
+  Search,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ReleeveLogo } from "@/components/ui/releeve-logo";
+import { getDocsQuery, setDocsQuery, subscribeDocsQuery } from "./docs-search-store";
 
 type MenuKey = "platform" | "developers";
 
@@ -75,10 +77,12 @@ export function MarketingNavigation() {
 
   return (
     <header ref={headerRef} className="marketing-header">
-      <Link className="marketing-announcement" href="/#simulation">
-        <span>Fork real Stellar state. Test the scenario before mainnet does.</span>
-        <ExternalLink aria-hidden="true" size={13} />
-      </Link>
+      {!pathname.startsWith("/docs") && (
+        <Link className="marketing-announcement" href="/#simulation">
+          <span>Fork real Stellar state. Test the scenario before mainnet does.</span>
+          <ExternalLink aria-hidden="true" size={13} />
+        </Link>
+      )}
 
       <div className="marketing-nav-frame">
         <nav className="marketing-nav" aria-label="Primary navigation">
@@ -88,22 +92,28 @@ export function MarketingNavigation() {
           </Link>
 
           <div className="marketing-nav-links">
-            <NavDropdown
-              label="Platform"
-              menuKey="platform"
-              links={platformLinks}
-              openMenu={openMenu}
-              setOpenMenu={setOpenMenu}
-            />
-            <NavDropdown
-              label="Resources"
-              menuKey="developers"
-              links={developerLinks}
-              openMenu={openMenu}
-              setOpenMenu={setOpenMenu}
-            />
-            <Link className="marketing-nav-link" href="/pricing">Pricing</Link>
-            <Link className="marketing-nav-link" href="/about">About</Link>
+            {pathname.startsWith("/docs") ? (
+              <DocsSearch />
+            ) : (
+              <>
+                <NavDropdown
+                  label="Platform"
+                  menuKey="platform"
+                  links={platformLinks}
+                  openMenu={openMenu}
+                  setOpenMenu={setOpenMenu}
+                />
+                <NavDropdown
+                  label="Resources"
+                  menuKey="developers"
+                  links={developerLinks}
+                  openMenu={openMenu}
+                  setOpenMenu={setOpenMenu}
+                />
+                <Link className="marketing-nav-link" href="/pricing">Pricing</Link>
+                <Link className="marketing-nav-link" href="/about">About</Link>
+              </>
+            )}
           </div>
 
           <div className="marketing-nav-actions">
@@ -127,22 +137,28 @@ export function MarketingNavigation() {
 
       {mobileOpen && (
         <div className="marketing-mobile-menu">
-          <MobileGroup
-            label="Platform"
-            menuKey="platform"
-            links={platformLinks}
-            active={mobileSection}
-            setActive={setMobileSection}
-          />
-          <MobileGroup
-            label="Resources"
-            menuKey="developers"
-            links={developerLinks}
-            active={mobileSection}
-            setActive={setMobileSection}
-          />
-          <Link className="marketing-mobile-link" href="/pricing">Pricing</Link>
-          <Link className="marketing-mobile-link" href="/about">About</Link>
+          {pathname.startsWith("/docs") ? (
+            <DocsSearch />
+          ) : (
+            <>
+              <MobileGroup
+                label="Platform"
+                menuKey="platform"
+                links={platformLinks}
+                active={mobileSection}
+                setActive={setMobileSection}
+              />
+              <MobileGroup
+                label="Resources"
+                menuKey="developers"
+                links={developerLinks}
+                active={mobileSection}
+                setActive={setMobileSection}
+              />
+              <Link className="marketing-mobile-link" href="/pricing">Pricing</Link>
+              <Link className="marketing-mobile-link" href="/about">About</Link>
+            </>
+          )}
           <div className="marketing-mobile-actions">
             <Link className="marketing-button marketing-button-secondary" href="/signin">Sign in</Link>
             <Link className="marketing-button marketing-button-primary" href="/signup">Create account</Link>
@@ -150,6 +166,62 @@ export function MarketingNavigation() {
         </div>
       )}
     </header>
+  );
+}
+
+function DocsSearch() {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(getDocsQuery());
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => subscribeDocsQuery(setValue), []);
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  return (
+    <div className="marketing-nav-search-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className="marketing-nav-search"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label="Search documentation"
+      >
+        <Search size={14} />
+        <span>Search docs</span>
+      </button>
+      {open && (
+        <div className="marketing-nav-search-popup" role="dialog" aria-label="Search documentation">
+          <Search size={15} />
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(event) => setDocsQuery(event.target.value)}
+            placeholder="Search documentation"
+            aria-label="Search documentation"
+          />
+        </div>
+      )}
+    </div>
   );
 }
 

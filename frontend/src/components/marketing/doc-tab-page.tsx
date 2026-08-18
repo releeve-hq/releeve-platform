@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, Info } from "lucide-react";
-import { sectionId, type DocGuide } from "./docs-data";
+import { sectionId, type DocTab } from "./docs-data";
 
-export function DocGuidePage({ guide }: { guide: DocGuide }) {
+export function DocTabPage({ tab }: { tab: DocTab }) {
   return (
     <article className="doc-article">
-      <p className="marketing-section-index">Releeve documentation</p>
-      <h1>{guide.label}</h1>
-      <p className="doc-lead">{guide.description}</p>
-      {guide.sections.map((section) => (
+      <p className="marketing-section-index">{tab.label}</p>
+      <h1>{tab.label}</h1>
+      <p className="doc-lead">{tab.description}</p>
+      {tab.sections.map((section) => (
         <section id={sectionId(section.heading)} className="doc-section" key={section.heading}>
           <h2>{section.heading}</h2>
           {section.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}

@@ -18,6 +18,5 @@ export default async function GuidePage({ params }: { params: Promise<{ slug: st
   const { slug } = await params;
   const guide = getDocGuide(slug);
   if (!guide) notFound();
-  const apiBase = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
-  return <DocGuidePage guide={guide} apiDocsUrl={slug === "api-reference" ? `${apiBase.replace(/\/$/, "")}/docs` : undefined} />;
+  return <DocGuidePage guide={guide} />;
 }
