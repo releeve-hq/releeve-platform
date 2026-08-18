@@ -39,10 +39,10 @@ pub struct RedisInstance {
     pub url: String,
 }
 
-/// Spawn a disposable `postgres:16-alpine` container and connect a pool to it.
+/// Spawn a disposable `postgres:18-alpine` container and connect a pool to it.
 pub async fn spawn_postgres() -> PostgresInstance {
     let container = Postgres::default()
-        .with_tag("16-alpine")
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("failed to start postgres testcontainer (is Docker running?)");
@@ -63,10 +63,10 @@ pub async fn spawn_postgres() -> PostgresInstance {
     }
 }
 
-/// Spawn a disposable `redis:7-alpine` container and return its connection URL.
+/// Spawn a disposable `redis:8-alpine` container and return its connection URL.
 pub async fn spawn_redis() -> RedisInstance {
     let container = Redis::default()
-        .with_tag("7-alpine")
+        .with_tag("8-alpine")
         .start()
         .await
         .expect("failed to start redis testcontainer (is Docker running?)");
