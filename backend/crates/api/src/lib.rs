@@ -802,6 +802,28 @@ pub fn app(state: AppState) -> Router {
             post(environment_simulate),
         )
         .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/transactions",
+            post(environment_transactions),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/deploy",
+            post(environment_deploy),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc",
+            post(environment_rpc_authed),
+        )
+        // Tenderly-style dedicated RPC URLs: the path IS the RPC endpoint, and a
+        // JSON-RPC POST to it is the call. Public (no token) vs admin (secret).
+        .route(
+            "/v/{org}/{project}/{environment_id}",
+            post(environment_rpc),
+        )
+        .route(
+            "/v/{org}/{project}/{environment_id}/{admin_secret}",
+            post(environment_rpc_admin),
+        )
+        .route(
             "/api/v1/{org}/{project}/networks/{network}/coverage",
             get(network_coverage),
         )

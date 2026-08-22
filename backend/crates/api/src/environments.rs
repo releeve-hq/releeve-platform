@@ -61,6 +61,29 @@ fn client(state: &AppState) -> Result<&sim::ForkCoreClient, Error> {
         .ok_or_else(|| Error::ServiceUnavailable("fork_core".into()))
 }
 
+/// Resolves an org/project pair to their ids WITHOUT requiring a user session.
+/// Used by the Tenderly-style public RPC URL, where access is the unguessable
+/// URL itself (org/project slugs + environment UUID) rather than a bearer token.
+async fn resolve_org_project(
+    state: &AppState,
+    org: &str,
+    project: &str,
+) -> Result<(Uuid, Uuid), Error> {
+    let row = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT o.id, p.id
+           FROM organizations o
+           JOIN projects p ON p.organization_id = o.id
+          WHERE o.slug = $1 AND p.slug = $2",
+    )
+    .bind(org)
+    .bind(project)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    Ok(row)
+}
+
 fn actor(user_id: Uuid, auth: &ProjectAuth) -> sim::ServiceActor {
     sim::ServiceActor::fork_manager(
         user_id,
@@ -109,8 +132,10 @@ async fn persist_environment(
         "INSERT INTO fork_environments
             (id,project_id,name,base_ledger_sequence,state_sync_enabled,
              fork_core_environment_id,mode,active_revision_id,requested_ledger,state_ledger,
-             execution_ledger,protocol,state_hash,verification_status,network,revision,sync_status)
-         VALUES($1,$2,$3,$4,$5,$1,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             execution_ledger,protocol,state_hash,verification_status,network,revision,sync_status,
+             invalidated_reason, rpc_admin_secret)
+         VALUES($1,$2,$3,$4,$5,$1,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                gen_random_uuid()::text)
          ON CONFLICT(id) DO UPDATE SET
              name=EXCLUDED.name,base_ledger_sequence=EXCLUDED.base_ledger_sequence,
              state_sync_enabled=EXCLUDED.state_sync_enabled,mode=EXCLUDED.mode,
@@ -118,7 +143,8 @@ async fn persist_environment(
              requested_ledger=EXCLUDED.requested_ledger,state_ledger=EXCLUDED.state_ledger,
              execution_ledger=EXCLUDED.execution_ledger,protocol=EXCLUDED.protocol,
              state_hash=EXCLUDED.state_hash,verification_status=EXCLUDED.verification_status,
-             network=EXCLUDED.network,revision=EXCLUDED.revision,sync_status=EXCLUDED.sync_status
+             network=EXCLUDED.network,revision=EXCLUDED.revision,sync_status=EXCLUDED.sync_status,
+             invalidated_reason=EXCLUDED.invalidated_reason
          WHERE fork_environments.project_id=EXCLUDED.project_id
            AND fork_environments.fork_core_environment_id=EXCLUDED.fork_core_environment_id",
     )
@@ -157,6 +183,11 @@ async fn persist_environment(
             .get("sync_status")
             .and_then(Value::as_str)
             .unwrap_or("paused"),
+    )
+    .bind(
+        environment
+            .get("invalidated_reason")
+            .and_then(Value::as_str),
     )
     .execute(pool)
     .await
@@ -426,6 +457,149 @@ pub async fn environment_simulate(
         axum::http::StatusCode::ACCEPTED,
         Json(json!({"id":local_id,"fork_core":public_accepted})),
     ))
+}
+
+/// Auto-mines a transaction into a virtual environment (write path).
+pub async fn environment_transactions(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let body = body
+        .map(|Json(value)| value)
+        .ok_or_else(|| Error::BadRequest("Transaction envelope is required".into()))?;
+    let value = client(&state)?
+        .send_environment_transaction(
+            &actor(user_id, &auth),
+            environment_id,
+            &body,
+            idempotency_key.as_deref(),
+        )
+        .await
+        .map_err(map_remote)?;
+    Ok(Json(value))
+}
+
+/// Deploys a contract into a virtual environment (write path).
+pub async fn environment_deploy(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let body = body
+        .map(|Json(value)| value)
+        .ok_or_else(|| Error::BadRequest("Deploy request is required".into()))?;
+    let value = client(&state)?
+        .deploy_environment_contract(
+            &actor(user_id, &auth),
+            environment_id,
+            &body,
+            idempotency_key.as_deref(),
+        )
+        .await
+        .map_err(map_remote)?;
+    Ok(Json(value))
+}
+
+/// Hosted JSON-RPC call scoped to a virtual environment (getLatestLedger,
+/// getLedgerEntries, getTransaction, sendTransaction, simulateTransaction).
+///
+/// Tenderly-style public URL: no bearer token required. Access is the
+/// unguessable URL (org/project slugs + environment UUID). This lets a bot or
+/// SDK poll/interact with the environment without our auth flow.
+pub async fn environment_rpc(
+    State(state): State<AppState>,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, Error> {
+    let (organization_id, project_id) = resolve_org_project(&state, &org, &project).await?;
+    let body = body
+        .map(|Json(value)| value)
+        .ok_or_else(|| Error::BadRequest("JSON-RPC body is required".into()))?;
+    let actor = sim::ServiceActor::fork_manager(
+        Uuid::new_v4(),
+        organization_id,
+        project_id,
+        Uuid::new_v4(),
+    );
+    let value = client(&state)?
+        .environment_rpc(&actor, environment_id, &body)
+        .await
+        .map_err(map_remote)?;
+    Ok(Json(value))
+}
+
+/// Hosted JSON-RPC for the platform's authenticated REST surface (UI/backend).
+/// Requires the user's platform token; the caller's org/project membership is
+/// enforced. This is distinct from the public `/v/...` capability URL used by
+/// external tools.
+pub async fn environment_rpc_authed(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let body = body
+        .map(|Json(value)| value)
+        .ok_or_else(|| Error::BadRequest("JSON-RPC body is required".into()))?;
+    let value = client(&state)?
+        .environment_rpc(&actor(user_id, &auth), environment_id, &body)
+        .await
+        .map_err(map_remote)?;
+    Ok(Json(value))
+}
+
+/// Tenderly-style admin RPC URL: the secret path suffix grants the same RPC
+/// surface plus the capability to manage/mutate the environment. The secret is
+/// validated against the environment's stored admin secret.
+pub async fn environment_rpc_admin(
+    State(state): State<AppState>,
+    Path((org, project, environment_id, admin_secret)): Path<(String, String, Uuid, String)>,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, Error> {
+    let (organization_id, project_id) = resolve_org_project(&state, &org, &project).await?;
+    let stored: Option<String> = sqlx::query_scalar(
+        "SELECT rpc_admin_secret FROM fork_environments WHERE id = $1 AND project_id = $2",
+    )
+    .bind(environment_id)
+    .bind(project_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .flatten();
+    match stored {
+        Some(secret) if secret == admin_secret => {}
+        _ => return Err(Error::Forbidden),
+    }
+    let body = body
+        .map(|Json(value)| value)
+        .ok_or_else(|| Error::BadRequest("JSON-RPC body is required".into()))?;
+    let actor = sim::ServiceActor::fork_manager(
+        Uuid::new_v4(),
+        organization_id,
+        project_id,
+        Uuid::new_v4(),
+    );
+    let value = client(&state)?
+        .environment_rpc(&actor, environment_id, &body)
+        .await
+        .map_err(map_remote)?;
+    Ok(Json(value))
 }
 
 pub async fn network_coverage(

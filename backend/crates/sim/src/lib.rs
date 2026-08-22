@@ -339,6 +339,59 @@ impl ForkCoreClient {
         .await
     }
 
+    /// Auto-mines a transaction into a virtual environment (write path).
+    pub async fn send_environment_transaction(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        body: &Value,
+        idempotency_key: Option<&str>,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/transactions"),
+            Some(body),
+            idempotency_key,
+        )
+        .await
+    }
+
+    /// Deploys a contract into a virtual environment (write path).
+    pub async fn deploy_environment_contract(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        body: &Value,
+        idempotency_key: Option<&str>,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/deploy"),
+            Some(body),
+            idempotency_key,
+        )
+        .await
+    }
+
+    /// Hosted JSON-RPC call scoped to a virtual environment.
+    pub async fn environment_rpc(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/rpc"),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
     pub async fn network_coverage(&self, actor: &ServiceActor, network: &str) -> Result<Value> {
         self.request(
             actor,

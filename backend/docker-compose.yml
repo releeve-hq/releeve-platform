@@ -10,7 +10,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      # PostgreSQL 18 stores data in a version-specific subdirectory.
+      - db_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d releeve"]
       interval: 5s

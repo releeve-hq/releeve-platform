@@ -545,3 +545,349 @@ async fn create_environment_and_branch_return_201() {
     assert_eq!(status, StatusCode::CREATED, "branch is 201");
     assert_eq!(branch_body["id"], branch_id.to_string());
 }
+
+async fn seed_env(app: &TestApp, access: &str, org: &str, project: &str, env_id: Uuid) {
+    seed_env_with_secret(app, access, org, project, env_id, None).await;
+}
+
+async fn seed_env_with_secret(
+    app: &TestApp,
+    access: &str,
+    org: &str,
+    project: &str,
+    env_id: Uuid,
+    secret: Option<&str>,
+) {
+    let project_id: Uuid = sqlx::query_scalar(
+        "SELECT p.id FROM projects p JOIN organizations o ON o.id = p.organization_id
+         WHERE o.slug = $1 AND p.slug = $2",
+    )
+    .bind(org)
+    .bind(project)
+    .fetch_one(app.db())
+    .await
+    .expect("project id resolves");
+    sqlx::query("INSERT INTO fork_environments (id, project_id, name, base_ledger_sequence, network, rpc_admin_secret) VALUES ($1,$2,$3,0,'testnet',$4)")
+        .bind(env_id)
+        .bind(project_id)
+        .bind("RPC env")
+        .bind(secret)
+        .execute(app.db())
+        .await
+        .expect("environment seeded");
+}
+
+#[tokio::test]
+async fn environment_transaction_submit_proxies_to_fork_core() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    let hash = "deadbeef";
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/transactions")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "environment_id": env_id,
+            "hash": hash,
+            "status": "success",
+            "close_ledger": 4_229_104,
+            "applied_diffs": 2,
+            "idempotent_replay": false,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env(&app, &access, &org, &project, env_id).await;
+
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/environments/{env_id}/transactions"),
+        &[("idempotency-key", "test-tx-1")],
+        Some(json!({ "envelope_xdr": "AAAA" })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["hash"], hash);
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["applied_diffs"], 2);
+}
+
+#[tokio::test]
+async fn environment_deploy_proxies_to_fork_core() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    let contract_id = "ccontractabc";
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/deploy")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "environment_id": env_id,
+            "contract_id": contract_id,
+            "upload_hash": "upload-hash",
+            "create_hash": "create-hash",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env(&app, &access, &org, &project, env_id).await;
+
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/environments/{env_id}/deploy"),
+        &[("idempotency-key", "test-deploy-1")],
+        Some(json!({ "wasm": "QUJD", "source_account": "GAA" })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["contract_id"], contract_id);
+    assert_eq!(body["create_hash"], "create-hash");
+}
+
+#[tokio::test]
+async fn environment_rpc_proxies_json_rpc_to_fork_core() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "id": "latest-4229104",
+                "protocolVersion": 27,
+                "sequence": 4_229_104,
+                "closeTime": null
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env(&app, &access, &org, &project, env_id).await;
+
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/environments/{env_id}/rpc"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["sequence"], 4_229_104);
+    assert_eq!(body["result"]["protocolVersion"], 27);
+}
+
+#[tokio::test]
+async fn public_rpc_works_without_bearer_token_on_v_path() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "id": "latest-1", "protocolVersion": 27, "sequence": 123, "closeTime": null }
+        })))
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env(&app, &access, &org, &project, env_id).await;
+
+    // The /v/... URL is the public capability — no token required.
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/v/{org}/{project}/{env_id}"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "public /v RPC requires no token");
+    assert_eq!(body["result"]["sequence"], 123);
+
+    // The /api/v1/.../rpc REST route is the authenticated platform surface —
+    // a request without a bearer token must be rejected, not proxied.
+    let (status, _, _) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/environments/{env_id}/rpc"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        None,
+    )
+    .await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "authenticated /api/v1 RPC must not proxy without a token"
+    );
+}
+
+#[tokio::test]
+async fn admin_rpc_rejects_wrong_secret() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env_with_secret(
+        &app,
+        &access,
+        &org,
+        &project,
+        env_id,
+        Some("correct-secret"),
+    )
+    .await;
+
+    let (status, _, _) = req_with(
+        &app,
+        Method::POST,
+        &format!("/v/{org}/{project}/{env_id}/wrong-secret"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "wrong admin secret is rejected"
+    );
+}
+
+#[tokio::test]
+async fn admin_rpc_accepts_correct_secret() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "id": "latest-9", "protocolVersion": 27, "sequence": 999, "closeTime": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env_with_secret(
+        &app,
+        &access,
+        &org,
+        &project,
+        env_id,
+        Some("correct-secret"),
+    )
+    .await;
+
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/v/{org}/{project}/{env_id}/correct-secret"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "correct admin secret is accepted");
+    assert_eq!(body["result"]["sequence"], 999);
+}
+
+#[tokio::test]
+async fn tenderly_style_public_rpc_url() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "id": "latest-7", "protocolVersion": 27, "sequence": 777, "closeTime": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env(&app, &access, &org, &project, env_id).await;
+
+    // Tenderly-style: POST to the /v/{org}/{project}/{env} URL, no token.
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/v/{org}/{project}/{env_id}"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["sequence"], 777);
+}
+
+#[tokio::test]
+async fn tenderly_style_admin_rpc_url() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env_with_secret(&app, &access, &org, &project, env_id, Some("secret-abc")).await;
+
+    let (status, _, _) = req_with(
+        &app,
+        Method::POST,
+        &format!("/v/{org}/{project}/{env_id}/wrong-secret"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "wrong admin secret rejected");
+
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "id": "latest-8", "protocolVersion": 27, "sequence": 888, "closeTime": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/v/{org}/{project}/{env_id}/secret-abc"),
+        &[],
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "getLatestLedger", "params": {} })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["sequence"], 888);
+}
