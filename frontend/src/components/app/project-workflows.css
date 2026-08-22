@@ -808,7 +808,11 @@ button.pw-row:hover {
   background: color-mix(in srgb, var(--panel) 84%, var(--text) 4%);
 }
 
-.pw-rotated {
+.pw-dropdown-chevron {
+  transition: transform 180ms ease;
+}
+
+.pw-dropdown-chevron.open {
   transform: rotate(180deg);
 }
 

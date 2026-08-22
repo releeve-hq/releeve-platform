@@ -111,14 +111,14 @@ export function MarketingNavigation() {
                   setOpenMenu={setOpenMenu}
                 />
                 <Link className="marketing-nav-link" href="/pricing">Pricing</Link>
-                <Link className="marketing-nav-link" href="/about">About</Link>
+                <Link className="marketing-nav-link" href="/docs">Documentation</Link>
               </>
             )}
           </div>
 
           <div className="marketing-nav-actions">
             <Link className="marketing-signin" href="/signin">Sign in</Link>
-            <Link className="marketing-button marketing-button-primary marketing-nav-cta" href="/signup">
+            <Link className="marketing-button marketing-button-contrast marketing-nav-cta" href="/signup">
               Create account
             </Link>
           </div>
@@ -156,12 +156,12 @@ export function MarketingNavigation() {
                 setActive={setMobileSection}
               />
               <Link className="marketing-mobile-link" href="/pricing">Pricing</Link>
-              <Link className="marketing-mobile-link" href="/about">About</Link>
+              <Link className="marketing-mobile-link" href="/docs">Documentation</Link>
             </>
           )}
           <div className="marketing-mobile-actions">
             <Link className="marketing-button marketing-button-secondary" href="/signin">Sign in</Link>
-            <Link className="marketing-button marketing-button-primary" href="/signup">Create account</Link>
+            <Link className="marketing-button marketing-button-contrast" href="/signup">Create account</Link>
           </div>
         </div>
       )}

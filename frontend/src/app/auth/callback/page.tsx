@@ -7,11 +7,11 @@ import '../../auth.css';
 
 function CallbackContent() {
   useEffect(() => {
-    window.location.replace('/home');
+    window.location.replace('/onboarding');
   }, []);
 
   return (
-    <AuthStatusFrame title="Signing you in." description="Completing your secure sign-in and opening your organization.">
+    <AuthStatusFrame showBrand={false} title="Signing you in." description="Completing your secure sign-in and opening your organization.">
       <div className="auth-spinner" aria-label="Signing you in" />
     </AuthStatusFrame>
   );
@@ -19,7 +19,7 @@ function CallbackContent() {
 
 export default function AuthCallbackPage() {
   return (
-    <Suspense fallback={<AuthStatusFrame title="Signing you in." description="Completing your secure sign-in and opening your organization."><div className="auth-spinner" aria-label="Signing you in" /></AuthStatusFrame>}>
+    <Suspense fallback={<AuthStatusFrame showBrand={false} title="Signing you in." description="Completing your secure sign-in and opening your organization."><div className="auth-spinner" aria-label="Signing you in" /></AuthStatusFrame>}>
       <CallbackContent />
     </Suspense>
   );

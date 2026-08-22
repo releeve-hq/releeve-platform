@@ -2606,7 +2606,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
                   onClick={() => setNetworkMenuOpen((open) => !open)}
                 >
                   <NetworkLabel network={contractNetwork} />
-                  <ChevronDown size={15} />
+                  <ChevronDown className={`pw-dropdown-chevron${networkMenuOpen ? " open" : ""}`} size={15} />
                 </button>
                 {networkMenuOpen && (
                   <span className="pw-select-menu" role="listbox">
@@ -2636,10 +2636,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
                 onClick={() => setAppearanceOpen((open) => !open)}
                 aria-expanded={appearanceOpen}
               >
-                <ChevronDown
-                  size={15}
-                  className={appearanceOpen ? "pw-rotated" : ""}
-                />{" "}
+                <ChevronDown className={`pw-dropdown-chevron${appearanceOpen ? " open" : ""}`} size={15} />{" "}
                 Contract appearance
               </button>
               {appearanceOpen && (
@@ -4325,10 +4322,7 @@ function Accordion({
       <button type="button" onClick={onToggle}>
         {icon}
         {title}
-        <ChevronDown
-          size={15}
-          style={{ transform: open ? "rotate(180deg)" : undefined }}
-        />
+        <ChevronDown className={`pw-dropdown-chevron${open ? " open" : ""}`} size={15} />
       </button>
       {open && <div className="pw-accordion-body">{children}</div>}
     </div>

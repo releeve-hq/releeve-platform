@@ -1,34 +1,34 @@
 @import "tailwindcss";
 
 html, body {
-  background-color: #09090b;
-  color: #E8E8EA;
+  background-color: #121212;
+  color: #f5f5f5;
 }
 
 body {
-  background-color: #09090b;
+  background-color: #121212;
 }
 
 .seidar-root {
-  background-color: #09090b;
+  background-color: #121212;
 }
 
 .bg-white {
-  background-color: #111113;
+  background-color: #181818;
 }
 
 .bg-gray-50 {
-  background-color: #09090b;
+  background-color: #121212;
 }
 
 .bg-gray-100 {
-  background-color: #1a1a1e;
+  background-color: #1e1e1e;
 }
 
 .border-gray-200, 
 .border-gray-100, 
 .border-gray-50 {
-  border-color: #27272a;
+  border-color: #2b2b2b;
 }
 
 .text-gray-900 {
@@ -109,36 +109,71 @@ body {
 }
 
 input, textarea, select {
-  background-color: #111113;
-  border-color: #27272a;
-  color: #E8E8EA;
+  background-color: #181818;
+  border-color: #2b2b2b;
+  color: #f5f5f5;
 }
 input::placeholder, textarea::placeholder {
   color: #52525b;
 }
 select option {
-  background-color: #111113;
-  color: #E8E8EA;
+  background-color: #181818;
+  color: #f5f5f5;
 }
 
 .seidar-scrollbar::-webkit-scrollbar-thumb {
-  background: #2E2A3F;
+  background: #2b2b2b;
 }
 .seidar-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #413D56;
+  background: #414141;
+}
+
+/* Explorer scrollbars stay compact and use the charcoal product palette. */
+.explorer-route,
+.explorer-route *,
+html:has(.explorer-route) {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a #121212;
+}
+
+html:has(.explorer-route)::-webkit-scrollbar,
+.explorer-route::-webkit-scrollbar,
+.explorer-route *::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+html:has(.explorer-route)::-webkit-scrollbar-track,
+.explorer-route::-webkit-scrollbar-track,
+.explorer-route *::-webkit-scrollbar-track {
+  background: #121212;
+}
+
+html:has(.explorer-route)::-webkit-scrollbar-thumb,
+.explorer-route::-webkit-scrollbar-thumb,
+.explorer-route *::-webkit-scrollbar-thumb {
+  border: 2px solid #121212;
+  border-radius: 999px;
+  background: #3a3a3a;
+}
+
+html:has(.explorer-route)::-webkit-scrollbar-thumb:hover,
+.explorer-route::-webkit-scrollbar-thumb:hover,
+.explorer-route *::-webkit-scrollbar-thumb:hover {
+  background: #525252;
 }
 
 .recharts-cartesian-grid-horizontal line,
 .recharts-cartesian-grid-vertical line {
-  stroke: #242132;
+  stroke: #2b2b2b;
   stroke-opacity: 0.6;
 }
 .recharts-cartesian-axis-tick text {
-  fill: #7A7485;
+  fill: #656b65;
 }
 .recharts-default-tooltip {
-  background-color: #13111C;
-  border: 1px solid #242132;
+  background-color: #181818;
+  border: 1px solid #2b2b2b;
   border-radius: 12px;
   color: #ECE9F2;
 }

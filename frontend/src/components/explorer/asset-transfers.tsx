@@ -350,7 +350,7 @@ export function AssetTransfers({
         .transfer-scroll :global(.transfer-role) {
           padding: 2px 5px;
           border-radius: 999px;
-          background: #302a27;
+          background: #1e1e1e;
           color: var(--text-faint);
           font-size: 9px;
         }
@@ -362,7 +362,7 @@ export function AssetTransfers({
           border: 1px solid var(--border);
           border-radius: 4px;
           margin-right: 7px;
-          color: #8ba7ff;
+          color: #a1a1a1;
         }
         .positive {
           color: var(--green) !important;

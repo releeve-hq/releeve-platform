@@ -36,7 +36,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     try {
       if (isLogin) {
         await login(email, password);
-        router.replace('/home');
+        router.replace('/onboarding');
       } else {
         await signup(email, password);
       }

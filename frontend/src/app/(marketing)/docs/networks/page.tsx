@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
-import { DocTabPage } from "@/components/marketing/doc-tab-page";
-import { getDocTab } from "@/components/marketing/docs-data";
+import { notFound } from "next/navigation";
+import { DocGuidePage } from "@/components/marketing/doc-guide";
+import { getDocGuide } from "@/components/marketing/docs-data";
 
 export const metadata: Metadata = {
   title: "Networks | Releeve Docs",
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 };
 
 export default function NetworksPage() {
-  const tab = getDocTab("networks");
-  if (!tab) return null;
-  return <DocTabPage tab={tab} />;
+  const guide = getDocGuide("networks");
+  if (!guide) notFound();
+  return <DocGuidePage guide={guide} />;
 }

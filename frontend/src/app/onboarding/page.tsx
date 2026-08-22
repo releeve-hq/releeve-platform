@@ -1,188 +1,71 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ReleeveLogo } from '@/components/ui/releeve-logo';
 import { api, ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth-context';
 
 type Organization = {
-  id: string;
   slug: string;
   name: string | null;
   is_personal: boolean;
 };
 
-type Project = {
-  slug: string;
-  name: string;
-  network?: 'mainnet' | 'testnet' | 'futurenet';
-};
-
-type Paged<T> = {
-  data: T[];
-};
-
-const ACTIVE_WORKSPACE_KEY = 'releeve-active-workspace';
-const DEFAULT_NETWORK = 'testnet';
-
-function slugify(value: string) {
-  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-}
-
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user } = useAuth();
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [selectedOrg, setSelectedOrg] = useState('');
-  const [newOrg, setNewOrg] = useState(false);
-  const [orgName, setOrgName] = useState('');
-  const [orgSlug, setOrgSlug] = useState('');
-  const [projectName, setProjectName] = useState('');
-  const [projectSlug, setProjectSlug] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  async function loadProjects(organizationSlug: string) {
-    const response = await api.get<Paged<Project>>(`/api/v1/${encodeURIComponent(organizationSlug)}/projects?limit=100`);
-    return response.data ?? [];
-  }
-
-  function rememberWorkspace(organizationSlug: string, project: Project) {
-    localStorage.setItem(ACTIVE_WORKSPACE_KEY, JSON.stringify({
-      organization: organizationSlug,
-      project: project.slug,
-      network: project.network ?? DEFAULT_NETWORK,
-    }));
-  }
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      try {
-        const items = await api.get<Organization[]>('/api/v1/me/organizations');
-        if (cancelled) return;
-        setOrganizations(items);
-        const selected = items[0]?.slug ?? '';
-        setSelectedOrg(selected);
 
-        for (const organization of items) {
-          const projects = await loadProjects(organization.slug);
-          if (cancelled) return;
-          if (projects.length > 0) {
-            rememberWorkspace(organization.slug, projects[0]);
-            router.replace('/home');
-            return;
+    async function chooseWorkspace() {
+      try {
+        const organizations = await api.get<Organization[]>('/api/v1/me/organizations');
+        if (cancelled) return;
+
+        const namedOrganizations = organizations.filter((organization) => !organization.is_personal);
+        const remembered = localStorage.getItem('releeve-active-workspace');
+        let rememberedSlug: string | undefined;
+        if (remembered) {
+          try {
+            rememberedSlug = JSON.parse(remembered).organization;
+          } catch {
+            rememberedSlug = undefined;
           }
         }
+
+        const organization = namedOrganizations.find((item) => item.slug === rememberedSlug) ?? namedOrganizations[0];
+        router.replace(organization ? `/organizations/${encodeURIComponent(organization.slug)}` : '/organizations/new');
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof ApiError ? reason.message : 'Unable to load your organizations and projects.');
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setError(reason instanceof ApiError ? reason.message : 'Unable to load your workspace.');
+        }
       }
     }
-    void load();
+
+    void chooseWorkspace();
     return () => { cancelled = true; };
   }, [router]);
 
-  const selected = useMemo(() => organizations.find((org) => org.slug === selectedOrg), [organizations, selectedOrg]);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (submitting) return;
-    setError(null);
-    if (!projectName.trim()) {
-      setError('Give your first project a name.');
-      return;
-    }
-    if (newOrg && !orgName.trim()) {
-      setError('Give the organization a name.');
-      return;
-    }
-    if (!newOrg && !selected) {
-      setError('Select an organization or create a new one.');
-      return;
-    }
-
-    setSubmitting(true);
-    let organization: Organization | null = null;
-    try {
-      organization = newOrg
-        ? await api.post<Organization>('/api/v1/organizations', { name: orgName.trim(), slug: orgSlug || undefined })
-        : selected!;
-      const project = await api.post<{ slug: string }>('/api/v1/' + encodeURIComponent(organization.slug) + '/projects', {
-        name: projectName.trim(),
-        slug: projectSlug || undefined,
-      });
-      rememberWorkspace(organization.slug, { ...project, name: projectName.trim(), network: DEFAULT_NETWORK });
-      router.replace('/home');
-    } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 409 && organization) {
-        try {
-          const wantedSlug = projectSlug || slugify(projectName);
-          const existing = (await loadProjects(organization.slug)).find((project) => project.slug === wantedSlug);
-          if (existing) {
-            rememberWorkspace(organization.slug, existing);
-            router.replace('/home');
-            return;
-          }
-        } catch {
-          // Fall through to the original user-safe conflict message.
-        }
-      }
-      setError(reason instanceof ApiError ? reason.message : 'Unable to create your organization and project.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   return (
-    <main className="onboarding-page">
-      <section className="onboarding-panel">
-        <header className="onboarding-topbar">
-          <div className="onboarding-brand"><ReleeveLogo size={28} /><span>Releeve</span></div>
-        </header>
-        <div className="onboarding-content">
-          <p className="onboarding-kicker">Welcome{user?.name ? `, ${user.name}` : ''}</p>
-          <h1>Set up your first project.</h1>
-          <p className="onboarding-copy">Your project is the private home for simulations, tracked contracts, investigations, and team work.</p>
-
-          {loading ? <p className="onboarding-muted">Loading your organizations...</p> : (
-            <form onSubmit={submit}>
-              <fieldset className="onboarding-fieldset">
-                <legend>Organization</legend>
-                {organizations.length > 0 && !newOrg && <div className="onboarding-org-list">
-                  {organizations.map((organization) => <label key={organization.id} className="onboarding-org-option">
-                    <input type="radio" name="organization" checked={selectedOrg === organization.slug} onChange={() => setSelectedOrg(organization.slug)} />
-                    <span><strong>{organization.name || organization.slug}</strong><small>{organization.slug}</small></span>
-                  </label>)}
-                </div>}
-                <button className="onboarding-link onboarding-create-link" type="button" onClick={() => setNewOrg((value) => !value)}>
-                  {newOrg ? 'Use an existing organization' : 'Create a new organization'}
-                </button>
-                {newOrg && <div className="onboarding-grid">
-                  <label>Name<input value={orgName} onChange={(event) => { setOrgName(event.target.value); if (!orgSlug) setOrgSlug(slugify(event.target.value)); }} placeholder="Organization name" /></label>
-                  <label>Slug<input value={orgSlug} onChange={(event) => setOrgSlug(slugify(event.target.value))} placeholder="organization-name" /></label>
-                </div>}
-              </fieldset>
-
-              <fieldset className="onboarding-fieldset">
-                <legend>First project</legend>
-                <div className="onboarding-grid">
-                  <label>Project name<input value={projectName} onChange={(event) => { setProjectName(event.target.value); if (!projectSlug) setProjectSlug(slugify(event.target.value)); }} placeholder="Protocol project" /></label>
-                  <label>Project slug<input value={projectSlug} onChange={(event) => setProjectSlug(slugify(event.target.value))} placeholder="protocol-project" /></label>
-                </div>
-              </fieldset>
-
-              {error && <p className="onboarding-error" role="alert">{error}</p>}
-              <button className="onboarding-submit" type="submit" disabled={submitting}>{submitting ? 'Creating project...' : 'Create project'}</button>
-            </form>
-          )}
-        </div>
-      </section>
-      <style>{`
-        .onboarding-page{min-height:100dvh;background:#0a0a0a;color:#fafafa;font-family:var(--font-inter),system-ui,sans-serif;padding:0 24px}.onboarding-panel{width:min(100%,680px);margin:0 auto}.onboarding-topbar{height:96px;display:flex;align-items:center;justify-content:space-between}.onboarding-brand{display:flex;align-items:center;gap:9px;font-weight:650}.onboarding-link{border:0;background:transparent;color:#a1a1aa;font:inherit;font-size:13px;cursor:pointer}.onboarding-content{padding:clamp(44px,12vh,128px) 0 64px}.onboarding-kicker{margin:0 0 10px;color:#22c55e;font-size:13px;font-weight:650}.onboarding-content h1{margin:0;font-size:32px;line-height:1.15;letter-spacing:0}.onboarding-copy{max-width:510px;margin:14px 0 32px;color:#a1a1aa;line-height:1.65;font-size:14px}.onboarding-muted{color:#71717a}.onboarding-fieldset{margin:0 0 22px;padding:0;border:0}.onboarding-fieldset legend{margin-bottom:11px;color:#d4d4d8;font-size:13px;font-weight:650}.onboarding-org-list{display:grid;gap:8px}.onboarding-org-option{display:flex;gap:10px;align-items:center;padding:12px;border:1px solid #27272a;border-radius:8px;background:#111113;cursor:pointer}.onboarding-org-option input{accent-color:#22c55e}.onboarding-org-option strong,.onboarding-org-option small{display:block}.onboarding-org-option strong{font-size:14px}.onboarding-org-option small{margin-top:3px;color:#71717a;font-size:12px}.onboarding-create-link{margin-top:12px;color:#d4d4d8;text-decoration:underline}.onboarding-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.onboarding-grid label{display:grid;gap:7px;color:#a1a1aa;font-size:12px}.onboarding-grid input,.onboarding-grid select{height:42px;border:1px solid #27272a;border-radius:8px;background:#111113;color:#fafafa;padding:0 11px;font:inherit;font-size:14px;outline:none}.onboarding-grid input:focus,.onboarding-grid select:focus{border-color:#52525b;box-shadow:0 0 0 3px rgba(113,113,122,.18)}.onboarding-error{margin:0 0 14px;color:#fca5a5;font-size:13px}.onboarding-submit{height:44px;padding:0 18px;border:0;border-radius:8px;background:#fff;color:#0a0a0a;font:inherit;font-size:14px;font-weight:650;cursor:pointer}.onboarding-submit:disabled{opacity:.6;cursor:wait}@media(max-width:540px){.onboarding-page{padding:0 20px}.onboarding-grid{grid-template-columns:1fr}.onboarding-content{padding-top:60px}.onboarding-content h1{font-size:28px}}
+    <main className="onboarding-loading">
+      <div className="onboarding-loading-brand"><ReleeveLogo size={28} /><span>Releeve</span></div>
+      <div className="onboarding-loading-content">
+        <div className="onboarding-spinner" aria-hidden="true" />
+        <h1>{error ? 'Workspace unavailable' : 'Preparing your workspace'}</h1>
+        <p>{error ?? 'Taking you to your organization.'}</p>
+        {error && <button type="button" onClick={() => window.location.reload()}>Try again</button>}
+      </div>
+      <style jsx>{`
+        .onboarding-loading { min-height: 100dvh; padding: 28px 32px; background: #121212; color: #f5f5f5; font-family: var(--font-inter), system-ui, sans-serif; }
+        .onboarding-loading-brand { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 650; }
+        .onboarding-loading-content { min-height: calc(100dvh - 100px); display: grid; place-content: center; justify-items: center; text-align: center; }
+        .onboarding-spinner { width: 24px; height: 24px; margin-bottom: 20px; border: 2px solid #2b2b2b; border-top-color: #f5f5f5; border-radius: 50%; animation: onboarding-spin .7s linear infinite; }
+        h1 { margin: 0; font-size: 20px; line-height: 1.3; }
+        p { max-width: 360px; margin: 8px 0 0; color: #a1a1a1; font-size: 14px; }
+        button { margin-top: 18px; min-height: 38px; padding: 0 14px; border: 1px solid #3a3a3a; border-radius: 7px; background: #1e1e1e; color: #f5f5f5; font: inherit; cursor: pointer; }
+        @keyframes onboarding-spin { to { transform: rotate(360deg); } }
+        @media (max-width: 540px) { .onboarding-loading { padding: 22px 20px; } }
       `}</style>
     </main>
   );

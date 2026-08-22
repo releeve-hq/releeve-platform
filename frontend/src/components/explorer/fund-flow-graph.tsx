@@ -44,9 +44,9 @@ function nodeFor(address: string): Node {
     style: {
       width: 260,
       height: 58,
-      background: "#262221",
-      color: "#f2efec",
-      border: `1px solid ${isContractAddress(address) ? "#557149" : "#4a423c"}`,
+      background: "#181818",
+      color: "#f5f5f5",
+      border: `1px solid ${isContractAddress(address) ? "#40552f" : "#2b2b2b"}`,
       borderRadius: 6,
       fontSize: 11,
     },
@@ -137,11 +137,11 @@ function GraphCanvas({
           height: 15,
         },
         style: {
-          stroke: selectedEdge === edge.id ? "#e8823c" : "#7aa95c",
+          stroke: selectedEdge === edge.id ? "#f4b95f" : "#789b50",
           strokeWidth: selectedEdge === edge.id ? 2.4 : 1.4,
         },
-        labelStyle: { fill: "#d9d2cd", fontSize: 10, fontWeight: 600 },
-        labelBgStyle: { fill: "#1d1918", fillOpacity: 0.95 },
+        labelStyle: { fill: "#d4d4d4", fontSize: 10, fontWeight: 600 },
+        labelBgStyle: { fill: "#121212", fillOpacity: 0.95 },
         data: edge,
       })),
     [selectedEdge, visibleTransfers],
@@ -286,7 +286,7 @@ function GraphCanvas({
               setSelectedEdge(null);
             }}
           >
-            <Background color="#3c3531" gap={24} size={1} />
+            <Background color="#2b2b2b" gap={24} size={1} />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
@@ -371,7 +371,7 @@ function GraphCanvas({
           display: flex;
           flex-direction: column;
           outline: none;
-          background: #181514;
+          background: #121212;
         }
         .fund-flow-experience:fullscreen {
           height: 100vh;
@@ -546,14 +546,14 @@ function GraphCanvas({
           cursor: pointer;
         }
         .fund-flow-experience :global(.react-flow__controls) {
-          background: #262221;
-          border: 1px solid #4a423c;
+          background: #181818;
+          border: 1px solid #2b2b2b;
           box-shadow: none;
         }
         .fund-flow-experience :global(.react-flow__controls-button) {
-          background: #262221;
-          border-color: #4a423c;
-          fill: #d1cac5;
+          background: #181818;
+          border-color: #2b2b2b;
+          fill: #a1a1a1;
         }
         .fund-flow-experience :global(.flow-node-label) {
           display: flex;
@@ -568,7 +568,7 @@ function GraphCanvas({
           align-items: flex-start;
         }
         .fund-flow-experience :global(.flow-node-label small) {
-          color: #918985;
+          color: #707070;
           font-size: 9px;
           text-transform: uppercase;
           font-weight: 650;
@@ -616,7 +616,7 @@ function TransferDetail({ edge }: { edge: TxFundFlowEdge; network: string }) {
         {edge.amount} {edge.asset}
       </h3>
       <code>{edge.from}</code>
-      <div style={{ color: "#817a76", margin: "9px 0", fontSize: 10 }}>to</div>
+      <div style={{ color: "#707070", margin: "9px 0", fontSize: 10 }}>to</div>
       <code>{edge.to}</code>
       <h4>Decoded data</h4>
       <pre>

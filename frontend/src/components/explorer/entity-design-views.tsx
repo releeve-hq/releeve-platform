@@ -95,6 +95,7 @@ function EntityStyles() {
   `}</style>
     <style>{`.entity-root-embedded{top:-14px}.verify-banner{margin-top:18px}`}</style>
     <style>{`@media(max-width:899px){.entity-root-embedded{top:-3px;margin:0 -3px}.entity-root-embedded .entity-page{padding-inline:3px}.entity-root-embedded .entity-subhead{padding-inline:3px}}`}</style>
+    <style>{`.entity-root{--bg:#121212;--panel:#181818;--border:#2b2b2b;--text:#f5f5f5;--dim:#a1a1a1;--faint:#707070;--green:#a3ff5f;--signal:#a3ff5f}.entity-button.primary{background:#a3ff5f;border-color:#a3ff5f;color:#121212}`}</style>
     </>
   );
 }

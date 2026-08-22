@@ -315,7 +315,7 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
           top: 0;
           bottom: 0;
           width: 1px;
-          background: #413936;
+          background: #2b2b2b;
         }
         .trace-list :global(.trace-main) {
           position: relative;
@@ -333,7 +333,7 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
           cursor: pointer;
         }
         .trace-list :global(.trace-main:hover) {
-          background: #24201e;
+          background: #1e1e1e;
         }
         .trace-list :global(.trace-chevron svg) {
           width: 14px;
@@ -343,7 +343,7 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
         .trace-list :global(.trace-kind) {
           display: inline-flex;
           justify-content: center;
-          border: 1px solid #47613e;
+          border: 1px solid #40552f;
           border-radius: 4px;
           padding: 3px 5px;
           color: #a3ff5f;
@@ -372,11 +372,11 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
             monospace;
         }
         .trace-list :global(.trace-code b) {
-          color: #e8823c;
+          color: #f4b95f;
           font-weight: 500;
         }
         .trace-list :global(.trace-code span) {
-          color: #f2efec;
+          color: var(--text);
         }
         .trace-list :global(.trace-code em) {
           color: var(--text-faint);
@@ -402,7 +402,7 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
           border: 1px solid var(--border);
           border-radius: 5px;
           overflow: hidden;
-          background: #171413;
+          background: var(--bg);
         }
         .trace-list :global(.trace-detail-tabs) {
           display: flex;
@@ -429,7 +429,7 @@ export function TransactionTrace({ tx }: { tx: ExplorerTxDetail }) {
           margin: 0;
           padding: 12px;
           overflow: auto;
-          color: #c9c2bd;
+          color: var(--text-dim);
           font:
             11px/1.55 ui-monospace,
             monospace;

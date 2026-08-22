@@ -242,10 +242,10 @@ export function GlobalExplorerSearch({
           align-items: center;
           gap: 11px;
           padding: 0 14px;
-          border: 1px solid #4a423c;
+          border: 1px solid var(--border, #2b2b2b);
           border-radius: 6px;
-          background: #1d1918;
-          color: #f2efec;
+          background: var(--bg, #121212);
+          color: var(--text, #f5f5f5);
         }
         .is-compact .global-explorer-search-input {
           height: 38px;
@@ -253,7 +253,7 @@ export function GlobalExplorerSearch({
         .global-explorer-search-input :global(svg) {
           width: 16px;
           height: 16px;
-          color: #817a76;
+          color: var(--text-faint, #707070);
           flex: 0 0 auto;
         }
         .global-explorer-search-input input {
@@ -267,7 +267,7 @@ export function GlobalExplorerSearch({
           font-size: 13px;
         }
         .global-explorer-search-input input::placeholder {
-          color: #77706c;
+          color: var(--text-faint, #707070);
         }
         .global-explorer-search-input button {
           display: grid;
@@ -281,8 +281,8 @@ export function GlobalExplorerSearch({
           font:
             600 10px ui-monospace,
             monospace;
-          color: #918985;
-          border: 1px solid #4a423c;
+          color: var(--text-dim, #a1a1a1);
+          border: 1px solid var(--border, #2b2b2b);
           border-radius: 4px;
           padding: 3px 6px;
           white-space: nowrap;
@@ -295,9 +295,9 @@ export function GlobalExplorerSearch({
           top: calc(100% + 7px);
           left: 0;
           right: 0;
-          border: 1px solid #4a423c;
+          border: 1px solid var(--border, #2b2b2b);
           border-radius: 6px;
-          background: #262221;
+          background: var(--panel, #181818);
           box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
           overflow: hidden;
         }
@@ -309,9 +309,9 @@ export function GlobalExplorerSearch({
           gap: 10px;
           padding: 11px 12px;
           border: 0;
-          border-bottom: 1px solid #403936;
+          border-bottom: 1px solid var(--border, #2b2b2b);
           background: transparent;
-          color: #eeeae7;
+          color: var(--text, #f5f5f5);
           text-align: left;
           cursor: pointer;
         }
@@ -319,14 +319,14 @@ export function GlobalExplorerSearch({
           border-bottom: 0;
         }
         .global-explorer-search-panel > button.is-active {
-          background: #332e2b;
+          background: var(--panel-2, #1e1e1e);
         }
         .global-search-icon {
           display: grid;
           place-items: center;
           width: 28px;
           height: 28px;
-          border: 1px solid #4a423c;
+          border: 1px solid var(--border, #2b2b2b);
           border-radius: 5px;
         }
         .global-search-icon :global(svg) {
@@ -343,23 +343,23 @@ export function GlobalExplorerSearch({
         }
         .global-explorer-search-panel small {
           margin-top: 3px;
-          color: #958d88;
+          color: var(--text-dim, #a1a1a1);
           font-size: 11px;
         }
         .global-explorer-search-panel code {
           max-width: 150px;
           overflow: hidden;
           text-overflow: ellipsis;
-          color: #817a76;
+          color: var(--text-faint, #707070);
           font-size: 10px;
         }
         .global-search-state {
           padding: 15px;
-          color: #a59d98;
+          color: var(--text-dim, #a1a1a1);
           font-size: 12px;
         }
         .global-search-state.is-error {
-          color: #ff8d86;
+          color: var(--red, #fb7185);
         }
         @keyframes search-spin {
           to {

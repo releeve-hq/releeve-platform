@@ -205,21 +205,21 @@ export function ResourceUsagePanel({ usage }: { usage: ResourceUsage }) {
           place-items: center;
           width: 32px;
           height: 32px;
-          border: 1px solid #48643d;
+          border: 1px solid #40552f;
           border-radius: 5px;
           color: #a3ff5f;
-          background: #20291e;
+          background: #1b2119;
           flex: 0 0 auto;
         }
         .resource-icon.warning {
           color: #f4b95f;
-          border-color: #765d32;
-          background: #2d261a;
+          border-color: #6b5730;
+          background: #241f17;
         }
         .resource-icon.danger {
           color: #ff827a;
-          border-color: #75413d;
-          background: #2e1e1c;
+          border-color: #6a3434;
+          background: #241919;
         }
         .resource-icon :global(svg) {
           width: 15px;
@@ -270,7 +270,7 @@ export function ResourceUsagePanel({ usage }: { usage: ResourceUsage }) {
           height: 6px;
           margin-top: 9px;
           border-radius: 3px;
-          background: #302a27;
+          background: #2b2b2b;
           overflow: hidden;
         }
         .resource-track i {
@@ -293,7 +293,7 @@ export function ResourceUsagePanel({ usage }: { usage: ResourceUsage }) {
         }
         .resource-no-limit {
           padding-top: 3px;
-          border-top: 1px dashed #39322e;
+          border-top: 1px dashed #2b2b2b;
         }
         @media (max-width: 650px) {
           .resource-summary {

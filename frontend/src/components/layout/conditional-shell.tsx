@@ -8,7 +8,7 @@ import ReleeveApp from '@/components/app/releeve-app';
 const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'];
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
-const MARKETING_ROUTES = ['/about', '/pricing', '/docs', '/terms', '/privacy'];
+const MARKETING_ROUTES = ['/pricing', '/docs', '/terms', '/privacy'];
 const EXPLORER_ENTITY_ROUTES = new Set(['ledger', 'tx', 'account', 'contract']);
 const APP_ROUTES = [
   '/home',
@@ -22,9 +22,10 @@ const APP_ROUTES = [
   '/settings',
   '/debugger',
   '/onboarding',
+  '/organizations',
 ];
 
-const DASHBOARD_SHELL_ROUTES = APP_ROUTES.filter(route => route !== '/onboarding');
+const DASHBOARD_SHELL_ROUTES = APP_ROUTES.filter(route => route !== '/onboarding' && route !== '/organizations');
 
 function isAuthRoute(pathname: string): boolean {
   if (AUTH_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'))) {

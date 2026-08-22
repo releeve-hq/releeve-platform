@@ -29,8 +29,8 @@ type DetailProps = {
 
 const pageStyle: CSSProperties = {
   minHeight: "100vh",
-  background: "#09090b",
-  color: "#f4f4f5",
+  background: "#121212",
+  color: "#f5f5f5",
   padding: "28px min(5vw, 56px)",
 };
 
@@ -40,8 +40,8 @@ const shellStyle: CSSProperties = {
 };
 
 const cardStyle: CSSProperties = {
-  background: "#111113",
-  border: "1px solid #27272a",
+  background: "#181818",
+  border: "1px solid #2b2b2b",
   borderRadius: 8,
   overflow: "hidden",
   marginTop: 16,
@@ -53,7 +53,7 @@ const rowStyle: CSSProperties = {
   gap: 14,
   alignItems: "center",
   padding: "12px 14px",
-  borderTop: "1px solid #27272a",
+  borderTop: "1px solid #2b2b2b",
   fontSize: 13,
 };
 
@@ -66,12 +66,12 @@ function ExplorerFrame({ title, eyebrow, actions, children }: { title: ReactNode
   return (
     <main style={pageStyle}>
       <div style={shellStyle}>
-        <Link href={`/explorer/${encodeURIComponent(network)}`} style={{ color: "#a1a1aa", fontSize: 13, textDecoration: "none" }}>
+        <Link href={`/explorer/${encodeURIComponent(network)}`} style={{ color: "#a1a1a1", fontSize: 13, textDecoration: "none" }}>
           Back to explorer
         </Link>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginTop: 24 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ color: "#71717a", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{eyebrow}</div>
+            <div style={{ color: "#707070", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{eyebrow}</div>
             <h1 style={{ fontSize: 28, lineHeight: 1.15, margin: "8px 0 0", fontWeight: 750, overflowWrap: "anywhere" }}>{title}</h1>
           </div>
           {actions}
@@ -168,11 +168,20 @@ function shortMetric(value: number | null | undefined) {
   return typeof value === "number" ? value.toLocaleString() : "n/a";
 }
 
-function ExplorerUnavailable({ title, network, message }: { title: string; network: string; message: string }) {
+function readableExplorerMessage(message: unknown) {
+  if (typeof message === "string") return message;
+  if (message && typeof message === "object" && "message" in message) {
+    const detail = (message as { message?: unknown }).message;
+    if (typeof detail === "string") return detail;
+  }
+  return "Explorer data is currently unavailable.";
+}
+
+function ExplorerUnavailable({ title, network, message }: { title: string; network: string; message: unknown }) {
   return (
     <ExplorerFrame eyebrow={`${network} explorer`} title={title}>
-      <section style={{ ...cardStyle, padding: 18, color: "#a1a1aa", fontSize: 13, lineHeight: 1.6 }}>
-        {message}
+      <section style={{ ...cardStyle, padding: 18, color: "#a1a1a1", fontSize: 13, lineHeight: 1.6 }}>
+        {readableExplorerMessage(message)}
       </section>
     </ExplorerFrame>
   );

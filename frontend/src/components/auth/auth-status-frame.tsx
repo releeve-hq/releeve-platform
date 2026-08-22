@@ -6,20 +6,24 @@ export function AuthStatusFrame({
   title,
   description,
   children,
+  showBrand = true,
 }: {
   title: string;
   description: string;
   children: ReactNode;
+  showBrand?: boolean;
 }) {
   return (
     <main className="auth-page">
       <div className="auth-form-wrapper">
-        <header className="auth-topbar">
-          <Link className="auth-brand" href="/" aria-label="Releeve home">
-            <ReleeveLogo size={28} />
-            <span>Releeve</span>
-          </Link>
-        </header>
+        {showBrand && (
+          <header className="auth-topbar">
+            <Link className="auth-brand" href="/" aria-label="Releeve home">
+              <ReleeveLogo size={28} />
+              <span>Releeve</span>
+            </Link>
+          </header>
+        )}
         <section className="auth-card auth-status-card" aria-live="polite">
           <h1 className="auth-headline">{title}</h1>
           <p className="auth-description">{description}</p>

@@ -25,7 +25,6 @@ const columns = [
   {
     title: "Company",
     links: [
-      ["About", "/about"],
       ["Pricing", "/pricing"],
       ["Privacy", "/privacy"],
       ["Terms", "/terms"],

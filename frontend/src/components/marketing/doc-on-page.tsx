@@ -1,21 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { sectionId, type DocSection } from "./docs-data";
 
 export function DocOnPage({ sections }: { sections: DocSection[] }) {
-  const [active, setActive] = useState(sections[0] ? sectionId(sections[0].heading) : "");
+  const ids = useMemo(() => sections.map((section) => sectionId(section.heading)), [sections]);
+  const [active, setActive] = useState(ids[0] ?? "");
 
   useEffect(() => {
-    const nodes = sections.map((section) => document.getElementById(sectionId(section.heading))).filter(Boolean) as HTMLElement[];
+    const nodes = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     if (!nodes.length) return;
-    const observer = new IntersectionObserver((entries) => {
-      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-      if (visible[0]) setActive(visible[0].target.id);
-    }, { rootMargin: "-10% 0px -72% 0px", threshold: [0, .1, .5] });
-    nodes.forEach((node) => observer.observe(node));
-    return () => observer.disconnect();
-  }, [sections]);
+
+    let frame = 0;
+    let current = nodes[0].id;
+
+    const update = () => {
+      frame = 0;
+      const line = window.scrollY + window.innerHeight * 0.25;
+      let next = nodes[0].id;
+      for (const node of nodes) {
+        if (node.getBoundingClientRect().top + window.scrollY <= line) next = node.id;
+        else break;
+      }
+      if (next !== current) {
+        current = next;
+        setActive(next);
+      }
+    };
+
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [ids]);
 
   const goTo = useCallback((id: string) => {
     setActive(id);
@@ -25,8 +50,8 @@ export function DocOnPage({ sections }: { sections: DocSection[] }) {
 
   useEffect(() => {
     const hash = window.location.hash.slice(1);
-    if (hash && sections.some((section) => sectionId(section.heading) === hash)) requestAnimationFrame(() => goTo(hash));
-  }, [goTo, sections]);
+    if (hash && ids.includes(hash)) requestAnimationFrame(() => goTo(hash));
+  }, [goTo, ids]);
 
   return (
     <nav className="doc-index" aria-label="On this page">

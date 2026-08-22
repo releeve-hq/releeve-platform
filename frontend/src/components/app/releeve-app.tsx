@@ -35,6 +35,7 @@ import {
   type ExplorerTransaction,
 } from "@/lib/explorer-demo-data";
 import { OrganizationSettingsPage, ProjectSettingsPage } from "@/components/app/settings-pages";
+import { SharedProfileMenu } from "@/components/ui/shared-profile-menu";
 
 /* ─── types ─── */
 type PageKey =
@@ -105,6 +106,14 @@ function Icon({ children, size = 17 }: { children: React.ReactNode; size?: numbe
       style={{ display: "block", flexShrink: 0 }}
     >
       {children}
+    </svg>
+  );
+}
+
+function DropdownChevron({ open, size = 11 }: { open: boolean; size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none" width={size} height={size} aria-hidden="true" style={{ display: "block", flexShrink: 0, transform: open ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 180ms ease" }}>
+      <path d="M6 9l6 6 6-6" />
     </svg>
   );
 }
@@ -271,7 +280,7 @@ function BarChart({ points, color, emptyLabel }: { points: ChartPoint[]; color: 
   const [tooltip, setTooltip] = useState<{ x: number; y: number; date: string; val: string } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const barColor = color === "orange" ? "#e8823c" : "#2fa84f";
+  const barColor = color === "orange" ? "var(--orange)" : "var(--green)";
 
   return (
     <div ref={containerRef} style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 1, height: 200 }}>
@@ -404,7 +413,7 @@ function NotifPanel({ id, open, onClose }: { id: string; open: boolean; onClose:
               background: n.unread ? "rgba(47,111,237,0.12)" : "transparent",
             }}
           >
-            <svg viewBox="0 0 24 24" fill="#e5484d" width={15} height={15} style={{ flexShrink: 0, marginTop: 1 }}>
+            <svg viewBox="0 0 24 24" fill="var(--red)" width={15} height={15} style={{ flexShrink: 0, marginTop: 1 }}>
               <path d="M12 2L1 21h22L12 2zm0 6a1 1 0 0 1 1 1v5a1 1 0 0 1-2 0V9a1 1 0 0 1 1-1zm0 9.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z" />
             </svg>
             <div>
@@ -431,7 +440,7 @@ function WorkspaceAvatar({ organization, size = 30, profileAvatarUrl }: { organi
   ) : (
     <span
       aria-hidden="true"
-      style={{ width: size, height: size, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", background: "#4d443e", color: "#f2efec", fontSize: Math.max(11, Math.round(size * 0.42)), fontWeight: 700, flexShrink: 0 }}
+      style={{ width: size, height: size, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", fontSize: Math.max(11, Math.round(size * 0.42)), fontWeight: 700, flexShrink: 0 }}
     >
       {label.slice(0, 1).toUpperCase()}
     </span>
@@ -469,7 +478,7 @@ function WorkspaceSwitcher({
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
-        top: "calc(100% + 8px)",
+        top: "calc(100% - 1px)",
         left: 0,
         width: 320,
         maxWidth: "80vw",
@@ -495,11 +504,13 @@ function WorkspaceSwitcher({
           key={organization.id}
           type="button"
           onClick={() => { onSelect(organization); onClose(); }}
-          style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 10, padding: "10px", margin: "0 8px 8px", border: 0, borderRadius: 7, background: organization.slug === activeOrganization ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
+          className="db-switcher-option"
+          style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 10, padding: "10px", margin: "0 8px 8px", border: 0, borderRadius: 7, background: "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
         >
           <WorkspaceAvatar organization={organization} size={34} profileAvatarUrl={profileAvatarUrl} />
           <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{organization.name || organization.slug}</span>
           <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999 }}>Free</span>
+          {organization.slug === activeOrganization && <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" style={{ marginLeft: "auto", flex: "0 0 16px" }}><circle cx="12" cy="12" r="10" fill="var(--green)" /><path d="m7.5 12 3 3 6-6" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>
       ))}
       <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
@@ -540,7 +551,7 @@ function ProjectSwitcher({
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
-        top: "calc(100% + 8px)",
+        top: "calc(100% - 1px)",
         left: 0,
         width: 320,
         maxWidth: "80vw",
@@ -561,10 +572,11 @@ function ProjectSwitcher({
       </div>
       {visibleProjects.length === 0 && <div style={{ padding: "16px 14px", color: "var(--text-faint)", fontSize: 13 }}>No project found.</div>}
       {visibleProjects.map((project) => (
-        <button key={project.id} type="button" onClick={() => onSelect(project)} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 9, padding: "12px 10px", margin: "8px", border: 0, borderRadius: 7, background: project.slug === activeProject ? "var(--bg)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <button className="db-switcher-option" key={project.id} type="button" onClick={() => onSelect(project)} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 9, padding: "12px 10px", margin: "8px", border: 0, borderRadius: 7, background: "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
           <span style={{ width: 24, height: 24, borderRadius: "50%", background: "#111", color: "#f2efec", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700 }}>{project.name.slice(0, 1).toUpperCase()}</span>
           <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
           <span style={{ color: "var(--text-faint)", fontSize: 11 }}><StellarNetworkLabel network={project.network} size={11} /></span>
+          {project.slug === activeProject && <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" style={{ marginLeft: "auto", flex: "0 0 16px" }}><circle cx="12" cy="12" r="10" fill="var(--green)" /><path d="m7.5 12 3 3 6-6" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>
       ))}
       <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
@@ -611,7 +623,7 @@ function NetworkMenu({
       onClick={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
-        top: "calc(100% + 8px)",
+        top: "calc(100% - 1px)",
         right: 0,
         width: 200,
         maxWidth: "80vw",
@@ -628,6 +640,7 @@ function NetworkMenu({
       </div>
       {networks.map((n) => (
         <button
+          className="db-network-option"
           type="button"
           key={n.key}
           onClick={() => onSelect(n.key)}
@@ -650,8 +663,9 @@ function NetworkMenu({
           <StellarLogo size={13} />
           {n.label}
           {network === n.key && (
-            <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" fill="none" width={12} height={12} style={{ marginLeft: "auto" }}>
-              <path d="M5 13l4 4L19 7" />
+            <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" style={{ marginLeft: "auto", flex: "0 0 16px" }}>
+              <circle cx="12" cy="12" r="10" fill="var(--green)" />
+              <path d="m7.5 12 3 3 6-6" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           )}
         </button>
@@ -681,7 +695,7 @@ function SearchModal({ open, onClose, onNavigate }: { open: boolean; onClose: ()
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 300,
+        zIndex: 2000,
         background: "rgba(0,0,0,.55)",
         display: "flex",
         alignItems: "flex-start",
@@ -832,7 +846,7 @@ function TxRow({ method, hash, from, to, time, network = DEMO_NETWORK }: Explore
   return (
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "10px 8px", gap: 7, borderTop: "1px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 7, flexShrink: 0, width: 132 }}>
-        <svg viewBox="0 0 24 24" stroke="#2fa84f" strokeWidth="2.5" fill="none" width={14} height={14} style={{ flexShrink: 0, marginTop: 2 }}>
+        <svg viewBox="0 0 24 24" stroke="var(--green)" strokeWidth="2.5" fill="none" width={14} height={14} style={{ flexShrink: 0, marginTop: 2 }}>
           <path d="M5 13l4 4L19 7" />
         </svg>
         <div>
@@ -1168,9 +1182,9 @@ function SimulatorPage() {
       <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Run scenarios against live market conditions before you commit real funds.</p>
       <Card header="Recent runs">
         <div>
-          <StatusRow dot="#2fa84f" name="Bull run · v1.2" sub="42s runtime" value="+12.4%" valueColor="#2fa84f" />
-          <StatusRow dot="#e5484d" name="Flash crash · v1.0" sub="28s runtime" value="−8.1%" valueColor="#e5484d" />
-          <StatusRow dot="#2fa84f" name="Sideways market · v1.1" sub="35s runtime" value="+0.3%" valueColor="#2fa84f" />
+          <StatusRow dot="var(--green)" name="Bull run · v1.2" sub="42s runtime" value="+12.4%" valueColor="var(--green)" />
+          <StatusRow dot="var(--red)" name="Flash crash · v1.0" sub="28s runtime" value="−8.1%" valueColor="var(--red)" />
+          <StatusRow dot="var(--green)" name="Sideways market · v1.1" sub="35s runtime" value="+0.3%" valueColor="var(--green)" />
         </div>
       </Card>
       <button style={{ margin: "0 3px", background: "transparent", border: "1px solid var(--border)", color: "var(--text)", fontSize: 12, fontWeight: 600, padding: "7px 12px", borderRadius: 5, fontFamily: "inherit", cursor: "pointer" }}>
@@ -1187,8 +1201,8 @@ function VirtualEnvPage() {
       <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Isolated sandboxes that mirror production without touching real assets.</p>
       <Card header="Environments">
         <div>
-          <StatusRow dot="#2fa84f" name="mainnet-fork" sub={<>Block height <LedgerLink sequence="19204113" network={DEMO_NETWORK} /></>} value="Synced 5m ago" />
-          <StatusRow dot="#2fa84f" name="testnet-goerli" sub={<>Block height <LedgerLink sequence="10882004" network={DEMO_NETWORK} /></>} value="Synced 1h ago" />
+          <StatusRow dot="var(--green)" name="mainnet-fork" sub={<>Block height <LedgerLink sequence="19204113" network={DEMO_NETWORK} /></>} value="Synced 5m ago" />
+          <StatusRow dot="var(--green)" name="testnet-goerli" sub={<>Block height <LedgerLink sequence="10882004" network={DEMO_NETWORK} /></>} value="Synced 1h ago" />
           <StatusRow dot="#6f6a67" name="local-devnet" sub="Booting chain state" value="Starting…" />
         </div>
       </Card>
@@ -1438,9 +1452,9 @@ function ContractsPage() {
       <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Deploy, verify, and monitor your smart contracts.</p>
       <Card header="Deployed contracts">
         <div>
-          <StatusRow dot="#2fa84f" name="MyToken.sol" sub="ERC-20" value="Verified" />
-          <StatusRow dot="#e8823c" name="Staking.sol" sub="Deploying…" value="In progress" />
-          <StatusRow dot="#e5484d" name="Auction.sol" sub="Gas estimation failed" value="Failed" />
+          <StatusRow dot="var(--green)" name="MyToken.sol" sub="ERC-20" value="Verified" />
+          <StatusRow dot="var(--orange)" name="Staking.sol" sub="Deploying…" value="In progress" />
+          <StatusRow dot="var(--red)" name="Auction.sol" sub="Gas estimation failed" value="Failed" />
         </div>
       </Card>
     </div>
@@ -1454,7 +1468,10 @@ export default function ReleeveApp() {
   const { user } = useAuth();
   const pageForPath = useCallback((path: string): PageKey => path.startsWith("/debugger/") ? "debugger" : PAGE_BY_APP_ROUTE[path] ?? "home", []);
   const [page, setPage] = useState<PageKey>(() => pathname.startsWith("/debugger/") ? "debugger" : PAGE_BY_APP_ROUTE[pathname] ?? "home");
-  const [light, setLight] = useState(false);
+  const [light, setLight] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("releeve-marketing-theme") === "light";
+  });
   const [navOpen, setNavOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState<"mobile" | "desktop" | null>(null);
@@ -1479,6 +1496,13 @@ export default function ReleeveApp() {
   const [activeOrganization, setActiveOrganization] = useState<string | null>(() => readStoredWorkspace()?.organization ?? null);
   const [activeProject, setActiveProject] = useState<string | null>(() => readStoredWorkspace()?.project ?? null);
   const previousOrganizationRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const theme = light ? "light" : "dark";
+    localStorage.setItem("releeve-marketing-theme", theme);
+    document.documentElement.dataset.marketingTheme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [light]);
 
   useEffect(() => {
     setPage(pageForPath(pathname));
@@ -1648,18 +1672,20 @@ export default function ReleeveApp() {
 
   const css = `
     :root {
-      --bg: #1D1918; --panel: #262221; --border: #4a423c;
-      --text: #f2efec; --text-dim: #9b9490; --text-faint: #6f6a67;
-      --blue: #2f6fed; --green: #2fa84f; --orange: #e8823c; --red: #e5484d; --purple: #6e56cf; --purple-hover: #7c63d8;
-      --free-badge-bg: #3a2f1e; --free-badge-text: #d9a44a; --icon-muted: #9c8a6b;
+      --bg: #121212; --panel: #181818; --panel-2: #1e1e1e; --border: #2b2b2b;
+      --text: #f5f5f5; --text-dim: #a1a1a1; --text-faint: #707070;
+      --blue: #60a5fa; --green: #a3ff5f; --orange: #fbbf24; --red: #fb7185; --purple: #9a9a9a; --purple-hover: #b0b0b0;
+      --free-badge-bg: rgba(163,255,95,.12); --free-badge-text: #a3ff5f; --icon-muted: #656b65;
     }
     .db-light {
-      --bg: #f4f1ec; --panel: #e8e2d7; --border: #d2c8b8;
-      --text: #221d19; --text-dim: #6b6157; --text-faint: #8c8172;
-      --free-badge-bg: #fbe3b5; --free-badge-text: #8a5a12; --icon-muted: #7d6a49;
+      --bg: #f7f8f5; --panel: #ffffff; --panel-2: #eef1ec; --border: #cfd4ce;
+      --text: #101310; --text-dim: #5e655e; --text-faint: #7e857e;
+      --green: #70df35; --free-badge-bg: rgba(112,223,53,.14); --free-badge-text: #2f7d18; --icon-muted: #7e857e;
     }
     .db-root * { box-sizing: border-box; }
     .db-root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; font-size: 12.5px; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .db-topbar { position: relative; z-index: 500; overflow: visible; }
+    .db-switcher-option:hover, .db-network-option:hover { background: var(--panel-2) !important; }
     .pw-toast-container { position: fixed; top: 20px; left: 50%; z-index: 9999; display: flex; width: min(400px, 92vw); flex-direction: column; gap: 8px; pointer-events: none; transform: translateX(-50%); }
     .pw-toast { position: relative; height: 52px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--panel) 84%, var(--bg) 16%); box-shadow: 0 8px 20px rgb(0 0 0 / 48%); animation: pwToastIn 260ms ease forwards; pointer-events: auto; }
     .pw-toast-fill { position: absolute; inset: 0; width: 0%; background: color-mix(in srgb, var(--text) 10%, var(--panel)); animation: pwToastFill 4s linear forwards; }
@@ -1736,7 +1762,7 @@ export default function ReleeveApp() {
     .btn-ex { display: inline-flex; align-items: center; gap: 7px; font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 9px 14px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
     .btn-ex svg { width: 14px; height: 14px; }
     .btn-ex-outline { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
-    .btn-ex-outline:hover { background: #2e2926; }
+    .btn-ex-outline:hover { background: var(--panel-2); }
     .btn-ex-green { background: var(--green); border: 1px solid var(--green); color: #fff; }
     .btn-ex-green:hover { background: #2fb85a; }
     .btn-ex-purple { background: var(--purple); border: 1px solid var(--purple); color: #fff; }
@@ -1987,7 +2013,7 @@ export default function ReleeveApp() {
                       position: "absolute",
                       top: -4,
                       right: -5,
-                      background: "#e5484d",
+                      background: "var(--red)",
                       color: "#fff",
                       fontSize: 8,
                       fontWeight: 700,
@@ -2020,6 +2046,10 @@ export default function ReleeveApp() {
                 )}
               </Icon>
             </span>
+            <SharedProfileMenu
+              organization={organizations.find((organization) => organization.slug === activeOrganization) ?? null}
+              onOpenSettings={() => navigate("organization-settings")}
+            />
           </div>
         </div>
 
@@ -2028,14 +2058,14 @@ export default function ReleeveApp() {
           <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: "0 1 auto", overflow: "visible" }}>
             {/* Workspace switcher */}
             <div data-dashboard-popover style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
-              <button
-                onClick={() => {
-                  setWsOpen((v) => !v);
-                  setProjOpen(false);
-                  setNotifOpen(null);
-                }}
-                style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "none", border: "none", padding: 0, fontFamily: "inherit", color: "inherit" }}
-              >
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeOrganization) router.push(`/organizations/${encodeURIComponent(activeOrganization)}`);
+                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "none", border: "none", padding: 0, fontFamily: "inherit", color: "inherit" }}
+                >
                 <WorkspaceAvatar organization={organizations.find((organization) => organization.slug === activeOrganization) || { id: "active", slug: activeOrganization || "organization", name: activeOrganization, is_personal: true }} size={30} profileAvatarUrl={user?.avatar_url} />
                 <span style={{ fontWeight: 650, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 145 }}>
                   {organizations.find((organization) => organization.slug === activeOrganization)?.name || activeOrganization || "Organization"}
@@ -2043,19 +2073,28 @@ export default function ReleeveApp() {
                 <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, flexShrink: 0 }}>
                   Free
                 </span>
-                <span style={{ color: "var(--text-faint)", display: "flex" }}>
-                  <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none" width={11} height={11}>
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </span>
-              </button>
+                </button>
+                <button
+                  type="button"
+                  aria-label={wsOpen ? "Close organization menu" : "Open organization menu"}
+                  aria-expanded={wsOpen}
+                  onClick={() => {
+                    setWsOpen((v) => !v);
+                    setProjOpen(false);
+                    setNotifOpen(null);
+                  }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 22, cursor: "pointer", background: "none", border: "none", padding: 0, color: "var(--text-faint)" }}
+                >
+                  <DropdownChevron open={wsOpen} />
+                </button>
+              </div>
               <WorkspaceSwitcher
                 open={wsOpen}
                 onClose={() => setWsOpen(false)}
                 organizations={organizations}
                 activeOrganization={activeOrganization}
                 onSelect={selectOrganization}
-                onCreate={() => router.push("/onboarding")}
+                onCreate={() => router.push("/organizations/new")}
                 onHome={() => navigate("home")}
                 onSettings={() => navigate("organization-settings")}
                 profileAvatarUrl={user?.avatar_url}
@@ -2067,6 +2106,8 @@ export default function ReleeveApp() {
             {/* Project switcher */}
             <div data-dashboard-popover style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
               <button
+                type="button"
+                aria-expanded={projOpen}
                 onClick={() => {
                   setProjOpen((v) => !v);
                   setWsOpen(false);
@@ -2077,11 +2118,7 @@ export default function ReleeveApp() {
                 <span style={{ color: "var(--text-dim)", fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>
                   {projects.find((project) => project.slug === activeProject)?.name || activeProject || "Project"}
                 </span>
-                <span style={{ color: "var(--text-faint)", display: "flex" }}>
-                  <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none" width={11} height={11}>
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
-                </span>
+                <span style={{ color: "var(--text-faint)", display: "flex" }}><DropdownChevron open={projOpen} /></span>
               </button>
               <ProjectSwitcher
                 open={projOpen}
@@ -2130,9 +2167,7 @@ export default function ReleeveApp() {
                 }}
               >
                 <StellarNetworkLabel network={network} size={13} />{" "}
-                <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none" width={12} height={12}>
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
+                <DropdownChevron open={netOpen === "production"} size={12} />
               </button>
               <NetworkMenu
                 id="netMenu"

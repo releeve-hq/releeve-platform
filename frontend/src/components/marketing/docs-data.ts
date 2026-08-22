@@ -15,6 +15,37 @@ export type DocGuide = {
 
 export const docGuides: DocGuide[] = [
   {
+    slug: "overview",
+    label: "Overview",
+    description: "Releeve replays Soroban invocations against real Stellar ledger state, with environments you control.",
+    sections: [
+      {
+        heading: "What Releeve is",
+        paragraphs: ["Releeve is a platform for running Soroban smart contracts against real Stellar state. A simulation starts from a real ledger snapshot and executes through the same Soroban host the network uses — the outcome is execution against hypothetical state, not a statistical estimate."],
+      },
+      {
+        heading: "The workflow",
+        paragraphs: ["Start with a first simulation: create a workspace, issue an access token, and queue an invocation. Then move into persistent environments, monitoring rules, debugging, and programmatic access."],
+        bullets: [
+          "Quickstart — queue your first simulation and inspect the result",
+          "Simulations — replay Soroban invocations against real snapshots with controlled state",
+          "Virtual environments — keep a named snapshot, its overrides, and its history together",
+          "Monitoring — compose alert rules from a target, expressions, and delivery destinations",
+          "Debugger — step through what actually happened in a transaction with state at every step",
+          "Source verification — attach source to on-chain WASM so every tool decodes for humans",
+        ],
+      },
+      {
+        heading: "What you get back",
+        paragraphs: ["Every execution is verified before it is trusted. Output is byte-matched against official Stellar simulateTransaction and getTransaction results after narrow JSON normalization, and executions carry certificates that prove the inputs were complete and consistent."],
+      },
+      {
+        heading: "Programmatic access",
+        paragraphs: ["The API reference is canonical for exact routes and schemas. Asynchronous operations return 202 with a persisted run ID; environment creation returns 201. Errors use structured envelopes with stable machine-readable codes."],
+      },
+    ],
+  },
+  {
     slug: "quickstart",
     label: "Quickstart",
     description: "Create a workspace, issue an access token, and queue your first simulation.",
@@ -292,6 +323,31 @@ export const docGuides: DocGuide[] = [
     ],
   },
   {
+    slug: "networks",
+    label: "Networks",
+    description: "The Stellar networks Releeve can fork, replay, and write to.",
+    sections: [
+      {
+        heading: "Overview",
+        paragraphs: ["A Releeve network is a Stellar network that the platform can fork, replay, and write to. Projects are scoped to one network, which determines the ledger state a simulation starts from."],
+      },
+      {
+        heading: "Network types",
+        paragraphs: ["Releeve supports the public Stellar networks — testnet, mainnet, and futurenet — plus virtual environments that branch from them."],
+        bullets: ["Testnet: the default for experiments; resets occasionally", "Mainnet: real production state; simulation overrides let you test what-if changes", "Futurenet: protocol-versioned testing network"],
+      },
+      {
+        heading: "Node access",
+        paragraphs: ["Reads go through the network's RPC endpoints and ingestion pipeline. Ledger data is mirrored so simulations can fork from any point in the retained history."],
+      },
+      {
+        heading: "Ledger snapshots",
+        paragraphs: ["Each simulation starts from a snapshot of the base ledger. Snapshots are cached and materialized on demand; pinned historical ledgers stay available within the retained range."],
+        note: "If a snapshot is not yet cached, the first simulation on it may take longer while the cold materializer builds it.",
+      },
+    ],
+  },
+  {
     slug: "protocol-support",
     label: "Protocol support",
     description: "Which ledgers Releeve can reason about, and what happens below the boundary.",
@@ -449,37 +505,6 @@ export type DocTab = {
 
 export const docTabs: DocTab[] = [
   {
-    slug: "networks",
-    label: "Networks",
-    description: "The Stellar networks Releeve can fork, replay, and write to.",
-    nav: [
-      { slug: "overview", label: "Overview", description: "What a Releeve network is" },
-      { slug: "network-types", label: "Network types", description: "Testnet, mainnet, futurenet" },
-      { slug: "node-access", label: "Node access", description: "RPC and ingestion" },
-      { slug: "ledger-snapshots", label: "Ledger snapshots", description: "Snapshot sources and age" },
-    ],
-    sections: [
-      {
-        heading: "Overview",
-        paragraphs: ["A Releeve network is a Stellar network that the platform can fork, replay, and write to. Projects are scoped to one network, which determines the ledger state a simulation starts from."],
-      },
-      {
-        heading: "Network types",
-        paragraphs: ["Releeve supports the public Stellar networks — testnet, mainnet, and futurenet — plus virtual environments that branch from them."],
-        bullets: ["Testnet: the default for experiments; resets occasionally", "Mainnet: real production state; simulation overrides let you test what-if changes", "Futurenet: protocol-versioned testing network"],
-      },
-      {
-        heading: "Node access",
-        paragraphs: ["Reads go through the network's RPC endpoints and ingestion pipeline. Ledger data is mirrored so simulations can fork from any point in the retained history."],
-      },
-      {
-        heading: "Ledger snapshots",
-        paragraphs: ["Each simulation starts from a snapshot of the base ledger. Snapshots are cached and materialized on demand; pinned historical ledgers stay available within the retained range."],
-        note: "If a snapshot is not yet cached, the first simulation on it may take longer while the cold materializer builds it.",
-      },
-    ],
-  },
-  {
     slug: "api-reference",
     label: "API reference",
     description: "Programmatic access to Releeve simulations, environments, and monitoring.",
@@ -576,30 +601,25 @@ export type DocsTreeItem = DocsTreePage | DocsTreeLabel | DocsTreeGroup;
 
 export const docsTree: DocsTreeItem[] = [
   { type: "label", label: "Getting started" },
+  { type: "page", slug: "overview", label: "Overview" },
   { type: "page", slug: "quickstart", label: "Quickstart" },
-  { type: "group", label: "Simulation", children: [
-    { type: "page", slug: "simulations", label: "Simulations" },
-    { type: "page", slug: "virtual-environments", label: "Virtual environments" },
-    { type: "group", label: "Testing", children: [
-      { type: "page", slug: "correctness-and-trust", label: "Correctness and trust" },
-    ] },
-  ] },
-  { type: "group", label: "Monitoring", children: [
-    { type: "page", slug: "monitoring", label: "Monitoring" },
-    { type: "group", label: "Explorer", children: [
-      { type: "page", slug: "explorer", label: "Explorer" },
-    ] },
-  ] },
-  { type: "group", label: "Building", children: [
-    { type: "page", slug: "debugger", label: "Debugger" },
-    { type: "page", slug: "source-verification", label: "Source verification" },
-    { type: "page", slug: "protocol-support", label: "Protocol support" },
-    { type: "page", slug: "node-rpc", label: "Node and RPC" },
-    { type: "group", label: "Platform", children: [
-      { type: "page", slug: "write-path", label: "Write path" },
-      { type: "page", slug: "accounts-projects", label: "Accounts and projects" },
-      { type: "page", slug: "pricing", label: "Pricing" },
-    ] },
+  { type: "label", label: "Simulation" },
+  { type: "page", slug: "simulations", label: "Simulations" },
+  { type: "page", slug: "virtual-environments", label: "Virtual environments" },
+  { type: "page", slug: "correctness-and-trust", label: "Correctness and trust" },
+  { type: "label", label: "Monitoring" },
+  { type: "page", slug: "monitoring", label: "Monitoring" },
+  { type: "page", slug: "explorer", label: "Explorer" },
+  { type: "label", label: "Building" },
+  { type: "page", slug: "debugger", label: "Debugger" },
+  { type: "page", slug: "source-verification", label: "Source verification" },
+  { type: "page", slug: "protocol-support", label: "Protocol support" },
+  { type: "page", slug: "node-rpc", label: "Node and RPC" },
+  { type: "page", slug: "networks", label: "Networks" },
+  { type: "group", label: "Platform", children: [
+    { type: "page", slug: "write-path", label: "Write path" },
+    { type: "page", slug: "accounts-projects", label: "Accounts and projects" },
+    { type: "page", slug: "pricing", label: "Pricing" },
   ] },
 ];
 
