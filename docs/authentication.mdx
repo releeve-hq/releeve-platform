@@ -1,0 +1,31 @@
+---
+title: Authentication
+description: Authenticate browser sessions and programmatic requests safely.
+---
+
+Releeve has two authentication surfaces: browser sessions for the product and organization tokens for scripts, CI, and backend services.
+
+## API requests
+
+Send an organization token in the `Authorization` header:
+
+```http
+Authorization: Bearer rlv_...
+```
+
+Tokens are scoped to an organization. Use the narrowest project and permission scope available for the workflow.
+
+## Token handling
+
+- Never commit a token to source control.
+- Use separate tokens for local work and CI.
+- Rotate a token when it may have been exposed.
+- Do not put a token in client-side JavaScript or a public browser URL.
+
+## Service boundary
+
+Your API token is accepted by the Releeve platform. The platform authorizes requests and then uses a short-lived signed service assertion when it communicates with the simulation engine. Your token is not an engine credential.
+
+## Response errors
+
+Authentication and authorization failures use structured error responses. The API reference will document the exact status codes and fields once the generated OpenAPI contract is published.

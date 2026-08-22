@@ -1,0 +1,34 @@
+---
+title: Build with real Stellar state
+description: Releeve lets you test Soroban transactions against verified ledger state before you sign or submit them.
+---
+
+Releeve is a developer platform for understanding what a Soroban transaction will do before it reaches the network.
+
+Start with a simulation, then move into a persistent virtual environment when you need controlled state across multiple transactions.
+
+## What Releeve does
+
+- Replays Soroban invocations against verified Stellar ledger state
+- Shows contract calls, events, state changes, return values, and resource usage
+- Lets you test controlled changes without touching the real network
+- Keeps the base ledger and scenario changes visible as execution evidence
+
+## The path through Releeve
+
+1. Create a project for a supported Stellar network.
+2. Run a first simulation against the latest verified state.
+3. Add overrides when you need to test a controlled scenario.
+4. Create a virtual environment when state must persist between transactions.
+5. Use the API reference when you are ready to automate the workflow.
+
+## Important boundary
+
+Releeve simulations do not sign or submit transactions to Stellar. A virtual environment is an isolated scenario surface. Its writes are not consensus, broadcast, or mainnet activity.
+
+## Where to go next
+
+- [Run your first simulation](/quickstart)
+- [Understand the execution model](/simulations)
+- [Create a virtual environment](/virtual-environments)
+- [Authenticate API requests](/authentication)

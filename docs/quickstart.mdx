@@ -1,0 +1,59 @@
+---
+title: Quickstart
+description: Run your first Soroban simulation against verified Stellar state.
+---
+
+This guide takes you from an API token to a completed simulation.
+
+## Before you begin
+
+You need:
+
+- A Releeve account and project
+- An organization API token
+- A Soroban contract ID
+- The function name and arguments you want to test
+
+The exact project and token screens may change while Releeve is in active development. Do not place a production secret key in a simulation request. Releeve does not need your Stellar secret key for simulation.
+
+## Set your environment
+
+```bash
+export RELEEVE_API="https://api.releeve.xyz"
+export RELEEVE_TOKEN="rlv_..."
+export RELEEVE_ORG="your-organization"
+export RELEEVE_PROJECT="your-project"
+```
+
+Use a separate token for local development and CI. Store it in your secret manager rather than committing it to a repository.
+
+## Queue a simulation
+
+```bash
+curl -X POST "$RELEEVE_API/api/v1/$RELEEVE_ORG/$RELEEVE_PROJECT/simulations" \
+  -H "Authorization: Bearer $RELEEVE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: checkout-example-001" \
+  -d '{
+    "contract_id": "C...",
+    "function_name": "deposit",
+    "args": [],
+    "overrides": [],
+    "impersonate": []
+  }'
+```
+
+Simulation requests are asynchronous. Save the returned run ID and use it to retrieve the result.
+
+## Read the result
+
+```bash
+curl "$RELEEVE_API/api/v1/$RELEEVE_ORG/$RELEEVE_PROJECT/simulations/$RUN_ID" \
+  -H "Authorization: Bearer $RELEEVE_TOKEN"
+```
+
+A successful result includes execution evidence such as calls, events, state changes, resource usage, and the returned value. A failed simulation means the invocation ran and produced a contract or host failure. An error means the platform could not complete the request.
+
+## What to learn next
+
+Read [Simulations](/simulations) to understand base state, overrides, impersonation, and result evidence.

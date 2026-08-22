@@ -1,0 +1,22 @@
+---
+title: Networks and protocol support
+description: Understand which network state Releeve can currently verify.
+---
+
+Releeve treats network and protocol identity as part of the execution input. A result is only useful when the selected state can be tied to the correct network, ledger, and protocol lane.
+
+## Current public focus
+
+- Mainnet latest-state workflows
+- Testnet latest-state workflows
+- Soroban protocol lanes supported by the engine and API
+
+Historical replay is not assumed to be available merely because a ledger number exists. The engine must prove that the required state and ledger boundaries are complete before execution is trusted.
+
+## What a result should show
+
+Execution evidence should include the network, requested ledger, state ledger, protocol version, ledger hash, and the sources used to resolve the state.
+
+## Unsupported or unavailable state
+
+When Releeve cannot prove the requested state, it should return an explicit unavailable, inconclusive, or structured error result. It should never substitute a nearby ledger and present it as the requested one.

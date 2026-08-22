@@ -1,0 +1,22 @@
+---
+title: Troubleshooting
+description: Understand simulation outcomes and common request failures.
+---
+
+## Failed versus error
+
+`failed` means the invocation executed and produced a contract or host failure. That is a useful simulation result: it explains why the transaction would fail for the selected state and inputs.
+
+`error` means the platform or engine could not complete the request. It may indicate unavailable state, an invalid request, an upstream failure, or a budget limit.
+
+## Idempotency
+
+Use an `Idempotency-Key` for retryable create and simulation requests. Reusing the same key with the same request body should return the same logical operation. Reusing it with a different body should be treated as a conflict.
+
+## State availability
+
+A requested ledger may be unavailable when the required snapshot, footprint, payload, or proof cannot be verified. The correct response is an explicit failure to establish trustworthy state, not a result based on an unverified substitute.
+
+## What to include in a support report
+
+Include the organization, project, network, request ID, run ID if available, endpoint, status code, machine-readable error code, and the ledger or environment involved. Do not include API tokens or secret keys.

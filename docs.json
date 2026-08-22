@@ -1,0 +1,45 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Releeve",
+  "theme": "sequoia",
+  "colors": {
+    "primary": "#A3FF5F",
+    "light": "#C5FF98",
+    "dark": "#74C83D"
+  },
+  "description": "Run Soroban simulations against verified Stellar state.",
+  "appearance": {
+    "default": "dark",
+    "strict": true
+  },
+  "fonts": {
+    "family": "Inter"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get started",
+        "pages": [
+          "index",
+          "quickstart",
+          "authentication"
+        ]
+      },
+      {
+        "group": "Core concepts",
+        "pages": [
+          "simulations",
+          "virtual-environments",
+          "networks"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "troubleshooting",
+          "api/overview"
+        ]
+      }
+    ]
+  }
+}

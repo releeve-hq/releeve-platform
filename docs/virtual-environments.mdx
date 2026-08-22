@@ -1,0 +1,29 @@
+---
+title: Virtual environments
+description: Keep a named scenario, its overrides, and its execution history together.
+---
+
+A virtual environment is a project-scoped scenario built from a verified Stellar state. It gives a team a named place to keep controlled changes and run related simulations.
+
+## Use an environment when
+
+- Several transactions need to see the same scenario state
+- A test case needs persistent overrides
+- You want a stable scenario for a team or CI workflow
+- You need to compare revisions without overwriting the original state
+
+## Base state and overrides
+
+The environment records its base network, protocol, and ledger provenance. Overrides are stored separately and shadow matching base entries. This keeps the scenario change visible instead of making it look like network state.
+
+## Latest-state behavior
+
+Follow-latest environments can resolve against the authoritative latest state for their supported network lane. A stale or unverifiable environment must be marked invalid rather than silently rebased.
+
+## Branching
+
+Branch an environment when a scenario needs an independent line of experimentation. The original environment remains available for comparison.
+
+## Writes
+
+Environment write behavior is being completed and verified. Until the write path is explicitly enabled for your account and environment, use simulations for read-only experimentation. Nothing in a virtual environment is broadcast to Stellar consensus.

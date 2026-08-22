@@ -1,0 +1,40 @@
+---
+title: Simulations
+description: Replay Soroban invocations against verified Stellar state.
+---
+
+A simulation starts from a verified Stellar ledger state and executes an invocation through the Soroban host boundary. It models what would happen for the selected inputs; it does not submit anything to the network.
+
+## Choose the base state
+
+The current public workflow is latest-state simulation for the supported network and protocol lane. Historical replay remains subject to availability and verification gates. Releeve should report an unavailable or inconclusive result rather than silently guessing when the requested state cannot be proven.
+
+## Add controlled changes
+
+Overrides let you test a scenario without changing the network:
+
+- Account or asset balances
+- Contract storage entries
+- Ledger sequence and close time
+- Entry TTL and storage footprint
+
+Every result must make the difference between network-derived state and scenario overrides visible.
+
+## Impersonation
+
+Impersonation can satisfy an authorization path for a simulation without possessing an account secret key. It does not sign a transaction and does not grant wallet custody.
+
+## Read the evidence
+
+Simulation results are useful when they explain the execution, not only when they return a value. Look for:
+
+- Nested contract calls
+- Authorization records
+- Contract and diagnostic events
+- Before-and-after ledger-entry state
+- CPU, memory, read, and write resources
+- Return values and structured host errors
+
+## Simulation versus environment writes
+
+Simulations are isolated requests. Use a [virtual environment](/virtual-environments) when multiple transactions need to build on state produced by previous transactions.
