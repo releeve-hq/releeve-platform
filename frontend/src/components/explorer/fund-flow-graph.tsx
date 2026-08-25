@@ -396,7 +396,11 @@ function GraphCanvas({
           padding: 0 9px;
           border: 1px solid var(--border);
           border-radius: 5px;
-          background: var(--bg);
+          background: var(--panel-2);
+        }
+        .flow-search:focus-within {
+          border-color: var(--text-faint);
+          box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent);
         }
         .flow-search :global(svg) {
           width: 13px;

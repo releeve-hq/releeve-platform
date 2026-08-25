@@ -79,6 +79,15 @@ async fn openapi_exposes_platform_routes_and_bearer_security() {
         "/api/v1/{org}/{project}/environments/{environment_id}/revisions",
         "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/activate",
         "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+        "/api/v1/{org}/{project}/environments/{environment_id}/wallets",
+        "/api/v1/{org}/{project}/environments/{environment_id}/wallets/{wallet_id}",
+        "/api/v1/{org}/{project}/environments/{environment_id}/deployments",
+        "/api/v1/{org}/{project}/environments/{environment_id}/deploy",
+        "/api/v1/{org}/{project}/environments/{environment_id}/fund",
+        "/api/v1/{org}/{project}/environments/{environment_id}/activity",
+        "/api/v1/{org}/{project}/environments/{environment_id}/rpc-logs",
+        "/api/v1/{org}/{project}/environments/{environment_id}/rpc-secret/rotate",
+        "/api/v1/public/virtual-explorer/{org}/{project}/{environment_id}",
     ] {
         assert!(
             spec["paths"].get(path).is_some(),

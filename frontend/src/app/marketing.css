@@ -197,7 +197,7 @@ button.marketing-nav-search {
   gap: 8px;
   border: 1px solid var(--m-line);
   border-radius: 5px;
-  background: var(--m-panel);
+  background: var(--m-panel-2);
   color: var(--m-dim);
   font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 11px;
@@ -208,6 +208,7 @@ button.marketing-nav-search {
 }
 button.marketing-nav-search:hover { border-color: color-mix(in srgb, var(--m-muted) 40%, var(--m-line)); }
 button.marketing-nav-search[aria-expanded="true"] { border-color: color-mix(in srgb, var(--m-muted) 75%, var(--m-line)); }
+button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(in srgb, var(--m-muted) 75%, var(--m-line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--m-ink) 10%, transparent); }
 .marketing-nav-search svg { flex: 0 0 auto; stroke-width: 1.5; }
 
 .marketing-nav-search-wrap { position: relative; }

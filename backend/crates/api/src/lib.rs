@@ -24,7 +24,7 @@ pub mod simulations;
 pub mod state;
 pub mod tokens;
 
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -98,7 +98,7 @@ fn add_phase3_path(
 }
 
 fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
-    use utoipa::openapi::path::HttpMethod::{Delete, Get, Patch, Post};
+    use utoipa::openapi::path::HttpMethod::{Delete, Get, Patch, Post, Put};
 
     for (path, method, summary) in [
         (
@@ -427,6 +427,76 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             Post,
             "Branch immutable environment revision",
         ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc-slug",
+            Put,
+            "Set or clear the environment's named public RPC URL (org admin only)",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/transactions",
+            Post,
+            "Auto-mine a transaction into an environment",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/deploy",
+            Post,
+            "Deploy WASM into an environment",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc",
+            Post,
+            "Call the authenticated environment JSON-RPC endpoint",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/wallets",
+            Get,
+            "List linked environment wallets",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/wallets",
+            Post,
+            "Link any Stellar wallet address",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/wallets/{wallet_id}",
+            Patch,
+            "Rename a linked environment wallet",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/deployments",
+            Get,
+            "List environment contract deployments",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/fund",
+            Post,
+            "Apply an XLM or standard SAC virtual balance",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/fund/assets",
+            Post,
+            "Resolve standard SAC funding metadata",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/activity",
+            Get,
+            "List persisted environment activity",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc-logs",
+            Get,
+            "List redacted environment RPC call metadata",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc-secret/rotate",
+            Post,
+            "Rotate the environment admin RPC credential",
+        ),
+        (
+            "/api/v1/public/virtual-explorer/{org}/{project}/{environment_id}",
+            Get,
+            "Read public virtual environment explorer data",
+        ),
     ] {
         add_phase3_path(openapi, path, method, summary);
     }
@@ -589,7 +659,11 @@ pub fn app(state: AppState) -> Router {
             Method::PATCH,
             Method::DELETE,
         ])
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE]);
+        .allow_headers([
+            AUTHORIZATION,
+            CONTENT_TYPE,
+            axum::http::HeaderName::from_static("idempotency-key"),
+        ]);
 
     Router::new()
         .route("/health", get(health_check))
@@ -736,6 +810,14 @@ pub fn app(state: AppState) -> Router {
             get(list_alerts).post(create_alert),
         )
         .route(
+            "/api/v1/{org}/{project}/alerts/events",
+            get(list_alert_event_topics),
+        )
+        .route(
+            "/api/v1/{org}/{project}/alerts/assets",
+            get(list_alert_assets),
+        )
+        .route(
             "/api/v1/{org}/{project}/alerts/{alert_id}",
             patch(patch_alert).delete(delete_alert),
         )
@@ -746,6 +828,14 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/{org}/{project}/simulations",
             get(list_simulations).post(create_simulation),
+        )
+        .route(
+            "/api/v1/{org}/{project}/simulations/sequence",
+            post(simulation_sequence),
+        )
+        .route(
+            "/api/v1/{org}/{project}/simulations/contract-entries",
+            post(simulation_contract_entries),
         )
         .route(
             "/api/v1/{org}/{project}/simulations/{simulation_id}",
@@ -810,11 +900,50 @@ pub fn app(state: AppState) -> Router {
             post(environment_deploy),
         )
         .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/wallets",
+            get(list_environment_wallets).post(add_environment_wallet),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/wallets/{wallet_id}",
+            patch(rename_environment_wallet),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/deployments",
+            get(list_environment_deployments),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/fund",
+            post(fund_environment),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/fund/assets",
+            post(resolve_funding_asset),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/activity",
+            get(environment_activity),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc-logs",
+            get(environment_rpc_logs),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc-secret/rotate",
+            post(rotate_environment_rpc_secret),
+        )
+        .route(
             "/api/v1/{org}/{project}/environments/{environment_id}/rpc",
             post(environment_rpc_authed),
         )
+        // Named RPC URLs: org admins may give an environment a memorable,
+        // project-scoped public RPC name (uuid URLs keep working either way).
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/rpc-slug",
+            put(set_environment_rpc_slug),
+        )
         // Tenderly-style dedicated RPC URLs: the path IS the RPC endpoint, and a
         // JSON-RPC POST to it is the call. Public (no token) vs admin (secret).
+        // {environment_id} accepts the env UUID or its rpc_slug.
         .route(
             "/v/{org}/{project}/{environment_id}",
             post(environment_rpc),
@@ -822,6 +951,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/v/{org}/{project}/{environment_id}/{admin_secret}",
             post(environment_rpc_admin),
+        )
+        .route(
+            "/api/v1/public/virtual-explorer/{org}/{project}/{environment_id}",
+            get(public_environment_explorer),
         )
         .route(
             "/api/v1/{org}/{project}/networks/{network}/coverage",

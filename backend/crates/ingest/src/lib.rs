@@ -4,6 +4,7 @@
 //! ledger entries into the platform, plus feed materialization and rate-limiting
 //! for the public explorer endpoints.
 
+pub mod alerts_eval;
 pub mod asset;
 pub mod daemon;
 pub mod decode;

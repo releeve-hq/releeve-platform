@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
+import { Network } from "lucide-react";
 import { AddressLink, LedgerLink, TxHashLink } from "@/components/explorer/entity-links";
 import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
 import { truncateEntity, isContractAddress } from "@/lib/explorer-routes";
@@ -34,8 +35,9 @@ import {
   type ExplorerLedger,
   type ExplorerTransaction,
 } from "@/lib/explorer-demo-data";
-import { OrganizationSettingsPage, ProjectSettingsPage } from "@/components/app/settings-pages";
+import { ProjectSettingsPage } from "@/components/app/settings-pages";
 import { SharedProfileMenu } from "@/components/ui/shared-profile-menu";
+import { ReleeveLogo } from "@/components/ui/releeve-logo";
 
 /* ─── types ─── */
 type PageKey =
@@ -389,7 +391,7 @@ function NotifPanel({ id, open, onClose }: { id: string; open: boolean; onClose:
           Mark all as read
         </span>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+      <div className="db-notification-search" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Icon size={14}>
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
@@ -430,19 +432,15 @@ function NotifPanel({ id, open, onClose }: { id: string; open: boolean; onClose:
 /* ─── Switch panel (workspace / project) ─── */
 function WorkspaceAvatar({ organization, size = 30, profileAvatarUrl }: { organization: WorkspaceOrganization; size?: number; profileAvatarUrl?: string }) {
   const label = organization.name || organization.slug || "Organization";
-  const avatarUrl = organization.is_personal ? profileAvatarUrl || organization.avatar_url : organization.avatar_url;
-  return avatarUrl ? (
-    <img
-      src={avatarUrl}
-      alt=""
-      style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, background: "var(--panel)" }}
-    />
-  ) : (
+  void profileAvatarUrl;
+  return (
     <span
-      aria-hidden="true"
-      style={{ width: size, height: size, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", fontSize: Math.max(11, Math.round(size * 0.42)), fontWeight: 700, flexShrink: 0 }}
+      aria-label={label}
+      role="img"
+      title={label}
+      style={{ width: size, height: size, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", flexShrink: 0 }}
     >
-      {label.slice(0, 1).toUpperCase()}
+      <Network size={Math.max(16, Math.round(size * 0.58))} strokeWidth={1.8} aria-hidden="true" />
     </span>
   );
 }
@@ -454,8 +452,6 @@ function WorkspaceSwitcher({
   activeOrganization,
   onSelect,
   onCreate,
-  onHome,
-  onSettings,
   profileAvatarUrl,
 }: {
   open: boolean;
@@ -464,8 +460,6 @@ function WorkspaceSwitcher({
   activeOrganization: string | null;
   onSelect: (organization: WorkspaceOrganization) => void;
   onCreate: () => void;
-  onHome: () => void;
-  onSettings: () => void;
   profileAvatarUrl?: string;
 }) {
   const [query, setQuery] = useState("");
@@ -480,7 +474,7 @@ function WorkspaceSwitcher({
         position: "absolute",
         top: "calc(100% - 1px)",
         left: 0,
-        width: 320,
+        width: 280,
         maxWidth: "80vw",
         background: "var(--panel)",
         border: "1px solid var(--border)",
@@ -490,12 +484,12 @@ function WorkspaceSwitcher({
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
+      <div className="db-switcher-search" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Icon size={14}>
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </Icon>
-        <input aria-label="Find organization" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find organization" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
+        <input className="db-switcher-search-field" aria-label="Find organization" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find organization" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
       </div>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "16px 14px 8px" }}>Organizations</div>
       {visibleOrganizations.length === 0 && <div style={{ padding: "2px 14px 14px", color: "var(--text-faint)", fontSize: 13 }}>No organization found.</div>}
@@ -513,13 +507,6 @@ function WorkspaceSwitcher({
           {organization.slug === activeOrganization && <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" style={{ marginLeft: "auto", flex: "0 0 16px" }}><circle cx="12" cy="12" r="10" fill="var(--green)" /><path d="m7.5 12 3 3 6-6" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>
       ))}
-      <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
-      <button type="button" onClick={() => { onHome(); onClose(); }} style={{ display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
-        <Icon size={16}><path d="M4 11l8-7 8 7M6 10v9h5v-5h2v5h5v-9" /></Icon> Home
-      </button>
-      <button type="button" onClick={() => { onSettings(); onClose(); }} style={{ display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
-        <Icon size={16}>{getNavIcon("settings")}</Icon> Organization settings
-      </button>
       <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
         <Icon size={15}>
           <path d="M12 5v14M5 12h14" />
@@ -563,12 +550,12 @@ function ProjectSwitcher({
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
+      <div className="db-switcher-search" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Icon size={14}>
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </Icon>
-        <input aria-label="Find project" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
+        <input className="db-switcher-search-field" aria-label="Find project" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
       </div>
       {visibleProjects.length === 0 && <div style={{ padding: "16px 14px", color: "var(--text-faint)", fontSize: 13 }}>No project found.</div>}
       {visibleProjects.map((project) => (
@@ -691,6 +678,7 @@ function SearchModal({ open, onClose, onNavigate }: { open: boolean; onClose: ()
 
   return (
     <div
+      className="db-search-modal-backdrop"
       onClick={onClose}
       style={{
         position: "fixed",
@@ -704,6 +692,7 @@ function SearchModal({ open, onClose, onNavigate }: { open: boolean; onClose: ()
       }}
     >
       <div
+        className="db-search-modal"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg)",
@@ -718,7 +707,7 @@ function SearchModal({ open, onClose, onNavigate }: { open: boolean; onClose: ()
           boxShadow: "0 24px 60px rgba(0,0,0,.5)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <div className="db-search-modal-input" style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
           <Icon size={16}>
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4.3-4.3" />
@@ -1071,7 +1060,7 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
   return (
     <div>
       <DashboardToastPopup message={feedError} kind="error" onDone={() => setFeedError(null)} />
-      <h1 style={{ fontSize: 21, fontWeight: 700, lineHeight: 1.28, margin: "2px 3px 14px", letterSpacing: -0.2 }}>
+      <h1 style={{ fontSize: 21, fontWeight: 400, lineHeight: 1.28, margin: "2px 3px 14px", letterSpacing: -0.2 }}>
         Find any address, token, or transaction — decoded
       </h1>
       <div style={{ margin: "0 3px 16px" }}><GlobalExplorerSearch network={network} /></div>
@@ -1197,7 +1186,7 @@ function SimulatorPage() {
 function VirtualEnvPage() {
   return (
     <div>
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Virtual Environment</h1>
+      <h1 style={{ fontSize: 18, fontWeight: 400, margin: "0 0 5px" }}>Virtual Environment</h1>
       <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Isolated sandboxes that mirror production without touching real assets.</p>
       <Card header="Environments">
         <div>
@@ -1213,7 +1202,7 @@ function VirtualEnvPage() {
 function ActivityPage() {
   return (
     <div>
-      <h1 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 5px" }}>Activity</h1>
+      <h1 style={{ fontSize: 18, fontWeight: 400, margin: "0 0 5px" }}>Activity</h1>
       <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>A live feed of transactions, deployments, and account events.</p>
       <Card header="Recent activity">
         <div style={{ padding: "12px 8px" }}>
@@ -1477,7 +1466,8 @@ export default function ReleeveApp() {
   const [notifOpen, setNotifOpen] = useState<"mobile" | "desktop" | null>(null);
   const [wsOpen, setWsOpen] = useState(false);
   const [projOpen, setProjOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const effectiveCollapsed = !sidebarHovered;
   const [network, setNetwork] = useState<"mainnet" | "testnet" | "futurenet">(() => {
     if (typeof window === "undefined") return "mainnet";
     try {
@@ -1507,6 +1497,11 @@ export default function ReleeveApp() {
   useEffect(() => {
     setPage(pageForPath(pathname));
   }, [pageForPath, pathname]);
+
+  useEffect(() => {
+    if (page !== "organization-settings") return;
+    router.replace(activeOrganization ? `/organizations/${encodeURIComponent(activeOrganization)}/settings` : "/organizations");
+  }, [page, activeOrganization, router]);
 
   const saveWorkspace = useCallback((workspace: StoredWorkspace) => {
     localStorage.setItem(ACTIVE_WORKSPACE_KEY, JSON.stringify(workspace));
@@ -1684,7 +1679,23 @@ export default function ReleeveApp() {
     }
     .db-root * { box-sizing: border-box; }
     .db-root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; font-size: 12.5px; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .db-desktop-search { min-height: 0; padding: 9px 12px !important; border-radius: 6px !important; background: var(--panel-2) !important; border-color: var(--border) !important; transition: border-color .15s ease, box-shadow .15s ease; }
+    .db-desktop-search:hover, .db-desktop-search:focus-visible { border-color: var(--text-faint) !important; }
+    .db-desktop-search:focus-visible { outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
+    .db-search-modal-backdrop { background: rgba(0, 0, 0, .66) !important; }
+    .db-search-modal { width: min(90%, 470px) !important; border-radius: 10px !important; background: var(--panel) !important; box-shadow: 0 24px 80px rgba(0, 0, 0, .5) !important; }
+    .db-search-modal-input { margin: 20px 28px 0; min-height: 36px; padding: 0 11px !important; border: 1px solid var(--border) !important; border-radius: 6px; background: var(--panel-2); transition: border-color .15s ease, box-shadow .15s ease; }
+    .db-search-modal-input:focus-within { border-color: var(--text-faint) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
+    .db-search-modal-input input { font-size: 13px !important; }
+    .db-switcher-search { display: flex; min-height: 36px; align-items: center; gap: 8px; margin: 12px 14px !important; padding: 0 11px !important; border: 1px solid var(--border) !important; border-radius: 6px; background: var(--panel-2); transition: border-color .15s ease, box-shadow .15s ease; }
+    .db-switcher-search:focus-within { border-color: var(--text-faint) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
+    .db-switcher-search input { min-width: 0; min-height: 34px; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+    .db-notification-search { min-height: 36px; margin: 10px 14px; padding: 0 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); color: var(--text-dim); transition: border-color .15s ease, box-shadow .15s ease; }
+    .db-notification-search:focus-within { border-color: var(--text-faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
+    .db-notification-search input { min-width: 0; min-height: 34px; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
     .db-topbar { position: relative; z-index: 500; overflow: visible; }
+    .db-feedback { display: inline-flex; align-items: center; background: transparent; border: 0; padding: 6px 8px; border-radius: 6px; color: var(--text-dim); font-family: inherit; font-size: 12.5px; cursor: pointer; transition: background .15s ease, color .15s ease; }
+    .db-feedback:hover { background: var(--panel); color: var(--text); }
     .db-switcher-option:hover, .db-network-option:hover { background: var(--panel-2) !important; }
     .pw-toast-container { position: fixed; top: 20px; left: 50%; z-index: 9999; display: flex; width: min(400px, 92vw); flex-direction: column; gap: 8px; pointer-events: none; transform: translateX(-50%); }
     .pw-toast { position: relative; height: 52px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--panel) 84%, var(--bg) 16%); box-shadow: 0 8px 20px rgb(0 0 0 / 48%); animation: pwToastIn 260ms ease forwards; pointer-events: auto; }
@@ -1694,8 +1705,11 @@ export default function ReleeveApp() {
     .pw-toast-content span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     @keyframes pwToastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes pwToastFill { from { width: 0%; } to { width: 100%; } }
-    .db-nav-item:hover { background: var(--panel) !important; }
+    .db-nav-item:hover { background: var(--panel) !important; color: var(--text) !important; }
+    .db-nav-label { flex: 0 0 0; width: 0; overflow: hidden; white-space: nowrap; opacity: 0; font-size: 13px; font-weight: 700; transition: opacity 0.18s ease; }
+    .db-nav-label.visible { flex: 0 1 auto; width: auto; opacity: 1; }
     .db-content {
+      isolation: isolate;
       scrollbar-width: none;
       -ms-overflow-style: none;
     }
@@ -1703,42 +1717,49 @@ export default function ReleeveApp() {
     @media (min-width: 900px) {
       .db-mobile-only { display: none !important; }
       .db-desktop-layout {
-        display: grid !important;
-        grid-template-columns: ${collapsed ? "64px" : "195px"} 1fr;
-        grid-template-rows: auto auto 1fr;
-        grid-template-areas: "topbar topbar" "crumb crumb" "nav main";
+        display: flex !important;
+        flex-direction: column;
         height: 100vh;
         overflow: hidden;
       }
-      .db-topbar { grid-area: topbar; }
-      .db-crumbbar { grid-area: crumb; }
+      .db-topbar { flex: 0 0 auto; }
+      .db-crumbbar { flex: 0 0 auto; }
+      .db-body { position: relative; flex: 1 1 0; min-height: 0; }
       .db-sidebar {
-        grid-area: nav;
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 20;
         display: block !important;
         border-right: 1px solid var(--border);
         padding-top: 10px;
-        width: ${collapsed ? "64px" : "195px"};
-        transition: width 0.2s ease;
+        width: ${effectiveCollapsed ? "64px" : "180px"};
+        transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
         overflow-y: auto;
         scrollbar-width: none;
         -ms-overflow-style: none;
       }
       .db-sidebar::-webkit-scrollbar { display: none; }
       .db-content {
-        grid-area: main;
-        width: 100%;
-        max-width: 100% !important;
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 64px;
+        width: auto;
+        max-width: none !important;
         padding: 36px 36px 48px 36px !important;
         overflow-y: auto;
-        height: 100%;
+        height: auto;
       }
       .db-desktop-search { display: flex !important; }
       .db-desktop-right { display: flex !important; }
-      .db-desktop-collapse-btn { display: flex !important; }
     }
     @media (max-width: 899px) {
       .db-desktop-only { display: none !important; }
-      .db-desktop-collapse-btn { display: none !important; }
+      .db-desktop-layout { display: block !important; height: auto; overflow: visible; }
+      .db-body { display: block; }
       .db-sidebar { display: ${navOpen ? "block" : "none"} !important; }
     }
 
@@ -1809,7 +1830,8 @@ export default function ReleeveApp() {
 
     /* trace */
     .ex-trace-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 2px 0; padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
-    .ex-trace-search { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; }
+    .ex-trace-search { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); transition: border-color .15s ease, box-shadow .15s ease; }
+    .ex-trace-search:focus-within { border-color: var(--text-faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
     .ex-trace-search svg { width: 14px; height: 14px; color: var(--text-faint); }
     .ex-trace-search input { background: transparent; border: none; outline: none; color: var(--text); font-size: 12.5px; font-family: inherit; flex: 1; }
     .ex-trace-search input::placeholder { color: var(--text-faint); }
@@ -1920,11 +1942,10 @@ export default function ReleeveApp() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "11px 16px",
+            padding: "8px 16px",
             borderBottom: "1px solid var(--border)",
             background: "var(--bg)",
             position: "relative",
-            zIndex: 2,
           }}
         >
           {/* Mobile left */}
@@ -1940,30 +1961,9 @@ export default function ReleeveApp() {
             </span>
           </div>
 
-          {/* Desktop left collapse button + search */}
+          {/* Desktop left logo + search */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, maxWidth: 460 }}>
-            <button
-              className="db-desktop-collapse-btn"
-              onClick={() => setCollapsed((v) => !v)}
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              style={{
-                display: "none",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "transparent",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                padding: 6,
-                color: "var(--text-dim)",
-                cursor: "pointer",
-                flexShrink: 0,
-              }}
-            >
-              <Icon size={16}>
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M9 3v18" />
-              </Icon>
-            </button>
+            <ReleeveLogo size={24} />
 
             {/* Desktop search bar */}
             <div
@@ -1992,6 +1992,9 @@ export default function ReleeveApp() {
 
           {/* Right controls */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-dim)" }}>
+            {/* Feedback */}
+            <button type="button" className="db-feedback">Feedback</button>
+
             {/* Notifications */}
             <div style={{ position: "relative" }}>
               <div
@@ -2054,7 +2057,7 @@ export default function ReleeveApp() {
         </div>
 
         {/* ── Crumb / account bar ── */}
-        <div className="db-crumbbar" style={{ position: "relative", zIndex: 300, overflow: "visible", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", borderBottom: "1px solid var(--border)", gap: 12 }}>
+        <div className="db-crumbbar" style={{ position: "relative", zIndex: 300, overflow: "visible", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px", borderBottom: "1px solid var(--border)", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0, flex: "0 1 auto", overflow: "visible" }}>
             {/* Workspace switcher */}
             <div data-dashboard-popover style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
@@ -2095,8 +2098,6 @@ export default function ReleeveApp() {
                 activeOrganization={activeOrganization}
                 onSelect={selectOrganization}
                 onCreate={() => router.push("/organizations/new")}
-                onHome={() => navigate("home")}
-                onSettings={() => navigate("organization-settings")}
                 profileAvatarUrl={user?.avatar_url}
               />
             </div>
@@ -2182,35 +2183,43 @@ export default function ReleeveApp() {
           </div>
         </div>
 
-        <div className="db-sidebar" style={{ display: "none", background: "var(--bg)" }}>
+        <div className="db-body">
+        <div
+          className="db-sidebar"
+          style={{ display: "none", background: "var(--bg)" }}
+          onMouseEnter={() => setSidebarHovered(true)}
+          onMouseLeave={() => setSidebarHovered(false)}
+        >
           <div style={{ padding: "0 8px" }}>
             {NAV.map((n) => (
               <div
                 key={n.key}
                 className="db-nav-item"
                 onClick={() => navigate(n.key)}
-                title={collapsed ? n.label : undefined}
+                title={effectiveCollapsed ? n.label : undefined}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: collapsed ? "center" : "flex-start",
-                  gap: collapsed ? 0 : 12,
-                  padding: collapsed ? "10px 0" : "10px 12px",
+                  justifyContent: effectiveCollapsed ? "center" : "flex-start",
+                  gap: effectiveCollapsed ? 0 : 12,
+                  padding: effectiveCollapsed ? "10px 0" : "10px 14px",
                   borderRadius: 8,
                   margin: "1px 0",
-                  color: "var(--text)",
+                  color: topNavKey === n.key ? "var(--text)" : "var(--text-dim)",
                   background: topNavKey === n.key ? "var(--panel)" : "transparent",
                   fontWeight: 700,
                   fontSize: 13,
                   cursor: "pointer",
-                  transition: "background .15s ease, color .15s ease",
+                  overflow: "hidden",
+                  transition:
+                    "background .15s ease, color .15s ease, justify-content 0.28s cubic-bezier(0.4, 0, 0.2, 1), gap 0.28s cubic-bezier(0.4, 0, 0.2, 1), padding 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
                 }}
               >
                 <svg
                   viewBox="0 0 24 24"
                   width={17}
                   height={17}
-                  stroke={topNavKey === n.key ? "var(--text)" : "var(--icon-muted)"}
+                  stroke="currentColor"
                   strokeWidth="1.6"
                   fill="none"
                   strokeLinecap="round"
@@ -2219,7 +2228,7 @@ export default function ReleeveApp() {
                 >
                   {getNavIcon(n.key)}
                 </svg>
-                {!collapsed && <span>{n.label}</span>}
+                <span className={`db-nav-label${effectiveCollapsed ? "" : " visible"}`}>{n.label}</span>
               </div>
             ))}
           </div>
@@ -2248,20 +2257,7 @@ export default function ReleeveApp() {
               }}
             />
           )}
-          {page === "organization-settings" && (
-            <OrganizationSettingsPage
-              organizationSlug={activeOrganization}
-              canManageOwnership={organizations.find((organization) => organization.slug === activeOrganization)?.is_owner === true}
-              onOrganizationUpdated={(updated) => setOrganizations((current) => current.map((organization) => organization.id === updated.id ? { ...organization, ...updated, is_owner: updated.owner_user_id === user?.id } : organization))}
-              onOrganizationDeleted={() => {
-                const remaining = organizations.filter((organization) => organization.slug !== activeOrganization);
-                setOrganizations(remaining);
-                if (remaining[0]) selectOrganization(remaining[0]);
-                else router.push("/onboarding");
-                navigate("home");
-              }}
-            />
-          )}
+        </div>
         </div>
       </div>
     </>

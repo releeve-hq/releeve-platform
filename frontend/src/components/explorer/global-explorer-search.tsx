@@ -182,9 +182,7 @@ export function GlobalExplorerSearch({
           >
             <X />
           </button>
-        ) : (
-          <kbd>Ctrl K</kbd>
-        )}
+        ) : null}
       </div>
       {showPanel && (
         <div
@@ -244,11 +242,18 @@ export function GlobalExplorerSearch({
           padding: 0 14px;
           border: 1px solid var(--border, #2b2b2b);
           border-radius: 6px;
-          background: var(--bg, #121212);
+          background: var(--panel-2, #1e1e1e);
           color: var(--text, #f5f5f5);
+          transition: border-color .15s ease, box-shadow .15s ease;
         }
         .is-compact .global-explorer-search-input {
           height: 38px;
+          padding: 0 14px;
+          background: var(--panel-2, #1e1e1e);
+        }
+        .global-explorer-search-input:focus-within {
+          border-color: var(--text-faint, #707070);
+          box-shadow: 0 0 0 3px color-mix(in srgb, var(--text, #f5f5f5) 10%, transparent);
         }
         .global-explorer-search-input :global(svg) {
           width: 16px;

@@ -53,6 +53,25 @@ impl ServiceActor {
             permissions: BTreeSet::from(["manage_fork_sessions".into()]),
         }
     }
+
+    pub fn public_rpc(
+        actor_id: Uuid,
+        organization_id: Uuid,
+        project_id: Uuid,
+        request_id: Uuid,
+    ) -> Self {
+        Self {
+            actor_id,
+            organization_id,
+            project_id,
+            request_id,
+            permissions: BTreeSet::from([
+                "rpc_read".into(),
+                "rpc_simulate".into(),
+                "deploy_environment".into(),
+            ]),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -236,9 +255,20 @@ impl ForkCoreClient {
         .await
     }
 
-    pub async fn create_environment(&self, actor: &ServiceActor, body: &Value) -> Result<Value> {
-        self.request(actor, Method::POST, "/v1/environments", Some(body), None)
-            .await
+    pub async fn create_environment(
+        &self,
+        actor: &ServiceActor,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            "/v1/environments",
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
     }
 
     pub async fn list_environments(&self, actor: &ServiceActor) -> Result<Value> {
@@ -375,6 +405,38 @@ impl ForkCoreClient {
         .await
     }
 
+    pub async fn environment_receipts(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/environments/{environment_id}/receipts"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn fund_environment(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/fund"),
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
     /// Hosted JSON-RPC call scoped to a virtual environment.
     pub async fn environment_rpc(
         &self,
@@ -457,13 +519,14 @@ impl ForkCoreClient {
         environment_id: Uuid,
         revision_id: Uuid,
         body: &Value,
+        idempotency_key: &str,
     ) -> Result<Value> {
         self.request(
             actor,
             Method::POST,
             &format!("/v1/environments/{environment_id}/revisions/{revision_id}/branch"),
             Some(body),
-            None,
+            Some(idempotency_key),
         )
         .await
     }

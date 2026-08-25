@@ -25,6 +25,7 @@ fn test_state(db: sqlx::PgPool, redis: redis::Client) -> AppState {
         jwt_access_ttl: 900,
         jwt_refresh_ttl: 2592000,
         app_base_url: "http://localhost:3000".into(),
+        api_base_url: "http://localhost:8080".into(),
         smtp_host: String::new(),
         smtp_port: 587,
         smtp_username: String::new(),

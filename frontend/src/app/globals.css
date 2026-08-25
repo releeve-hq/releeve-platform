@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+:root {
+  --font-inter: "Segoe UI", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
 html, body {
   background-color: #121212;
   color: #f5f5f5;

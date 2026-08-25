@@ -19,6 +19,7 @@ pub struct Settings {
     /// Base URL of the web app — used to build verification / reset links in
     /// transactional emails.
     pub app_base_url: String,
+    pub api_base_url: String,
 
     // Phase 1 — email (SMTP).
     pub smtp_host: String,
@@ -126,6 +127,7 @@ impl Settings {
             .set_default("jwt_access_ttl", 900)?
             .set_default("jwt_refresh_ttl", 2592000)?
             .set_default("app_base_url", "http://localhost:3000")?
+            .set_default("api_base_url", "http://localhost:8080")?
             .set_default("smtp_host", "")?
             .set_default("smtp_port", 587)?
             .set_default("smtp_username", "")?

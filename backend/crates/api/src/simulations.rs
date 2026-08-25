@@ -6,10 +6,17 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shared::{Error, Permission, PermissionSet};
+use stellar_xdr::{
+    AccountId, ContractDataDurability, ContractId, Hash, LedgerEntry, LedgerEntryData, LedgerKey,
+    LedgerKeyAccount, LedgerKeyContractData, Limits, PublicKey, ReadXdr, ScAddress, ScSymbol,
+    ScVal, ScVec, Uint256, VecM, WriteXdr,
+};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::{extract::AuthUser, state::AppState};
+use crate::{environments::decode_strkey_payload, extract::AuthUser, state::AppState};
+use ingest::rpc::SorobanRpcClient;
+use ingest::upstream::{Backoff, CircuitBreaker};
 
 struct ProjectAuth {
     organization_id: Uuid,
@@ -28,6 +35,13 @@ pub struct CreateSimulationRequest {
     impersonate: Vec<String>,
     #[serde(default)]
     capture_trace: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SimulationSequenceRequest {
+    pub network: String,
+    pub source_account_xdr: String,
+    pub environment_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -165,14 +179,264 @@ fn lens_actor(user_id: Uuid, auth: &ProjectAuth) -> source_lens_client::ServiceA
     )
 }
 
+fn simulation_rpc_url(network: &str, configured: &str) -> Option<String> {
+    match network {
+        "testnet" => Some("https://soroban-testnet.stellar.org".to_owned()),
+        "mainnet" if !configured.trim().is_empty() => Some(configured.to_owned()),
+        _ => None,
+    }
+}
+
+fn simulation_backoff() -> Backoff {
+    Backoff {
+        base: std::time::Duration::from_millis(250),
+        max: std::time::Duration::from_secs(5),
+        jitter: 0.1,
+        max_attempts: 3,
+    }
+}
+
+fn simulation_breaker() -> CircuitBreaker {
+    CircuitBreaker::new(3, std::time::Duration::from_secs(30))
+}
+
+fn account_ledger_key(source_account_xdr: &str) -> Result<String, Error> {
+    let account_id = AccountId::from_xdr_base64(source_account_xdr, Limits::none())
+        .map_err(|error| Error::BadRequest(format!("invalid source account XDR: {error}")))?;
+    LedgerKey::Account(LedgerKeyAccount { account_id })
+        .to_xdr_base64(Limits::none())
+        .map_err(Error::internal)
+}
+
+fn balance_ledger_key(target: &str, asset: &str) -> Result<String, Error> {
+    let account_bytes = decode_strkey_payload(target, 6 << 3, 32).ok_or_else(|| {
+        Error::BadRequest("balance account must be a valid Stellar address".into())
+    })?;
+    let account = AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
+        account_bytes
+            .try_into()
+            .map_err(|_| Error::BadRequest("balance account has an invalid payload".into()))?,
+    )));
+    if matches!(asset.to_ascii_lowercase().as_str(), "native" | "xlm") {
+        return LedgerKey::Account(LedgerKeyAccount {
+            account_id: account,
+        })
+        .to_xdr_base64(Limits::none())
+        .map_err(Error::internal);
+    }
+    let contract_bytes = decode_strkey_payload(asset, 2 << 3, 32).ok_or_else(|| {
+        Error::BadRequest("balance asset must be XLM or a SAC contract ID".into())
+    })?;
+    let contract = ScAddress::Contract(ContractId(Hash(contract_bytes.try_into().map_err(
+        |_| Error::BadRequest("balance asset has an invalid contract payload".into()),
+    )?)));
+    let key = ScVal::Vec(Some(ScVec(
+        VecM::try_from(vec![
+            ScVal::Symbol(ScSymbol::try_from(b"Balance".to_vec()).map_err(Error::internal)?),
+            ScVal::Address(ScAddress::Account(account)),
+        ])
+        .map_err(Error::internal)?,
+    )));
+    LedgerKey::ContractData(LedgerKeyContractData {
+        contract,
+        key,
+        durability: ContractDataDurability::Persistent,
+    })
+    .to_xdr_base64(Limits::none())
+    .map_err(Error::internal)
+}
+
+fn contract_instance_ledger_key(contract_id: &str) -> Result<String, Error> {
+    let contract_bytes = decode_strkey_payload(contract_id, 2 << 3, 32).ok_or_else(|| {
+        Error::BadRequest("contract ID must be a valid Stellar contract address".into())
+    })?;
+    LedgerKey::ContractData(LedgerKeyContractData {
+        contract: ScAddress::Contract(ContractId(Hash(
+            contract_bytes
+                .try_into()
+                .map_err(|_| Error::BadRequest("contract ID has an invalid payload".into()))?,
+        ))),
+        key: ScVal::LedgerKeyContractInstance,
+        durability: ContractDataDurability::Persistent,
+    })
+    .to_xdr_base64(Limits::none())
+    .map_err(Error::internal)
+}
+
+fn normalize_balance_overrides(overrides: &mut [Value]) -> Result<(), Error> {
+    for override_value in overrides {
+        let Some(object) = override_value.as_object_mut() else {
+            continue;
+        };
+        if object.get("type").and_then(Value::as_str) != Some("balance")
+            || object.contains_key("ledger_key_xdr")
+        {
+            continue;
+        }
+        let target = object
+            .get("target")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::BadRequest("balance override requires an account".into()))?;
+        let asset = object
+            .get("asset")
+            .and_then(Value::as_str)
+            .unwrap_or("native");
+        object.insert(
+            "ledger_key_xdr".into(),
+            Value::String(balance_ledger_key(target, asset)?),
+        );
+    }
+    Ok(())
+}
+
+async fn read_account_entry(
+    state: &AppState,
+    user_id: Uuid,
+    auth: &ProjectAuth,
+    request: &SimulationSequenceRequest,
+) -> Result<Value, Error> {
+    let key = account_ledger_key(&request.source_account_xdr)?;
+    read_ledger_entries(
+        state,
+        user_id,
+        auth,
+        &request.network,
+        request.environment_id,
+        vec![key],
+    )
+    .await
+}
+
+async fn read_ledger_entries(
+    state: &AppState,
+    user_id: Uuid,
+    auth: &ProjectAuth,
+    network: &str,
+    environment_id: Option<Uuid>,
+    keys: Vec<String>,
+) -> Result<Value, Error> {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": Uuid::new_v4(),
+        "method": "getLedgerEntries",
+        "params": { "keys": keys }
+    });
+    if let Some(environment_id) = environment_id {
+        let response = client(state)?
+            .environment_rpc(&actor(user_id, auth), environment_id, &body)
+            .await
+            .map_err(map_remote)?;
+        return Ok(response.get("result").cloned().unwrap_or(response));
+    }
+    let rpc_url = simulation_rpc_url(network, &state.settings.soroban_rpc_url)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported simulation network: {network}")))?;
+    let mut rpc = SorobanRpcClient::new(rpc_url, simulation_backoff(), simulation_breaker());
+    rpc.call("getLedgerEntries", body["params"].clone())
+        .await
+        .map_err(|error| Error::ServiceUnavailable(format!("soroban_rpc: {error:?}")))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SimulationContractEntriesRequest {
+    pub network: String,
+    pub contract_id: String,
+    pub environment_id: Option<Uuid>,
+}
+
+pub async fn simulation_contract_entries(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project)): Path<(String, String)>,
+    Json(request): Json<SimulationContractEntriesRequest>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let key = contract_instance_ledger_key(&request.contract_id)?;
+    let result = read_ledger_entries(
+        &state,
+        user_id,
+        &auth,
+        &request.network,
+        request.environment_id,
+        vec![key],
+    )
+    .await?;
+    let entries = result
+        .get("entries")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| {
+            let key = entry.get("key").and_then(Value::as_str).unwrap_or_default();
+            let raw_xdr = entry.get("xdr").and_then(Value::as_str);
+            let decoded_key = LedgerKey::from_xdr_base64(key, Limits::none())
+                .map(|value| format!("{value:?}"))
+                .unwrap_or_else(|_| "Unavailable".into());
+            let decoded_entry =
+                raw_xdr.and_then(|xdr| LedgerEntry::from_xdr_base64(xdr, Limits::none()).ok());
+            let decoded_value = decoded_entry
+                .as_ref()
+                .map(|value| format!("{:?}", value.data))
+                .unwrap_or_else(|| "Entry not present in the selected state".into());
+            let value_xdr = decoded_entry.as_ref().and_then(|value| match &value.data {
+                LedgerEntryData::ContractData(data) => data.val.to_xdr_base64(Limits::none()).ok(),
+                _ => None,
+            });
+            json!({
+                "key": key,
+                "raw_xdr": raw_xdr,
+                "value_xdr": value_xdr,
+                "decoded_key": decoded_key,
+                "decoded_value": decoded_value,
+                "durability": "persistent",
+                "ttl": entry.get("liveUntilLedgerSeq").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "entries": entries,
+        "latest_ledger": result.get("latestLedger").cloned().unwrap_or(Value::Null),
+    })))
+}
+
+pub async fn simulation_sequence(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project)): Path<(String, String)>,
+    Json(request): Json<SimulationSequenceRequest>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let result = read_account_entry(&state, user_id, &auth, &request).await?;
+    let xdr = result
+        .pointer("/entries/0/xdr")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::NotFound)?;
+    let entry = LedgerEntry::from_xdr_base64(xdr, Limits::none()).map_err(|error| {
+        Error::BadRequest(format!("account ledger entry is invalid XDR: {error}"))
+    })?;
+    let current = match entry.data {
+        LedgerEntryData::Account(account) => account.seq_num.0,
+        _ => {
+            return Err(Error::BadRequest(
+                "ledger key did not resolve to an account".into(),
+            ));
+        }
+    };
+    Ok(Json(json!({
+        "current_sequence_number": current,
+        "next_sequence_number": current.checked_add(1).ok_or_else(|| Error::BadRequest("account sequence is out of range".into()))?
+    })))
+}
+
 pub async fn create_simulation(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
     Path((org, project)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(body): Json<CreateSimulationRequest>,
+    Json(mut body): Json<CreateSimulationRequest>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), Error> {
     let auth = authorize(&state, user_id, &org, &project).await?;
+    normalize_balance_overrides(&mut body.overrides)?;
     let idempotency = headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
@@ -233,6 +497,7 @@ pub async fn list_simulations(
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT jsonb_build_object('id', id, 'status', status, 'function_name', function_name,
                  'base_ledger_sequence', base_ledger_sequence, 'fork_core_summary', fork_core_summary,
+                 'fork_environment_id', fork_environment_id,
                  'created_at', created_at, 'completed_at', completed_at)
            FROM simulation_runs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 100",
     ).bind(auth.project_id).fetch_all(&state.db).await.map_err(Error::internal)?;
@@ -245,16 +510,17 @@ pub async fn get_simulation(
     Path((org, project, simulation_id)): Path<(String, String, Uuid)>,
 ) -> Result<Json<Value>, Error> {
     let auth = authorize(&state, user_id, &org, &project).await?;
-    let fork_id = sqlx::query_scalar::<_, Option<Uuid>>(
-        "SELECT fork_core_simulation_id FROM simulation_runs WHERE id = $1 AND project_id = $2",
+    let (fork_id, environment_id) = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>)>(
+        "SELECT fork_core_simulation_id,fork_environment_id
+           FROM simulation_runs WHERE id = $1 AND project_id = $2",
     )
     .bind(simulation_id)
     .bind(auth.project_id)
     .fetch_optional(&state.db)
     .await
     .map_err(Error::internal)?
-    .flatten()
     .ok_or(Error::NotFound)?;
+    let fork_id = fork_id.ok_or(Error::NotFound)?;
     let detail = client(&state)?
         .get_simulation(&actor(user_id, &auth), fork_id)
         .await
@@ -276,6 +542,31 @@ pub async fn get_simulation(
           WHERE id = $1 AND project_id = $4",
     ).bind(simulation_id).bind(status).bind(&detail).bind(auth.project_id)
         .execute(&state.db).await.map_err(Error::internal)?;
+    let error = detail.get("error").or_else(|| detail.get("last_error"));
+    if let Some(environment_id) = environment_id
+        && error
+            .and_then(|value| value.get("code"))
+            .and_then(Value::as_str)
+            == Some("frozen_state_unavailable")
+    {
+        sqlx::query(
+            "UPDATE fork_environments
+                SET initialization_status='failed',initialization_progress=100,
+                    initialization_error=$1
+              WHERE id=$2 AND project_id=$3",
+        )
+        .bind(error.cloned().unwrap_or_else(|| {
+            json!({
+                "code":"frozen_state_unavailable",
+                "message":"Exact anchored state could not be proven."
+            })
+        }))
+        .bind(environment_id)
+        .bind(auth.project_id)
+        .execute(&state.db)
+        .await
+        .map_err(Error::internal)?;
+    }
     Ok(Json(json!({ "id": simulation_id, "fork_core": detail })))
 }
 

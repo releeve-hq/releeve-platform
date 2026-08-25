@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 import "./marketing.css";
@@ -8,8 +7,6 @@ import { AuthProvider } from "@/lib/auth-context";
 import ConditionalShell from "@/components/layout/conditional-shell";
 import CookieConsent from "@/components/layout/cookie-consent";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
 const alliance = localFont({ src: "./fonts/alliance.otf", variable: "--font-alliance", display: "swap" });
 
 export const metadata: Metadata = {
@@ -48,7 +45,7 @@ const themeScript = `
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${inter.variable} ${jetbrainsMono.variable} ${alliance.variable}`}>
+    <html lang="en" suppressHydrationWarning className={alliance.variable}>
       <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>
       <body className="antialiased">
         <AuthProvider>

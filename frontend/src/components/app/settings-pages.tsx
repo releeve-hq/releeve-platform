@@ -23,7 +23,7 @@ type Project = {
   created_at?: string;
 };
 
-type Member = {
+export type Member = {
   id: string;
   user_id: string;
   email: string;
@@ -32,7 +32,7 @@ type Member = {
   is_owner: boolean;
 };
 
-type AccessToken = {
+export type AccessToken = {
   id: string;
   name: string;
   created_at: string;
@@ -40,11 +40,11 @@ type AccessToken = {
   revoked_at: string | null;
 };
 
-type CreatedToken = { id: string; name: string; token: string };
-type Paged<T> = { data: T[] };
-type PermissionName = "create_projects" | "update_projects" | "delete_projects" | "manage_members" | "manage_access_tokens" | "manage_billing" | "manage_fork_sessions" | "manage_alerts";
-type InviteResponse = { kind: "member"; id: string; user_id: string; email: string; username: string | null; permissions: PermissionName[]; is_owner: boolean } | { kind: "invitation"; id: string; email: string; permissions: PermissionName[]; status: string; created_at: string };
-type InviteDraft = { email: string; role: string; permissions: PermissionName[] };
+export type CreatedToken = { id: string; name: string; token: string };
+export type Paged<T> = { data: T[] };
+export type PermissionName = "create_projects" | "update_projects" | "delete_projects" | "manage_members" | "manage_access_tokens" | "manage_billing" | "manage_fork_sessions" | "manage_alerts";
+export type InviteResponse = { kind: "member"; id: string; user_id: string; email: string; username: string | null; permissions: PermissionName[]; is_owner: boolean } | { kind: "invitation"; id: string; email: string; permissions: PermissionName[]; status: string; created_at: string };
+export type InviteDraft = { email: string; role: string; permissions: PermissionName[] };
 
 type SettingsSection = {
   id: string;
@@ -53,23 +53,23 @@ type SettingsSection = {
   danger?: boolean;
 };
 
-const styles = `
+export const styles = `
   .settings-page { width: 100%; max-width: 1240px; margin: 0 auto; padding: 0 0 60px; }
-  .settings-heading { margin: 0 0 30px; font-size: 28px; line-height: 1.2; font-weight: 720; letter-spacing: 0; }
+  .settings-heading { margin: 0 0 30px; font-size: 28px; line-height: 1.2; font-weight: 400; letter-spacing: 0; }
   .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 48px; align-items: start; }
   .settings-content { min-width: 0; border: 1px solid var(--border); }
   .settings-section { scroll-margin-top: 24px; padding: 38px 46px; border-bottom: 1px solid var(--border); }
   .settings-section:last-child { border-bottom: 0; }
-  .settings-section-title { margin: 0 0 28px; font-size: 20px; line-height: 1.25; font-weight: 720; letter-spacing: 0; }
+  .settings-section-title { margin: 0 0 28px; font-size: 20px; line-height: 1.25; font-weight: 400; letter-spacing: 0; }
   .settings-section-title.danger { color: var(--red); }
   .settings-row { display: grid; grid-template-columns: minmax(170px, .72fr) minmax(260px, 1.28fr); gap: 34px; align-items: start; padding: 22px 0; border-top: 1px solid var(--border); }
   .settings-row:first-of-type { border-top: 0; padding-top: 0; }
   .settings-row:last-child { padding-bottom: 0; }
-  .settings-label { font-size: 13px; line-height: 1.45; font-weight: 680; color: var(--text); }
+  .settings-label { font-size: 13px; line-height: 1.45; font-weight: 400; color: var(--text); }
   .settings-help { margin-top: 5px; max-width: 280px; color: var(--text-dim); font-size: 12.5px; line-height: 1.55; }
   .settings-control { min-width: 0; }
-  .settings-input { width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); font: inherit; font-size: 13px; outline: none; }
-  .settings-input:focus { border-color: var(--text-faint); box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 10%, transparent); }
+  .settings-input { width: 100%; height: 36px; padding: 0 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 13px; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
+  .settings-input:focus, .settings-input:focus-visible { border-color: var(--text-faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
   .settings-input[readonly] { color: var(--text-dim); cursor: default; }
   .settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 10px; }
   .settings-button { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--border); border-radius: 5px; padding: 7px 11px; background: var(--panel); color: var(--text); font: inherit; font-size: 12px; font-weight: 660; cursor: pointer; }
@@ -83,14 +83,14 @@ const styles = `
   .settings-index { position: sticky; top: 24px; border-left: 1px solid var(--border); padding: 4px 0 4px 24px; }
   .settings-index-link { width: 100%; display: block; border: 0; padding: 9px 0; background: transparent; color: var(--text-dim); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
   .settings-index-link:hover, .settings-index-link.active { color: var(--text); }
-  .settings-index-link.active { font-weight: 680; }
+  .settings-index-link.active { font-weight: 400; }
   .settings-list { border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
   .settings-list-item { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
   .settings-list-item:last-child { border-bottom: 0; }
   .settings-list-main { min-width: 0; flex: 1; }
-  .settings-list-title { overflow: hidden; color: var(--text); font-size: 12.5px; font-weight: 660; text-overflow: ellipsis; white-space: nowrap; }
+  .settings-list-title { overflow: hidden; color: var(--text); font-size: 12.5px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
   .settings-list-meta { margin-top: 3px; overflow: hidden; color: var(--text-faint); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
-  .settings-badge { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; color: var(--text-dim); font-size: 10.5px; font-weight: 680; text-transform: capitalize; }
+  .settings-badge { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; color: var(--text-dim); font-size: 10.5px; font-weight: 400; text-transform: capitalize; }
   .settings-empty { border: 1px dashed var(--border); border-radius: 5px; padding: 18px; color: var(--text-dim); font-size: 12.5px; line-height: 1.55; }
   .settings-inline-form { display: flex; gap: 8px; }
   .settings-inline-form .settings-input { flex: 1; }
@@ -104,9 +104,9 @@ const styles = `
   .settings-file { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
   .settings-permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 12px; }
   .settings-permission { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text-dim); font-size: 12px; line-height: 1.4; }
-  .settings-permission strong { display: block; color: var(--text); font-size: 12.5px; }
+  .settings-permission strong { display: block; color: var(--text); font-size: 12.5px; font-weight: 400; }
   .settings-subhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
-  .settings-subhead h3 { margin: 0; color: var(--text); font-size: 18px; }
+  .settings-subhead h3 { margin: 0; color: var(--text); font-size: 18px; font-weight: 400; }
   .pw-toast-container { position: fixed; top: 20px; left: 50%; z-index: 9999; display: flex; width: min(400px, 92vw); flex-direction: column; gap: 8px; pointer-events: none; transform: translateX(-50%); }
   .pw-toast { position: relative; height: 52px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--panel) 84%, var(--bg) 16%); box-shadow: 0 8px 20px rgb(0 0 0 / 48%); animation: pwToastIn 260ms ease forwards; pointer-events: auto; }
   .pw-toast-fill { position: absolute; inset: 0; width: 0%; background: color-mix(in srgb, var(--text) 10%, var(--panel)); animation: pwToastFill 4s linear forwards; }
@@ -115,7 +115,8 @@ const styles = `
   .pw-toast-success svg { color: var(--green); }
   @keyframes pwToastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes pwToastFill { from { width: 0%; } to { width: 100%; } }
-  .settings-mobile-index { display: none; width: 100%; height: 40px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 5px; padding: 0 10px; background: var(--panel); color: var(--text); font: inherit; }
+  .settings-mobile-index { display: none; width: 100%; height: 36px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 6px; padding: 0 11px; background: var(--panel-2); color: var(--text); font: inherit; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
+  .settings-mobile-index:focus, .settings-mobile-index:focus-visible { border-color: var(--text-faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
   @media (max-width: 900px) {
     .settings-page { padding-bottom: 36px; }
     .settings-heading { margin-bottom: 18px; font-size: 23px; }
@@ -137,7 +138,7 @@ const styles = `
   }
 `;
 
-const permissionOptions: Array<{ id: PermissionName; label: string; help: string }> = [
+export const permissionOptions: Array<{ id: PermissionName; label: string; help: string }> = [
   { id: "create_projects", label: "Create projects", help: "Create new project workspaces." },
   { id: "update_projects", label: "Update projects", help: "Rename and edit project configuration." },
   { id: "delete_projects", label: "Delete projects", help: "Remove project data." },
@@ -148,24 +149,24 @@ const permissionOptions: Array<{ id: PermissionName; label: string; help: string
   { id: "manage_alerts", label: "Manage alerts", help: "Create monitoring rules and destinations." },
 ];
 
-const rolePermissions: Record<string, PermissionName[]> = {
+export const rolePermissions: Record<string, PermissionName[]> = {
   viewer: [],
   developer: ["create_projects", "update_projects", "manage_fork_sessions", "manage_alerts"],
   admin: permissionOptions.map((permission) => permission.id).filter((permission) => permission !== "manage_billing"),
   billing: ["manage_billing"],
 };
 
-function formatDate(value?: string | null) {
+export function formatDate(value?: string | null) {
   if (!value) return "Never";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function errorMessage(error: unknown) {
+export function errorMessage(error: unknown) {
   return error instanceof ApiError || error instanceof Error ? error.message : "Something went wrong.";
 }
 
-function roleFor(member: Member) {
+export function roleFor(member: Member) {
   const permissions = member.permissions;
   if (member.is_owner) return "Owner";
   if (permissions.includes("manage_members") && permissions.includes("manage_billing")) return "Admin";
@@ -174,7 +175,7 @@ function roleFor(member: Member) {
   return "Developer";
 }
 
-function SettingRow({ label, help, children }: { label: string; help: string; children: React.ReactNode }) {
+export function SettingRow({ label, help, children }: { label: string; help: string; children: React.ReactNode }) {
   return (
     <div className="settings-row">
       <div><div className="settings-label">{label}</div><div className="settings-help">{help}</div></div>
@@ -183,7 +184,7 @@ function SettingRow({ label, help, children }: { label: string; help: string; ch
   );
 }
 
-function ToastPopup({ message, onDone }: { message: string | null; onDone: () => void }) {
+export function ToastPopup({ message, onDone }: { message: string | null; onDone: () => void }) {
   if (!message) return null;
   if (typeof document === "undefined") return null;
   return createPortal((

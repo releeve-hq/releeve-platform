@@ -37,6 +37,12 @@ pub enum Error {
     #[error("conflict")]
     Conflict,
 
+    /// Conflict with a client-facing reason (e.g. a name is already taken).
+    /// Same 409/`conflict` mapping as [`Error::Conflict`] but the message is
+    /// shown to the caller.
+    #[error("{0}")]
+    ConflictDetail(String),
+
     #[error("signer is not configured for this project")]
     SignerNotConfigured,
 
@@ -84,6 +90,7 @@ impl Error {
             Error::Forbidden => ErrorKind::Forbidden,
             Error::EmailUnverified => ErrorKind::EmailUnverified,
             Error::Conflict => ErrorKind::Conflict,
+            Error::ConflictDetail(_) => ErrorKind::Conflict,
             Error::SignerNotConfigured => ErrorKind::SignerNotConfigured,
             Error::RateLimited => ErrorKind::RateLimited,
             Error::Internal(_) => ErrorKind::Internal,

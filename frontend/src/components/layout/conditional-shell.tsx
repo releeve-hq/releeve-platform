@@ -9,6 +9,7 @@ const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
 const MARKETING_ROUTES = ['/pricing', '/docs', '/terms', '/privacy'];
+const PUBLIC_APP_ROUTES = ['/virtual-explorer'];
 const EXPLORER_ENTITY_ROUTES = new Set(['ledger', 'tx', 'account', 'contract']);
 const APP_ROUTES = [
   '/home',
@@ -38,7 +39,9 @@ function isAuthRoute(pathname: string): boolean {
 }
 
 function isPublicRoute(pathname: string): boolean {
-  return PUBLIC_ROUTES.includes(pathname) || MARKETING_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
+  return PUBLIC_ROUTES.includes(pathname)
+    || MARKETING_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'))
+    || PUBLIC_APP_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
 }
 
 function isExplorerRoute(pathname: string): boolean {

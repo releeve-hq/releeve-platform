@@ -254,6 +254,18 @@ pub async fn sync_network(
                                 Ok(tv) => {
                                     if let Ok(tx) = decode_classic_tx(&tv, network) {
                                         upsert_tx(pool, &tx).await.map_err(internal)?;
+                                        let pool_c = pool.clone();
+                                        let net_c = network.to_string();
+                                        let hash_c = tx.hash.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = crate::alerts_eval::evaluate_for_tx(
+                                                &pool_c, &net_c, &hash_c,
+                                            )
+                                            .await
+                                            {
+                                                tracing::warn!(hash=%hash_c, network=%net_c, error=%e, "alert evaluation failed")
+                                            }
+                                        });
                                     }
                                 }
                                 Err(FetchError::CircuitOpen) | Err(FetchError::Exhausted) => {
@@ -339,11 +351,30 @@ async fn enrich_soroban(
     match enriched {
         Some(tx) => {
             upsert_tx(pool, &tx).await.map_err(internal)?;
+            let pool_c = pool.clone();
+            let net_c = network.to_string();
+            let hash_c = tx.hash.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::alerts_eval::evaluate_for_tx(&pool_c, &net_c, &hash_c).await
+                {
+                    tracing::warn!(hash=%hash_c, network=%net_c, error=%e, "alert evaluation failed")
+                }
+            });
         }
         None => match with_operations(client, tv).await {
             Ok(tv) => {
                 if let Ok(tx) = decode_classic_tx(&tv, network) {
                     upsert_tx(pool, &tx).await.map_err(internal)?;
+                    let pool_c = pool.clone();
+                    let net_c = network.to_string();
+                    let hash_c = tx.hash.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::alerts_eval::evaluate_for_tx(&pool_c, &net_c, &hash_c).await
+                        {
+                            tracing::warn!(hash=%hash_c, network=%net_c, error=%e, "alert evaluation failed")
+                        }
+                    });
                 }
             }
             Err(FetchError::CircuitOpen) | Err(FetchError::Exhausted) => {}

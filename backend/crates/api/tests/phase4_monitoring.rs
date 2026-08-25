@@ -168,7 +168,7 @@ async fn alert_crud_webhook_delivery_and_dedupe_work_end_to_end() {
             "target": { "type": "project" },
             "match_logic": "all",
             "expressions": [
-                { "type": "function_call", "params": { "function_name": "liquidate" } },
+                { "type": "successful_transaction", "params": {} },
                 { "type": "blocklisted_callers", "params": { "addresses": ["GBLOCKED"] } },
                 { "type": "event_parameter", "params": { "data": { "asset": "XLM" } } },
                 { "type": "state_change", "params": { "storage_key": "balance:GBLOCKED", "condition": { "any_change": true } } }
@@ -259,60 +259,129 @@ async fn account_destination_types_validate_and_email_test_delivers() {
 }
 
 #[tokio::test]
-async fn view_function_expression_polls_soroban_rpc_and_fires() {
-    let rpc = MockServer::start().await;
-    Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": "releeve-alert-view-function",
-            "result": { "price": 10 }
-        })))
-        .expect(1)
-        .mount(&rpc)
-        .await;
-    let app = TestApp::with_soroban_rpc_url(&rpc.uri()).await;
+async fn successful_transaction_scope_matrix_covers_all_four_scopes() {
+    // Verifies scope plumbing for Successful Transaction: Address (dropdown
+    // vs manual), Network, Project, Tag — each as a separate alert that must
+    // fire (or not) correctly, and that history is enriched.
+    let app = TestApp::new().await;
     let (access, org, project) = onboard(&app).await;
     let hash = seed_tx(&app).await;
-    let (status, dest) = req(
+
+    // Tag scope needs a real tag attached to the contract in the project.
+    let (status, tag) = req(
         app.router(),
         Method::POST,
-        &format!("/api/v1/{org}/destinations"),
-        Some(serde_json::json!({ "type": "email", "config": { "to": ["ops@example.com"] } })),
+        &format!("/api/v1/{org}/{project}/tags"),
+        Some(serde_json::json!({ "name": "watched-tag" })),
         Some(&access),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, alert) = req(
-        app.router(),
-        Method::POST,
-        &format!("/api/v1/{org}/{project}/alerts"),
-        Some(serde_json::json!({
-            "name": "view price",
-            "target": { "type": "project" },
-            "match_logic": "all",
-            "expressions": [
-                {
-                    "type": "view_function",
-                    "params": {
-                        "contract_id": "CCONTRACT",
-                        "function_name": "last_price",
-                        "poll_interval_seconds": 60,
-                        "condition": { "path": "price", "min": 9 }
-                    }
-                }
-            ],
-            "destinations": [{ "id": dest["id"].as_str().unwrap(), "scope": "account" }]
-        })),
-        Some(&access),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "alert: {alert:?}");
-    let pid = project_id(&app, &org, &project).await;
-    let fired = api::monitoring::evaluate_transaction_alerts(&app.state(), pid, "testnet", &hash)
+    assert_eq!(status, StatusCode::OK, "tag: {tag:?}");
+    let tag_name = tag["name"].as_str().unwrap().to_owned();
+
+    // Attach the tag to the contract CCONTRACT so Tag scope can match.
+    let contract_id: String = {
+        let pid = project_id(&app, &org, &project).await;
+        let row: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM contracts WHERE project_id = $1 AND address = 'CCONTRACT'",
+        )
+        .bind(pid)
+        .fetch_optional(app.db())
         .await
         .unwrap();
-    assert_eq!(fired.len(), 1);
-    assert_eq!(app.mailer.count(), 1);
+        if let Some(id) = row {
+            id.to_string()
+        } else {
+            // Seed a contract row for the tag attachment path (tag_attachments expects a contract id).
+            let cid: Uuid = sqlx::query_scalar(
+                "INSERT INTO contracts (project_id, address, network) VALUES ($1, 'CCONTRACT', 'testnet') RETURNING id"
+            )
+            .bind(pid)
+            .fetch_one(app.db())
+            .await
+            .unwrap();
+            cid.to_string()
+        }
+    };
+    let _ = req(
+        app.router(),
+        Method::POST,
+        &format!(
+            "/api/v1/{org}/{project}/tags/{}/attach",
+            tag["id"].as_str().unwrap()
+        ),
+        Some(serde_json::json!({ "entity_type": "contract", "entity_id": contract_id })),
+        Some(&access),
+    )
+    .await;
+
+    let cases = vec![
+        (
+            "addr-dropdown",
+            serde_json::json!({ "type": "address", "value": "CCONTRACT" }),
+        ),
+        (
+            "addr-manual",
+            serde_json::json!({ "type": "address", "value": "GMANUAL000000000000000000000000000000000000000000000" }),
+        ),
+        (
+            "network",
+            serde_json::json!({ "type": "network", "value": "testnet" }),
+        ),
+        ("project", serde_json::json!({ "type": "project" })),
+        (
+            "tag",
+            serde_json::json!({ "type": "tag", "value": tag_name }),
+        ),
+    ];
+    for (label, target) in cases {
+        let (status, alert) = req(
+            app.router(),
+            Method::POST,
+            &format!("/api/v1/{org}/{project}/alerts"),
+            Some(serde_json::json!({
+                "name": format!("succ-{label}"),
+                "target": target,
+                "match_logic": "all",
+                "expressions": [{ "type": "successful_transaction", "params": {} }],
+                "destinations": []
+            })),
+            Some(&access),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "alert {label}: {alert:?}");
+        let pid = project_id(&app, &org, &project).await;
+        let fired =
+            api::monitoring::evaluate_transaction_alerts(&app.state(), pid, "testnet", &hash)
+                .await
+                .unwrap();
+        // Manual address not in tx should not fire; others should.
+        if label == "addr-manual" {
+            assert!(fired.is_empty(), "manual unrelated address must not fire");
+        } else {
+            assert_eq!(fired.len(), 1, "scope {label} should fire");
+            // History must contain enriched firing_context for the message format
+            let alert_id = alert["id"].as_str().unwrap();
+            let (status, history) = req(
+                app.router(),
+                Method::GET,
+                &format!("/api/v1/{org}/{project}/alerts/{alert_id}/history"),
+                None,
+                Some(&access),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            let first = &history["data"][0];
+            assert!(
+                first["firing_context"]["transaction_hash"].is_string(),
+                "context must have tx hash"
+            );
+            assert!(
+                first["firing_context"]["scope"].is_object(),
+                "context must have scope"
+            );
+        }
+    }
 }
 
 #[tokio::test]

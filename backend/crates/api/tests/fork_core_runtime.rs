@@ -499,30 +499,12 @@ async fn create_environment_and_branch_return_201() {
     let (access, org) = onboard(&app).await;
     let project = create_project(&app, &access, &org).await;
 
-    // A completed certified simulation is required to create an environment.
-    let (create_status, _, created) = req_with(
-        &app,
-        Method::POST,
-        &format!("/api/v1/{org}/{project}/simulations"),
-        &[("idempotency-key", "test-key-env-create")],
-        Some(request_body()),
-        Some(&access),
-    )
-    .await;
-    assert_eq!(create_status, StatusCode::ACCEPTED);
-    let local_sim_id = Uuid::parse_str(created["id"].as_str().unwrap()).unwrap();
-    sqlx::query("UPDATE simulation_runs SET status='success' WHERE id=$1")
-        .bind(local_sim_id)
-        .execute(app.db())
-        .await
-        .expect("simulation marked success");
-
     let (status, headers, body) = req_with(
         &app,
         Method::POST,
         &format!("/api/v1/{org}/{project}/environments"),
-        &[],
-        Some(json!({ "name": "Frozen lab", "simulation_id": local_sim_id, "mode": "frozen" })),
+        &[("idempotency-key", "test-key-env-create")],
+        Some(json!({ "name": "Frozen lab", "network": "mainnet", "source": "latest", "mode": "frozen" })),
         Some(&access),
     )
     .await;
@@ -537,7 +519,7 @@ async fn create_environment_and_branch_return_201() {
             "/api/v1/{org}/{project}/environments/{env_id}/revisions/{}/branch",
             Uuid::nil()
         ),
-        &[],
+        &[("idempotency-key", "test-key-env-branch")],
         Some(json!({ "name": "Investigation branch" })),
         Some(&access),
     )
@@ -552,7 +534,7 @@ async fn seed_env(app: &TestApp, access: &str, org: &str, project: &str, env_id:
 
 async fn seed_env_with_secret(
     app: &TestApp,
-    access: &str,
+    _access: &str,
     org: &str,
     project: &str,
     env_id: Uuid,

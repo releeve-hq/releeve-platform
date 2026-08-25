@@ -1,9 +1,11 @@
-"use client";
+﻿"use client";
 
 import {
   type FormEvent,
   type MouseEvent,
   type ReactNode,
+  type Dispatch,
+  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -11,8 +13,10 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  type LucideIcon,
   Activity,
   AlarmClock,
   ArrowLeft,
@@ -22,6 +26,7 @@ import {
   Braces,
   Bug,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Check,
   CircleDollarSign,
@@ -30,9 +35,8 @@ import {
   Copy,
   Database,
   FileCode2,
-  GitBranch,
+  Globe,
   History,
-  KeyRound,
   Layers3,
   LoaderCircle,
   MoreVertical,
@@ -66,6 +70,11 @@ import type {
 import { truncateEntity } from "@/lib/explorer-routes";
 
 import "./project-workflows.css";
+import { CreateEnvironmentModal, type CreateEnvironmentInput } from "./virtual-environment-ui";
+const EnvironmentWorkspace = dynamic(
+  () => import("./environment-workspace").then((module) => module.EnvironmentWorkspace),
+  { ssr: false },
+);
 
 export type ProjectScope = {
   organization: string | null;
@@ -141,6 +150,14 @@ type Environment = {
   execution_ledger?: number | null;
   state_hash?: string | null;
   verification_status?: string;
+  initialization_status?: "preparing" | "ready" | "failed";
+  initialization_progress?: number;
+  initialization_error?: { code?: string; message?: string } | null;
+  public_explorer_enabled?: boolean;
+  rpc_slug?: string | null;
+  rpc_url?: string;
+  admin_rpc_url?: string;
+  admin_secret?: string;
 };
 
 type Simulation = {
@@ -156,35 +173,17 @@ type Simulation = {
   execution_ledger?: number | null;
   stage?: string;
   progress?: number;
+  fork_environment_id?: string | null;
 };
 
-type EnvironmentRevision = {
-  id: string;
-  parent_revision_id?: string | null;
-  revision_number: number;
-  requested_ledger?: number | null;
-  state_ledger: number;
-  execution_ledger: number;
-  protocol: number;
-  state_hash: string;
-  verification_status?: string;
-  completeness_certificate?: unknown;
-  provenance?: unknown;
-  overrides?: unknown[];
-  created_at: string;
-};
-
-type NetworkCoverage = {
-  epoch?: string;
-  first_supported_ledger?: number;
-  preceding_ledger?: number;
-  boundary_verified_at?: string | null;
-  first_ledger?: number | null;
-  last_ledger?: number | null;
-  watermark?: number | null;
-  canonical_source?: string | null;
-  status?: string | null;
-  failure_reason?: string | null;
+type SimulationLedgerEntry = {
+  key: string;
+  raw_xdr?: string | null;
+  value_xdr?: string | null;
+  decoded_key: string;
+  decoded_value: string;
+  durability: string;
+  ttl?: number | null;
 };
 
 type ProjectTransaction = {
@@ -225,6 +224,17 @@ type AlertFiring = {
   fired_at: string;
 };
 
+type DestinationRef = { id: string; scope: string };
+type ProjectDestination = {
+  id: string;
+  scope: string;
+  type: string;
+  config?: Record<string, unknown>;
+  created_at: string;
+};
+type AlertSection = "alerts" | "history" | "destinations";
+type AlertBuilderStep = 1 | 2 | 3 | 4;
+
 const expressionOptions = [
   ["failed_transaction", "Failed transaction"],
   ["successful_transaction", "Successful transaction"],
@@ -238,6 +248,104 @@ const expressionOptions = [
   ["blocklisted_callers", "Blocklisted source account"],
   ["view_function", "View function result"],
 ] as const;
+
+const alertTypeDetails: Record<
+  string,
+  { description: string; icon: LucideIcon }
+> = {
+  successful_transaction: {
+    description: "Triggers whenever a successful transaction happens.",
+    icon: Check,
+  },
+  failed_transaction: {
+    description: "Triggers whenever a transaction fails.",
+    icon: XCircle,
+  },
+  tx_error: {
+    description: "Triggers whenever a transaction reports an error.",
+    icon: Bug,
+  },
+  function_call: {
+    description: "Triggers whenever a specific contract function is called.",
+    icon: Code2,
+  },
+  event_emitted: {
+    description: "Triggers whenever a specific contract event is emitted.",
+    icon: Bell,
+  },
+  token_transfer: {
+    description: "Triggers whenever a token transfer is detected.",
+    icon: Wallet,
+  },
+  balance_change: {
+    description: "Triggers when a native balance matches the conditions.",
+    icon: CircleDollarSign,
+  },
+  state_change: {
+    description: "Triggers whenever a contract state value changes.",
+    icon: Braces,
+  },
+  allowlisted_callers: {
+    description: "Triggers for calls from an allowlisted source account.",
+    icon: ShieldCheck,
+  },
+  blocklisted_callers: {
+    description: "Triggers for calls from a blocklisted source account.",
+    icon: XCircle,
+  },
+  view_function: {
+    description: "Triggers whenever a view function result changes.",
+    icon: Layers3,
+  },
+};
+
+const alertTargetDetails: Array<{
+  type: string;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+}> = [
+  {
+    type: "address",
+    label: "Address",
+    description: "Receive alerts for one wallet or contract address.",
+    icon: UserRound,
+  },
+  {
+    type: "network",
+    label: "Network",
+    description: "Receive alerts for addresses deployed on a network.",
+    icon: Globe,
+  },
+  {
+    type: "project",
+    label: "Project",
+    description: "Receive alerts for every address in this project.",
+    icon: Blocks,
+  },
+  {
+    type: "tag",
+    label: "Tag",
+    description: "Receive alerts for every address with a selected tag.",
+    icon: Tag,
+  },
+];
+
+const alertDestinationOptions: Array<{
+  type: string;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+}> = [
+  { type: "webhook", label: "Webhook", description: "Send alert payloads to an HTTPS endpoint.", icon: Zap },
+  { type: "action", label: "Action", description: "Trigger a configured project action.", icon: Activity },
+  { type: "email", label: "Email", description: "Deliver notifications to an email destination.", icon: Bell },
+  { type: "slack", label: "Slack", description: "Post notifications to a Slack channel.", icon: Blocks },
+  { type: "discord", label: "Discord", description: "Post notifications to a Discord channel.", icon: Box },
+  { type: "telegram", label: "Telegram", description: "Send notifications to a Telegram chat.", icon: Wallet },
+  { type: "sentry", label: "Sentry", description: "Forward alert events to Sentry.", icon: ShieldCheck },
+  { type: "pagerduty", label: "PagerDuty", description: "Create incidents in PagerDuty.", icon: Clock3 },
+];
 
 function scopePath(scope: ProjectScope, path: string) {
   if (!scope.organization || !scope.project) return null;
@@ -464,7 +572,9 @@ function Modal({
   onClose: () => void;
   footer: ReactNode;
 }) {
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
       className="pw-modal-backdrop"
       role="presentation"
@@ -486,7 +596,8 @@ function Modal({
         <div className="pw-modal-body">{children}</div>
         <div className="pw-modal-foot">{footer}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -617,6 +728,10 @@ function TxRows({
 
 export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedAddress = searchParams.get("address");
+  const requestedNetwork = searchParams.get("network") ?? scope.network;
+  const openedQueryAddress = useRef<string | null>(null);
   const [page, setPage] = useState<CursorPage<TrackedEntity>>({ data: [] });
   const [selected, setSelected] = useState<Record<string, unknown> | null>(
     null,
@@ -802,7 +917,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
     };
   }, [address, showAdd]);
 
-  const openWallet = async (value: string, network: string = scope.network) => {
+  const openWallet = useCallback(async (value: string, network: string = scope.network) => {
     const base = scopePath(scope, `/accounts/${encodeURIComponent(value)}`);
     if (!base) return;
     setLoading(true);
@@ -822,7 +937,17 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [scope]);
+
+  useEffect(() => {
+    if (!requestedAddress) {
+      openedQueryAddress.current = null;
+      return;
+    }
+    if (openedQueryAddress.current === requestedAddress) return;
+    openedQueryAddress.current = requestedAddress;
+    void openWallet(requestedAddress, requestedNetwork);
+  }, [openWallet, requestedAddress, requestedNetwork]);
 
   const walletTagNames = useCallback(
     (entity: TrackedEntity) =>
@@ -1034,7 +1159,10 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
           network={String(walletDetail.network ?? scope.network)}
           address={selectedAddress}
           embedded
-          onBack={() => setSelected(null)}
+           onBack={() => {
+             setSelected(null);
+             router.replace("/wallets");
+           }}
         />
       </div>
     );
@@ -1102,6 +1230,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
               <Trash2 size={15} />
             </Button>
             <Button
+              className="pw-catalog-create-button"
               onClick={() => {
                 setAddress("");
                 setWalletName("Wallet");
@@ -1111,7 +1240,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                 setShowAdd(true);
               }}
             >
-              <Plus size={15} /> Add wallet
+              <Plus size={17} /> Add wallet
             </Button>
           </div>
         </div>
@@ -2071,13 +2200,14 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
       <div className="pw-page">
         <div className="pw-detail-head">
           <div className="pw-inline">
-            <Button
-              iconOnly
+            <button
+              className="pw-detail-back"
+              type="button"
               aria-label="Back to contracts"
               onClick={() => setSelected(null)}
             >
-              <ArrowLeft size={16} />
-            </Button>
+              <ChevronLeft size={18} />
+            </button>
             <EntityIdenticon
               value={selectedAddress}
               kind="contract"
@@ -2318,6 +2448,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
               <Trash2 size={15} />
             </Button>
             <Button
+              className="pw-catalog-create-button"
               onClick={() => {
                 setAddress("");
                 setContractName("");
@@ -2327,7 +2458,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
                 setShowAdd(true);
               }}
             >
-              <Plus size={15} /> Add contract
+              <Plus size={17} /> Add contract
             </Button>
           </div>
         </div>
@@ -2911,13 +3042,14 @@ function ContractDetailView(props: ContractDetailProps) {
     <div className="pw-page">
       <div className="pw-detail-head">
         <div className="pw-inline">
-          <Button
-            iconOnly
+          <button
+            className="pw-detail-back"
+            type="button"
             aria-label="Back to contracts"
             onClick={props.onBack}
           >
-            <ArrowLeft size={16} />
-          </Button>
+            <ChevronLeft size={18} />
+          </button>
           <EntityIdenticon value={address} kind="contract" size={34} />
           <div className="pw-detail-title">
             <p>Soroban contract</p>
@@ -3257,22 +3389,20 @@ function VerificationPanel(props: ContractDetailProps) {
   );
 }
 
-function EnvironmentCard({
+function EnvironmentRow({
   environment,
   onOpen,
-  selected,
-  onToggleChange,
 }: {
   environment: Environment;
   onOpen: () => void;
-  selected: boolean;
-  onToggleChange: (id: string) => void;
 }) {
+  const stateLedger = environment.state_ledger ?? environment.base_ledger_sequence;
   return (
     <div
-      className="pw-env-tile"
+      className="pw-row pw-clickable-row pw-environment-row"
       role="button"
       tabIndex={0}
+      style={{ gridTemplateColumns: "minmax(260px, 1fr) 128px 140px 140px 110px" }}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -3281,74 +3411,40 @@ function EnvironmentCard({
         }
       }}
     >
-      <div className="pw-inline" style={{ justifyContent: "space-between" }}>
-        <Blocks size={18} />
-        <span
-          className="pw-inline"
-          style={{ gap: 10 }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <input
-            type="checkbox"
-            aria-label={`Select ${environment.name}`}
-            checked={selected}
-            onChange={() => onToggleChange(environment.id)}
-          />
-          <StatusBadge status={environment.sync_status} />
+      <span className="pw-entity-cell">
+        <span className="pw-environment-icon"><Blocks size={16} /></span>
+        <span>
+          <strong>{environment.name}</strong>
+          <small className="pw-mono">Revision {environment.revision ?? 1}</small>
         </span>
-      </div>
-      <h3>{environment.name}</h3>
-      <p>
-        {environment.network} / protocol {environment.protocol}
-      </p>
-      <p style={{ marginTop: 5 }}>
-        Revision {environment.revision ?? 1} / state ledger {(environment.state_ledger ?? environment.base_ledger_sequence).toLocaleString()}
-      </p>
+      </span>
+      <NetworkLabel network={environment.network} />
+      <span className="pw-environment-mode">
+        {environment.mode === "follow_latest" ? "Network sync" : "Frozen"}
+      </span>
+      <span className="pw-mono">{stateLedger?.toLocaleString() ?? "Preparing"}</span>
+      <StatusBadge status={environment.initialization_status === "preparing" ? "preparing" : environment.sync_status} />
     </div>
   );
 }
 
 export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
-  const router = useRouter();
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [selected, setSelected] = useState<Environment | null>(null);
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState<
-    "overview" | "overrides" | "simulations" | "settings"
-  >("overview");
-  const [showCreate, setShowCreate] = useState(false);
-  const [name, setName] = useState("");
-  const [seedSimulationId, setSeedSimulationId] = useState("");
-  const [mode, setMode] = useState<"frozen" | "follow_latest">("frozen");
-  const [rename, setRename] = useState("");
-  const [overrideJson, setOverrideJson] = useState(
-    '{\n  "type": "ledger",\n  "sequence": null,\n  "timestamp": null,\n  "reason": ""\n}',
-  );
-  const [overrides, setOverrides] = useState<unknown[]>([]);
+  const [createWizard, setCreateWizard] = useState(false);
   const [runs, setRuns] = useState<Simulation[]>([]);
-  const [revisions, setRevisions] = useState<EnvironmentRevision[]>([]);
-  const [coverage, setCoverage] = useState<NetworkCoverage[]>([]);
-  const [activationRevisionId, setActivationRevisionId] = useState("");
-  const [branchName, setBranchName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const [bulkTagging, setBulkTagging] = useState(false);
-  const [tagName, setTagName] = useState("");
-  const [deleteConfirm, setDeleteConfirm] = useState(false);
-  const [deleteTargets, setDeleteTargets] = useState<Environment[] | null>(
-    null,
-  );
-  const resourcePollingGeneration = useRef(0);
 
   const path = scopePath(scope, "/environments");
+  const simulationPath = scopePath(scope, "/simulations");
   const load = useCallback(async () => {
     if (!path) return;
     try {
-      const simulationPath = scopePath(scope, "/simulations");
       const [response, simulationResponse] = await Promise.all([
         api.get<{ environments: Environment[] }>(path),
         simulationPath ? api.get<{ simulations: Simulation[] }>(simulationPath) : Promise.resolve({ simulations: [] }),
@@ -3368,696 +3464,68 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
         errorMessage(cause, "Fork Core environments are unavailable."),
       );
     }
-  }, [path]);
+  }, [path, simulationPath]);
   useEffect(() => {
     void load();
   }, [load]);
-  const openEnvironment = async (environment: Environment) => {
+  const openEnvironment = (environment: Environment) => {
     setSelected(environment);
-    setRename(environment.name);
-    setActivationRevisionId(environment.active_revision_id ?? "");
-    setTab("overview");
-    const overridePath = scopePath(
-      scope,
-      `/environments/${encodeURIComponent(environment.id)}/overrides`,
-    );
-    const simulationsPath = scopePath(scope, "/simulations");
-    const revisionsPath = scopePath(scope, `/environments/${encodeURIComponent(environment.id)}/revisions`);
-    const coveragePath = scopePath(
-      scope,
-      `/networks/${encodeURIComponent(environment.network)}/coverage`,
-    );
-    const [overrideResult, runResult, revisionResult, coverageResult] = await Promise.all([
-      overridePath
-        ? api
-            .get<{ overrides: unknown[] }>(overridePath)
-            .catch(() => ({ overrides: [] }))
-        : { overrides: [] },
-      simulationsPath
-        ? api
-            .get<{ simulations: Simulation[] }>(simulationsPath)
-            .catch(() => ({ simulations: [] }))
-        : { simulations: [] },
-      revisionsPath ? api.get<{ revisions: EnvironmentRevision[] }>(revisionsPath).catch(() => ({ revisions: [] })) : { revisions: [] },
-      coveragePath
-        ? api
-            .get<{ coverage: NetworkCoverage[] }>(coveragePath)
-            .catch(() => ({ coverage: [] }))
-        : { coverage: [] },
-    ]);
-    setOverrides(overrideResult.overrides ?? []);
-    setRuns(runResult.simulations ?? []);
-    setRevisions(revisionResult.revisions ?? []);
-    setCoverage(coverageResult.coverage ?? []);
   };
 
-  const create = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!path || !name.trim() || !seedSimulationId) return;
+  const createEnvironment = async (input: CreateEnvironmentInput) => {
+    if (!path) throw new Error("Select a project before creating an environment.");
     setLoading(true);
     try {
-      await api.post(path, {
-        name: name.trim(),
-        simulation_id: seedSimulationId,
-        mode,
+      const created = await api.post<Environment & { admin_secret?: string }>(path, input, {
+        headers: { "Idempotency-Key": crypto.randomUUID() },
       });
-      setName("");
-      setSeedSimulationId("");
-      setShowCreate(false);
-      setMessage("Environment created and handed to Fork Core.");
+      setCreateWizard(false);
+      setMessage(created.admin_secret
+        ? "Environment ready. Its admin RPC secret is shown once in Configure."
+        : "Environment ready.");
       setError(null);
       await load();
+      openEnvironment(created);
     } catch (cause) {
-      setError(errorMessage(cause, "Could not create the environment."));
+      const message = errorMessage(cause, "Could not create the environment.");
+      setError(message);
+      throw new Error(message);
     } finally {
       setLoading(false);
     }
   };
 
-  const pollResourceJob = async (
-    statusUrl: string,
-    generation: number,
-    initialRetryAfterMs: number,
-  ) => {
-    const terminal = new Set([
-      "succeeded",
-      "failed",
-      "cancelled",
-      "dead_letter",
-      "inconclusive",
-      "unavailable",
-      "budget_limited",
-    ]);
-    let retryAfterMs = Math.min(Math.max(initialRetryAfterMs, 250), 5000);
-    for (let attempt = 0; attempt < 900; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, retryAfterMs));
-      if (resourcePollingGeneration.current !== generation) return null;
-      const job = await api.get<Record<string, unknown>>(statusUrl);
-      if (resourcePollingGeneration.current !== generation) return null;
-      const status = String(job.status ?? "queued");
-      const stage = String(job.stage ?? status).replaceAll("_", " ");
-      const progress = Number(job.progress ?? 0);
-      const attempts = Number(job.attempts ?? 0);
-      retryAfterMs = Math.min(
-        Math.max(Number(job.retry_after_ms ?? 1000), 250),
-        5000,
-      );
-      setMessage(
-        terminal.has(status)
-          ? `Environment rebase ${status.replaceAll("_", " ")}.`
-          : `${stage} / ${progress}%${attempts > 1 ? ` / attempt ${attempts}` : ""}`,
-      );
-      if (terminal.has(status)) {
-        if (status !== "succeeded" && status !== "cancelled") {
-          const lastError = (job.last_error ?? {}) as Record<string, unknown>;
-          setError(
-            String(
-              lastError.message ??
-                `Environment rebase ended as ${status.replaceAll("_", " ")}.`,
-            ),
-          );
-        }
-        return job;
-      }
-    }
-    throw new Error("Environment rebase did not reach a terminal state in time.");
-  };
-
-  const action = async (suffix: string, body?: unknown) => {
-    if (!selected) return;
-    const selectedEnvironment = selected;
-    const target = scopePath(
-      scope,
-      `/environments/${encodeURIComponent(selectedEnvironment.id)}${suffix}`,
-    );
-    if (!target) return;
-    const generation = resourcePollingGeneration.current + 1;
-    resourcePollingGeneration.current = generation;
-    setLoading(true);
-    try {
-      const response = await api.post<Record<string, unknown>>(
-        target,
-        body,
-        suffix === "/sync/start"
-          ? { headers: { "Idempotency-Key": crypto.randomUUID() } }
-          : undefined,
-      );
-      setError(null);
-      if (suffix === "/sync/start") {
-        setSelected((current) =>
-          current?.id === selectedEnvironment.id
-            ? {
-                ...current,
-                mode: "follow_latest",
-                sync_enabled: true,
-                sync_status: "syncing",
-              }
-            : current,
-        );
-        const statusUrl =
-          typeof response.status_url === "string" &&
-          response.status_url.startsWith("/api/v1/")
-            ? response.status_url
-            : null;
-        if (!statusUrl) {
-          throw new Error("Fork Core did not return a valid rebase job URL.");
-        }
-        setMessage("Environment rebase queued. Resolving authoritative state.");
-        const job = await pollResourceJob(
-          statusUrl,
-          generation,
-          Number(response.retry_after_ms ?? 500),
-        );
-        if (resourcePollingGeneration.current !== generation || !job) return;
-        if (job.status === "succeeded") {
-          const result = (job.result ?? {}) as Record<string, unknown>;
-          setMessage(
-            typeof result.state_ledger === "number"
-              ? `Environment rebased to ledger ${result.state_ledger.toLocaleString()}.`
-              : "Environment rebase completed.",
-          );
-        }
-      } else {
-        setMessage(
-          suffix === "/sync/stop"
-            ? `${selectedEnvironment.name} pinned to its current revision.`
-            : `${selectedEnvironment.name} updated.`,
-        );
-      }
-      await load();
-      if (suffix === "/overrides" || suffix.startsWith("/sync/")) {
-        const environmentPath = scopePath(
-          scope,
-          `/environments/${encodeURIComponent(selectedEnvironment.id)}`,
-        );
-        if (environmentPath) {
-          await openEnvironment(await api.get<Environment>(environmentPath));
-        }
-      }
-    } catch (cause) {
-      setError(errorMessage(cause, "Environment action failed."));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateName = async () => {
-    if (!selected || !rename.trim()) return;
-    const target = scopePath(
-      scope,
-      `/environments/${encodeURIComponent(selected.id)}`,
-    );
-    if (!target) return;
-    try {
-      await api.patch(target, { name: rename.trim() });
-      setMessage("Environment renamed.");
-      await load();
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not rename the environment."));
-    }
-  };
-
-  const addOverride = async () => {
-    try {
-      await action("/overrides", JSON.parse(overrideJson));
-    } catch {
-      setError("Override must be valid JSON.");
-    }
-  };
-
-  const branchRevision = async () => {
-    if (!selected || !activationRevisionId || !branchName.trim()) return;
-    await action(
-      `/revisions/${encodeURIComponent(activationRevisionId)}/branch`,
-      { name: branchName.trim() },
-    );
-    setBranchName("");
-    setSelected(null);
-  };
-  const selectedRevision =
-    revisions.find((revision) => revision.id === activationRevisionId) ?? null;
-
-  const remove = async () => {
-    if (!selected) return;
-    const target = scopePath(
-      scope,
-      `/environments/${encodeURIComponent(selected.id)}`,
-    );
-    if (!target) return;
-    try {
-      await api.delete(target);
-      setSelected(null);
-      setMessage("Environment deleted.");
-      await load();
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not delete the environment."));
-    }
-  };
-
-  if (selected)
+  if (selected && path)
     return (
-      <div className="pw-page">
-        <ToastPopup
-          message={toastError}
-          kind="error"
-          onDone={() => setToastError(null)}
-        />
-        <div className="pw-detail-head">
-          <div className="pw-inline">
-            <Button
-              iconOnly
-              aria-label="Back to environments"
-              onClick={() => setSelected(null)}
-            >
-              <ArrowLeft size={16} />
-            </Button>
-            <div className="pw-detail-title">
-              <p>Virtual environment</p>
-              <h1>{selected.name}</h1>
-              <p>
-                {selected.network} / protocol {selected.protocol} / revision {selected.revision ?? 1}
-              </p>
-            </div>
-          </div>
-          <div className="pw-actions">
-            <Button
-              onClick={() =>
-                void action(
-                  selected.sync_enabled ? "/sync/stop" : "/sync/start",
-                )
-              }
-            >
-              {selected.sync_enabled ? <Pause size={14} /> : <Play size={14} />}
-              {selected.sync_enabled ? "Pause sync" : "Start sync"}
-            </Button>
-            <Button
-              primary
-              onClick={() =>
-                router.push(
-                  `/simulator?environment=${encodeURIComponent(selected.id)}`,
-                )
-              }
-            >
-              <Play size={14} /> Simulate
-            </Button>
-          </div>
-        </div>
-        {message && <Message>{message}</Message>}
-        {error && <Message error>{error}</Message>}
-        <div className="pw-surface">
-          <div className="pw-stats">
-            <div className="pw-stat">
-              <span>Sync status</span>
-              <strong>
-                <StatusBadge status={selected.sync_status} />
-              </strong>
-            </div>
-            <div className="pw-stat">
-              <span>State ledger</span>
-              <strong>{(selected.state_ledger ?? selected.base_ledger_sequence).toLocaleString()}</strong>
-            </div>
-            <div className="pw-stat">
-              <span>Persisted overrides</span>
-              <strong>{overrides.length}</strong>
-            </div>
-            <div className="pw-stat">
-              <span>Protocol</span>
-              <strong>{selected.protocol}</strong>
-            </div>
-          </div>
-          <div className="pw-tabs">
-            <button
-              data-active={tab === "overview"}
-              onClick={() => setTab("overview")}
-            >
-              Overview
-            </button>
-            <button
-              data-active={tab === "overrides"}
-              onClick={() => setTab("overrides")}
-            >
-              State overrides
-            </button>
-            <button
-              data-active={tab === "simulations"}
-              onClick={() => setTab("simulations")}
-            >
-              Simulations
-            </button>
-            <button
-              data-active={tab === "settings"}
-              onClick={() => setTab("settings")}
-            >
-              Settings
-            </button>
-          </div>
-          {tab === "overview" && (
-            <div className="pw-panel-body">
-              <div className="pw-kv">
-                <span>Environment ID</span>
-                <span className="pw-mono">{selected.id}</span>
-                <span>Network</span>
-                <span>{selected.network}</span>
-                <span>Continuous sync</span>
-                <span>{selected.mode === "follow_latest" ? "Follow latest" : "Frozen"}</span>
-                <span>Execution protocol</span>
-                <span>Protocol {selected.protocol}</span>
-                <span>Requested ledger</span>
-                <span>{selected.requested_ledger?.toLocaleString() ?? "Latest"}</span>
-                <span>State ledger</span>
-                <span>{selected.state_ledger?.toLocaleString() ?? "Pending"}</span>
-                <span>Execution ledger</span>
-                <span>{selected.execution_ledger?.toLocaleString() ?? "Pending"}</span>
-                <span>State hash</span>
-                <span className="pw-mono">{selected.state_hash ?? "Pending"}</span>
-                <span>Verification</span>
-                <span>{selected.verification_status ?? "pending"}</span>
-              </div>
-              <div style={{ marginTop: 22 }}>
-                <h2>Historical coverage</h2>
-                {coverage.length ? (
-                  <div className="pw-table" style={{ marginTop: 10 }}>
-                    {coverage.map((range, index) => (
-                      <div
-                        className="pw-row"
-                        style={{
-                          gridTemplateColumns:
-                            "110px minmax(180px, 1fr) minmax(160px, 1fr) 140px",
-                        }}
-                        key={`${range.epoch ?? "epoch"}-${range.first_ledger ?? index}`}
-                      >
-                        <StatusBadge status={range.status ?? "unavailable"} />
-                        <span className="pw-mono">
-                          {range.first_ledger?.toLocaleString() ?? "Not materialized"}
-                          {range.last_ledger
-                            ? ` - ${range.last_ledger.toLocaleString()}`
-                            : ""}
-                        </span>
-                        <span>{range.canonical_source ?? "No canonical source"}</span>
-                        <span>{range.epoch ?? "P26"}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p style={{ color: "var(--text-dim)", marginTop: 8 }}>
-                    No materialized historical range is cached for this network yet.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-          {tab === "overrides" && (
-            <div className="pw-panel-body">
-              <div className="pw-field-grid">
-                <label className="pw-label pw-span-full">
-                  Override JSON
-                  <textarea
-                    className="pw-field pw-mono"
-                    rows={8}
-                    value={overrideJson}
-                    onChange={(event) => setOverrideJson(event.target.value)}
-                  />
-                </label>
-                <div
-                  className="pw-span-full pw-actions"
-                  style={{ justifyContent: "flex-end" }}
-                >
-                  <Button
-                    primary
-                    onClick={() => void addOverride()}
-                    disabled={loading}
-                  >
-                    <Plus size={14} /> Apply override
-                  </Button>
-                </div>
-              </div>
-              <div style={{ marginTop: 16 }}>
-                {overrides.length ? (
-                  <pre className="pw-json">
-                    {JSON.stringify(overrides, null, 2)}
-                  </pre>
-                ) : (
-                  <EmptyState
-                    icon={<SlidersHorizontal size={22} />}
-                    title="No persisted overrides"
-                    body="Balance, contract storage, TTL, ledger sequence, and timestamp overrides will appear here."
-                  />
-                )}
-              </div>
-            </div>
-          )}
-          {tab === "simulations" && (
-            <div className="pw-table">
-              {runs.length ? (
-                runs.map((run) => (
-                  <button
-                    className="pw-row"
-                    style={{
-                      gridTemplateColumns:
-                        "minmax(180px, 1fr) 120px 140px 140px",
-                    }}
-                    key={run.id}
-                    onClick={() =>
-                      router.push(
-                        `/simulator?run=${encodeURIComponent(run.id)}`,
-                      )
-                    }
-                  >
-                    <span className="pw-mono">{run.function_name}</span>
-                    <StatusBadge status={run.status} />
-                    <span>{run.base_ledger_sequence.toLocaleString()}</span>
-                    <span>{timeLabel(run.created_at)}</span>
-                  </button>
-                ))
-              ) : (
-                <EmptyState
-                  icon={<History size={22} />}
-                  title="No simulations yet"
-                  body="Run a transaction against this environment to see its history here."
-                  action={
-                    <Button
-                      primary
-                      onClick={() =>
-                        router.push(
-                          `/simulator?environment=${encodeURIComponent(selected.id)}`,
-                        )
-                      }
-                    >
-                      <Play size={14} /> New simulation
-                    </Button>
-                  }
-                />
-              )}
-            </div>
-          )}
-          {tab === "settings" && (
-            <div className="pw-panel-body">
-              <div className="pw-field-grid">
-                <label className="pw-label">
-                  Environment name
-                  <input
-                    className="pw-field"
-                    value={rename}
-                    onChange={(event) => setRename(event.target.value)}
-                  />
-                </label>
-                <div className="pw-label">
-                  <span>&nbsp;</span>
-                  <Button onClick={() => void updateName()}>Rename</Button>
-                </div>
-                <label className="pw-label">Active revision<select className="pw-field" value={activationRevisionId}
-                  onChange={(event) => setActivationRevisionId(event.target.value)}>
-                  {revisions.map((revision) => <option key={revision.id} value={revision.id}>
-                    Revision {revision.revision_number} / ledger {revision.state_ledger.toLocaleString()}
-                  </option>)}
-                </select></label>
-                <div className="pw-label">
-                  <span>&nbsp;</span>
-                  <Button
-                    onClick={() =>
-                      activationRevisionId && void action(`/revisions/${encodeURIComponent(activationRevisionId)}/activate`)
-                    }
-                  >
-                    <RotateCcw size={14} /> Activate revision
-                  </Button>
-                </div>
-                <label className="pw-label">
-                  Branch name
-                  <input
-                    className="pw-field"
-                    value={branchName}
-                    onChange={(event) => setBranchName(event.target.value)}
-                    placeholder="Investigation branch"
-                  />
-                </label>
-                <div className="pw-label">
-                  <span>&nbsp;</span>
-                  <Button
-                    disabled={!activationRevisionId || !branchName.trim()}
-                    onClick={() => void branchRevision()}
-                  >
-                    <GitBranch size={14} /> Branch revision
-                  </Button>
-                </div>
-                {revisions.length > 0 && (
-                  <div className="pw-span-full pw-kv">
-                    <span>Revision history</span>
-                    <span>{revisions.length} immutable revisions</span>
-                    <span>Selected verification</span>
-                    <span>
-                      {selectedRevision?.verification_status ?? "complete"}
-                    </span>
-                    <span>Selected state hash</span>
-                    <span className="pw-mono">
-                      {selectedRevision?.state_hash ?? "Pending"}
-                    </span>
-                  </div>
-                )}
-                {selectedRevision && (
-                  <div className="pw-span-full">
-                    <details>
-                      <summary>Completeness certificate</summary>
-                      <pre className="pw-json" style={{ marginTop: 10 }}>
-                        {JSON.stringify(
-                          selectedRevision.completeness_certificate ?? {},
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </details>
-                    <details style={{ marginTop: 10 }}>
-                      <summary>Resolution provenance</summary>
-                      <pre className="pw-json" style={{ marginTop: 10 }}>
-                        {JSON.stringify(selectedRevision.provenance ?? [], null, 2)}
-                      </pre>
-                    </details>
-                  </div>
-                )}
-                <div
-                  className="pw-span-full"
-                  style={{
-                    borderTop: "1px solid var(--border)",
-                    marginTop: 8,
-                    paddingTop: 14,
-                  }}
-                >
-                  <Button danger onClick={() => void remove()}>
-                    <Trash2 size={14} /> Delete environment
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <EnvironmentWorkspace
+        environment={selected}
+        basePath={path.slice(0, -"/environments".length)}
+        scope={scope}
+        onBack={() => setSelected(null)}
+        onDeleted={() => {
+          setSelected(null);
+          void load();
+        }}
+        onRefresh={load}
+      />
     );
-
   const visible = environments.filter(
     (environment) =>
       !query.trim() ||
       environment.name.toLowerCase().includes(query.trim().toLowerCase()) ||
       environment.network.toLowerCase().includes(query.trim().toLowerCase()) ||
-      String(environment.base_ledger_sequence).includes(query.trim()),
+      String(environment.state_ledger ?? environment.base_ledger_sequence).includes(query.trim()),
   );
-  const allVisibleSelected =
-    visible.length > 0 && visible.every((environment) => selectedIds.has(environment.id));
-  const selectedVisible = visible.filter((environment) =>
-    selectedIds.has(environment.id),
-  );
-  const toggleSelected = (id: string) => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-  const toggleAllSelected = () => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (allVisibleSelected)
-        visible.forEach((environment) => next.delete(environment.id));
-      else visible.forEach((environment) => next.add(environment.id));
-      return next;
-    });
-  };
   const refreshList = async () => {
     setRefreshing(true);
     try {
       await Promise.all([load(), refreshSpinDelay()]);
-      setSelectedIds(new Set());
     } finally {
       setRefreshing(false);
     }
   };
-  const deleteSelected = async () => {
-    const targets = deleteTargets ?? selectedVisible;
-    if (!targets.length) return;
-    const targetsPath = targets
-      .map((environment) =>
-        scopePath(scope, `/environments/${encodeURIComponent(environment.id)}`),
-      )
-      .filter((target) => !!target) as string[];
-    if (targetsPath.length !== targets.length) {
-      setError("Reload this environment list before deleting.");
-      return;
-    }
-    setLoading(true);
-    try {
-      await Promise.all(targetsPath.map((target) => api.delete(target)));
-      const removed = new Set(targets.map((environment) => environment.id));
-      setEnvironments((current) =>
-        current.filter((environment) => !removed.has(environment.id)),
-      );
-      setSelectedIds((current) => {
-        const next = new Set(current);
-        removed.forEach((id) => next.delete(id));
-        return next;
-      });
-      setDeleteConfirm(false);
-      setDeleteTargets(null);
-      setMessage(
-        targets.length === 1 ? "Environment deleted." : "Environments deleted.",
-      );
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not delete the selected environments."));
-    } finally {
-      setLoading(false);
-    }
-  };
-  const saveTag = async (event: FormEvent) => {
-    event.preventDefault();
-    const name = tagName.trim();
-    if (!selectedVisible.length || !name) return;
-    const path = scopePath(scope, "/tags");
-    if (!path) return;
-    setLoading(true);
-    try {
-      let tag: ProjectTag;
-      try {
-        tag = await api.post<ProjectTag>(path, { name, color: null });
-      } catch (cause) {
-        if (!(cause instanceof ApiError) || cause.status !== 409) throw cause;
-        const tags = await api.get<CursorPage<ProjectTag>>(`${path}?limit=100`);
-        const existing = tags.data.find((item) => item.name === name);
-        if (!existing) throw cause;
-        tag = existing;
-      }
-      setBulkTagging(false);
-      setTagName("");
-      setMessage(
-        `Tag "${tag.name}" created. Tags attach to wallets and contracts — reference this tag in a monitoring rule.`,
-      );
-      setError(null);
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not create this tag."));
-    } finally {
-      setLoading(false);
-    }
-  };
   return (
-    <div className="pw-page">
+    <div className="pw-page pw-environments-page">
       <ToastPopup
         message={toastError}
         kind="error"
@@ -4065,9 +3533,10 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
       />
       <Header
         title="Virtual environments"
-        description="Manage private verified revisions, persisted overrides, lazy synchronization, and simulation history from one place."
+        description="Create, inspect, synchronize, simulate, and integrate isolated Stellar environments."
       />
       {message && <Message>{message}</Message>}
+      {error && <Message error>{error}</Message>}
       <div className="pw-surface">
         <div className="pw-toolbar">
           <div className="pw-search">
@@ -4090,32 +3559,10 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
               <RotateCcw className={refreshing ? "pw-spin" : ""} size={15} />
             </Button>
             <Button
-              iconOnly
-              aria-label="Tag selected environments"
-              title="Tag selected environments"
-              disabled={!selectedVisible.length}
-              onClick={() => {
-                setBulkTagging(true);
-                setTagName("");
-              }}
+              className="pw-catalog-create-button"
+              onClick={() => setCreateWizard(true)}
             >
-              <Tag size={15} />
-            </Button>
-            <Button
-              iconOnly
-              danger
-              aria-label="Delete selected environments"
-              title="Delete selected environments"
-              disabled={!selectedVisible.length || loading}
-              onClick={() => {
-                setDeleteTargets(null);
-                setDeleteConfirm(true);
-              }}
-            >
-              <Trash2 size={15} />
-            </Button>
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus size={15} /> Create environment
+              <Plus size={17} /> Create environment
             </Button>
           </div>
         </div>
@@ -4125,181 +3572,49 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
             continue.
           </div>
         ) : visible.length ? (
-          <div className="pw-environment-grid">
+          <div className="pw-table pw-environment-table">
+            <div
+              className="pw-row pw-row-header pw-environment-row"
+              style={{ gridTemplateColumns: "minmax(260px, 1fr) 128px 140px 140px 110px" }}
+            >
+              <span>Environment</span>
+              <span>Network</span>
+              <span>Mode</span>
+              <span>State ledger</span>
+              <span>Status</span>
+            </div>
             {visible.map((environment) => (
-              <EnvironmentCard
+              <EnvironmentRow
                 key={environment.id}
                 environment={environment}
-                selected={selectedIds.has(environment.id)}
-                onToggleChange={toggleSelected}
                 onOpen={() => void openEnvironment(environment)}
               />
             ))}
           </div>
-        ) : query ? (
-          <EmptyState
-            icon={<Blocks size={22} />}
-            title="No matching environments"
-            body="Try another environment name, network, or ledger."
-          />
+        ) : query.trim() ? (
+          <div className="pw-catalog-empty">
+            <Blocks size={20} />
+            <strong>No matching environments</strong>
+            <span>Try another environment name, network, or ledger.</span>
+          </div>
         ) : (
-          <CreatePrompt
-            onAction={() => setShowCreate(true)}
-            label="Create environment"
-          />
+          <>
+            <CreatePrompt
+              onAction={() => setCreateWizard(true)}
+              label="Create environment"
+            />
+          </>
         )}
       </div>
-      {showCreate && (
-        <Modal
-          title="Create virtual environment"
-          onClose={() => setShowCreate(false)}
-          footer={
-            <>
-              <Button onClick={() => setShowCreate(false)}>Cancel</Button>
-              <Button
-                primary
-                disabled={loading || !name.trim() || !seedSimulationId}
-                onClick={() =>
-                  document
-                    .getElementById("create-environment-form")
-                    ?.dispatchEvent(
-                      new Event("submit", { bubbles: true, cancelable: true }),
-                    )
-                }
-              >
-                {loading ? <LoaderCircle size={14} /> : <Plus size={14} />}{" "}
-                Create
-              </Button>
-            </>
-          }
-        >
-          <form
-            id="create-environment-form"
-            onSubmit={create}
-            className="pw-modal-body"
-            style={{ padding: 0 }}
-          >
-            <label className="pw-label">
-              Name
-              <input
-                autoFocus
-                className="pw-field"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Checkout regression"
-              />
-            </label>
-            <label className="pw-label">Certified simulation<select className="pw-field" value={seedSimulationId}
-              onChange={(event) => setSeedSimulationId(event.target.value)}><option value="">Select a successful run</option>
-              {runs.filter((run) => run.status === "success").map((run) => <option key={run.id} value={run.id}>
-                {run.function_name} / ledger {(run.state_ledger ?? run.base_ledger_sequence).toLocaleString()}
-              </option>)}</select></label>
-            <label className="pw-label">Mode<select className="pw-field" value={mode}
-              onChange={(event) => setMode(event.target.value as "frozen" | "follow_latest")}>
-              <option value="frozen">Frozen verified revision</option><option value="follow_latest">Follow latest</option>
-            </select></label>
-          </form>
-        </Modal>
-      )}
-      {bulkTagging && (
-        <Modal
-          title="Tag selected environments"
-          onClose={() => {
-            setBulkTagging(false);
-            setTagName("");
-          }}
-          footer={
-            <>
-              <Button
-                onClick={() => {
-                  setBulkTagging(false);
-                  setTagName("");
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                primary
-                disabled={loading || !tagName.trim()}
-                onClick={() =>
-                  document
-                    .getElementById("environment-tag-form")
-                    ?.dispatchEvent(
-                      new Event("submit", { bubbles: true, cancelable: true }),
-                    )
-                }
-              >
-                {loading ? <LoaderCircle size={14} /> : <Tag size={14} />}{" "}
-                Save tag
-              </Button>
-            </>
-          }
-        >
-          <form
-            id="environment-tag-form"
-            onSubmit={saveTag}
-            className="pw-modal-body"
-            style={{ padding: 0 }}
-          >
-            <label className="pw-label">
-              Tag name
-              <input
-                autoFocus
-                className="pw-field"
-                value={tagName}
-                onChange={(event) => setTagName(event.target.value)}
-                placeholder="production"
-              />
-            </label>
-            <p className="pw-modal-note">
-              {selectedVisible.length} selected environment
-              {selectedVisible.length === 1 ? "" : "s"}. Tags attach to
-              wallets and contracts; reference the created tag in a
-              monitoring rule.
-            </p>
-          </form>
-        </Modal>
-      )}
-      {deleteConfirm && (
-        <Modal
-          title={
-            deleteTargets?.length === 1
-              ? "Delete environment"
-              : "Delete selected environments"
-          }
-          onClose={() => {
-            setDeleteConfirm(false);
-            setDeleteTargets(null);
-          }}
-          footer={
-            <>
-              <Button
-                onClick={() => {
-                  setDeleteConfirm(false);
-                  setDeleteTargets(null);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                danger
-                disabled={loading}
-                onClick={() => void deleteSelected()}
-              >
-                {loading ? <LoaderCircle size={14} /> : <Trash2 size={14} />}{" "}
-                Delete
-              </Button>
-            </>
-          }
-        >
-          <p className="pw-modal-note">
-            Remove {(deleteTargets ?? selectedVisible).length} environment
-            {(deleteTargets ?? selectedVisible).length === 1 ? "" : "s"} from
-            this project. The forked ledger is torn down and future runs
-            against it stop.
-          </p>
-        </Modal>
-      )}
+      <CreateEnvironmentModal
+        open={createWizard}
+        onClose={() => setCreateWizard(false)}
+        simulations={runs.filter((run) => ["success", "succeeded"].includes(run.status)).map((run) => ({
+          id: run.id,
+          label: `${run.function_name} / ledger ${(run.state_ledger ?? run.base_ledger_sequence)?.toLocaleString() ?? "pending"}`,
+        }))}
+        onCreate={createEnvironment}
+      />
     </div>
   );
 }
@@ -4329,13 +3644,14 @@ function Accordion({
   );
 }
 
-export function SimulatorPage({ scope }: { scope: ProjectScope }) {
+export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: ProjectScope; embeddedEnvironmentId?: string }) {
   const router = useRouter();
   const search = useSearchParams();
   const requestedLedger = search.get("ledger");
   const sourceTransaction = search.get("tx");
   const [editor, setEditor] = useState(
     Boolean(
+      embeddedEnvironmentId ||
       search.get("contract") ||
       search.get("impersonate") ||
       search.get("environment") ||
@@ -4351,12 +3667,12 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [runs, setRuns] = useState<Simulation[]>([]);
   const [environmentId, setEnvironmentId] = useState(
-    search.get("environment") ?? "",
+    embeddedEnvironmentId ?? search.get("environment") ?? "",
   );
   const [stateMode, setStateMode] = useState<
     "latest" | "ledger" | "environment"
   >(
-    search.get("environment")
+    embeddedEnvironmentId || search.get("environment")
       ? "environment"
       : requestedLedger
         ? "ledger"
@@ -4372,7 +3688,8 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
   const [argsMode, setArgsMode] = useState<"decoded" | "raw">("decoded");
   const [args, setArgs] = useState(search.get("args") ?? "[]");
   const [sourceAccountXdr, setSourceAccountXdr] = useState("");
-  const [sequenceNumber, setSequenceNumber] = useState("0");
+  const [sequenceNumber, setSequenceNumber] = useState<number | null>(null);
+  const [sequenceLoading, setSequenceLoading] = useState(false);
   const [transactionEnvelopeXdr, setTransactionEnvelopeXdr] = useState("");
   const [impersonate, setImpersonate] = useState(
     search.get("impersonate") ?? "",
@@ -4382,9 +3699,11 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
   const [balanceTarget, setBalanceTarget] = useState("");
   const [balanceAsset, setBalanceAsset] = useState("XLM");
   const [balanceAmount, setBalanceAmount] = useState("");
-  const [balanceKeyXdr, setBalanceKeyXdr] = useState("");
   const [storageKeyXdr, setStorageKeyXdr] = useState("");
   const [storageValueXdr, setStorageValueXdr] = useState("");
+  const [contractEntries, setContractEntries] = useState<SimulationLedgerEntry[]>([]);
+  const [contractEntrySearch, setContractEntrySearch] = useState("");
+  const [contractEntriesLoading, setContractEntriesLoading] = useState(false);
   const [ttlKeyXdr, setTtlKeyXdr] = useState("");
   const [liveUntilLedger, setLiveUntilLedger] = useState("");
   const [advancedOverrides, setAdvancedOverrides] = useState("[]");
@@ -4418,6 +3737,11 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
   const selectedEnvironment = environments.find(
     (environment) => environment.id === environmentId,
   );
+  const visibleContractEntries = contractEntries.filter((entry) =>
+    `${entry.decoded_key} ${entry.decoded_value} ${entry.key}`
+      .toLowerCase()
+      .includes(contractEntrySearch.trim().toLowerCase()),
+  );
   const load = useCallback(async () => {
     if (!environmentPath || !simulationPath) return;
     try {
@@ -4447,6 +3771,69 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (
+      argsMode === "raw" ||
+      stateMode === "ledger" ||
+      !sourceAccountXdr.trim() ||
+      !simulationPath
+    ) {
+      setSequenceNumber(null);
+      setSequenceLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSequenceNumber(null);
+    setSequenceLoading(true);
+    const timer = window.setTimeout(() => {
+      api.post<{ next_sequence_number: number }>(`${simulationPath}/sequence`, {
+        network: scope.network,
+        source_account_xdr: sourceAccountXdr.trim(),
+        environment_id: stateMode === "environment" ? environmentId || null : null,
+      }).then((response) => {
+        if (!cancelled) setSequenceNumber(response.next_sequence_number);
+      }).catch(() => {
+        if (!cancelled) setError("The source account sequence could not be resolved from the selected state.");
+      }).finally(() => {
+        if (!cancelled) setSequenceLoading(false);
+      });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [argsMode, environmentId, scope.network, simulationPath, sourceAccountXdr, stateMode]);
+  useEffect(() => {
+    if (!contractId.trim() || !simulationPath) {
+      setContractEntries([]);
+      setStorageKeyXdr("");
+      setStorageValueXdr("");
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setContractEntriesLoading(true);
+      api.post<{ entries: SimulationLedgerEntry[] }>(`${simulationPath}/contract-entries`, {
+        network: scope.network,
+        contract_id: contractId.trim(),
+        environment_id: stateMode === "environment" ? environmentId || null : null,
+      }).then((response) => {
+        if (cancelled) return;
+        setContractEntries(response.entries ?? []);
+        const first = response.entries?.[0];
+        setStorageKeyXdr(first?.key ?? "");
+        setStorageValueXdr(first?.value_xdr ?? "");
+      }).catch(() => {
+        if (!cancelled) setContractEntries([]);
+      }).finally(() => {
+        if (!cancelled) setContractEntriesLoading(false);
+      });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [contractId, environmentId, scope.network, simulationPath, stateMode]);
   useEffect(() => {
     const run = search.get("run");
     if (run && simulationPath)
@@ -4489,17 +3876,16 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
         sequence: increase > 0 ? baseLedger + increase : null,
         timestamp: timestamp ? new Date(timestamp).toISOString() : null,
       });
-    if (balanceTarget || balanceAmount || balanceKeyXdr) {
-      if (!balanceTarget || !balanceAmount || !balanceKeyXdr)
+    if (balanceTarget || balanceAmount) {
+      if (!balanceTarget || !balanceAmount)
         throw new Error(
-          "Balance override requires account, amount, and ledger-key XDR.",
+          "Balance override requires account and amount.",
         );
       built.push({
         type: "balance",
         target: balanceTarget,
         asset: balanceAsset || "XLM",
         amount: balanceAmount,
-        ledger_key_xdr: balanceKeyXdr,
       });
     }
     if (storageKeyXdr || storageValueXdr) {
@@ -4556,10 +3942,10 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
       (!contractId.trim() ||
         !functionName.trim() ||
         !sourceAccountXdr.trim() ||
-        Number(sequenceNumber) < 0)
+        sequenceNumber === null)
     )
       throw new Error(
-        "Decoded invocation requires a contract, function, source account XDR, and sequence number.",
+        "Decoded invocation requires a contract, function, and source account.",
       );
     if (argsMode === "raw" && !transactionEnvelopeXdr.trim())
       throw new Error("Paste a prepared transaction envelope XDR.");
@@ -4583,7 +3969,7 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
             function_name: functionName.trim(),
             args: parsedArgs,
             source_account_xdr: sourceAccountXdr.trim(),
-            sequence_number: Number(sequenceNumber),
+            sequence_number: sequenceNumber,
           };
     return {
       network: scope.network,
@@ -5051,10 +4437,11 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
         <div className="pw-inline">
           <Button
             iconOnly
+            className={embeddedEnvironmentId ? "pw-sim-back-button" : ""}
             aria-label="Exit editor"
             onClick={() => setEditor(false)}
           >
-            <ArrowLeft size={15} />
+            {embeddedEnvironmentId ? <ChevronLeft size={18} /> : <ArrowLeft size={15} />}
           </Button>
           <h1>New simulation</h1>
         </div>
@@ -5102,7 +4489,7 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
           )}
           <Button
             primary
-            disabled={loading || (stateMode === "environment" && !environmentId)}
+            disabled={loading || (stateMode === "environment" && !environmentId) || (argsMode === "decoded" && (sequenceLoading || sequenceNumber === null))}
             onClick={() => void simulate()}
           >
             {loading ? <LoaderCircle size={14} /> : <Play size={14} />} Simulate
@@ -5120,7 +4507,7 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
       >
         {showInput && (
           <div className="pw-sim-input">
-            <div className="pw-sim-context">
+            {!embeddedEnvironmentId && <div className="pw-sim-context">
               <div className="pw-segmented" aria-label="State source">
                 <button data-active={stateMode === "latest"} onClick={() => setStateMode("latest")}>Latest</button>
                 <button data-active={stateMode === "ledger"} onClick={() => setStateMode("ledger")}>Historical ledger</button>
@@ -5135,7 +4522,7 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
                 {environments.map((environment) => <option key={environment.id} value={environment.id}>
                   {environment.name} / revision {environment.revision ?? 1}
                 </option>)}</select></label>}
-            </div>
+            </div>}
             <div className="pw-sim-compose">
               <div className="pw-step-rail">
                 <div className="pw-step">
@@ -5173,9 +4560,7 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
                     {argsMode === "decoded" && <><label className="pw-label pw-span-full">
                       Source account XDR<input className="pw-field pw-mono" value={sourceAccountXdr}
                         onChange={(event) => setSourceAccountXdr(event.target.value)} placeholder="AccountId XDR" />
-                    </label><label className="pw-label pw-span-full">Account sequence number<input
-                      className="pw-field pw-mono" type="number" min="0" value={sequenceNumber}
-                      onChange={(event) => setSequenceNumber(event.target.value)} /></label></>}
+                    </label></>}
                     <label className="pw-label pw-span-full">
                       Contract ID
                       <input
@@ -5298,16 +4683,6 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
                         placeholder="1000.0000000"
                       />
                     </label>
-                    <label className="pw-label">
-                      Ledger-key XDR
-                      <input
-                        className="pw-field pw-mono"
-                        value={balanceKeyXdr}
-                        onChange={(event) =>
-                          setBalanceKeyXdr(event.target.value)
-                        }
-                      />
-                    </label>
                   </div>
                 </Accordion>
                 <Accordion
@@ -5352,14 +4727,49 @@ export function SimulatorPage({ scope }: { scope: ProjectScope }) {
                   onToggle={() => toggle("state")}
                 >
                   <label className="pw-label">
-                    Ledger-key XDR
-                    <textarea
-                      className="pw-field pw-mono"
-                      rows={3}
-                      value={storageKeyXdr}
-                      onChange={(event) => setStorageKeyXdr(event.target.value)}
+                    Search contract entries
+                    <input
+                      className="pw-field"
+                      value={contractEntrySearch}
+                      onChange={(event) => setContractEntrySearch(event.target.value)}
+                      placeholder="Search decoded key or value"
                     />
                   </label>
+                  <div className="pw-sim-entry-list" aria-busy={contractEntriesLoading}>
+                    {contractEntriesLoading && <div className="pw-sim-entry-empty">Reading contract entries...</div>}
+                    {!contractEntriesLoading && !visibleContractEntries.length && (
+                      <div className="pw-sim-entry-empty">
+                        {contractEntries.length ? "No entries match this search." : "Enter a contract ID to read its available entries."}
+                      </div>
+                    )}
+                    {visibleContractEntries.map((entry) => (
+                      <button
+                        type="button"
+                        key={entry.key}
+                        className={`pw-sim-entry-row${storageKeyXdr === entry.key ? " is-selected" : ""}`}
+                        onClick={() => {
+                          setStorageKeyXdr(entry.key);
+                          setStorageValueXdr(entry.value_xdr ?? "");
+                        }}
+                      >
+                        <span className="pw-sim-entry-main">
+                          <strong>{entry.decoded_key}</strong>
+                          <span>{entry.decoded_value}</span>
+                        </span>
+                        <span className="pw-sim-entry-meta">
+                          <span>{entry.durability}</span>
+                          <span>TTL {entry.ttl ?? "Not reported"}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {storageKeyXdr && <div className="pw-sim-entry-detail">
+                    <div><span>Decoded key</span><code>{contractEntries.find((entry) => entry.key === storageKeyXdr)?.decoded_key ?? "Unavailable"}</code></div>
+                    <div><span>Current value</span><code>{contractEntries.find((entry) => entry.key === storageKeyXdr)?.decoded_value ?? "Unavailable"}</code></div>
+                    <div><span>Raw key XDR</span><code>{storageKeyXdr}</code></div>
+                    <div><span>Raw value XDR</span><code>{contractEntries.find((entry) => entry.key === storageKeyXdr)?.value_xdr ?? "Unavailable"}</code></div>
+                    <div><span>TTL</span><code>{contractEntries.find((entry) => entry.key === storageKeyXdr)?.ttl ?? "Not reported"}</code></div>
+                  </div>}
                   <label className="pw-label">
                     Replacement value XDR
                     <textarea
@@ -5896,13 +5306,412 @@ export function DebuggerPage({
   );
 }
 
+function AlertSectionNav({
+  section,
+  onChange,
+  count,
+}: {
+  section: AlertSection;
+  onChange: (section: AlertSection) => void;
+  count: number;
+}) {
+  const navRef = useRef<HTMLElement | null>(null);
+  const activeRef = useRef<HTMLButtonElement | null>(null);
+  const [indicator, setIndicator] = useState({ left: 0, width: 0 });
+  useEffect(() => {
+    const syncIndicator = () => {
+      const nav = navRef.current;
+      const active = activeRef.current;
+      if (!nav || !active) return;
+      setIndicator({ left: active.offsetLeft, width: active.offsetWidth });
+    };
+    syncIndicator();
+    window.addEventListener("resize", syncIndicator);
+    const observer =
+      typeof ResizeObserver === "undefined" || !navRef.current
+        ? null
+        : new ResizeObserver(syncIndicator);
+    if (observer && navRef.current) observer.observe(navRef.current);
+    return () => {
+      window.removeEventListener("resize", syncIndicator);
+      observer?.disconnect();
+    };
+  }, [section]);
+
+  return (
+    <nav ref={navRef} className="pw-alert-nav" aria-label="Alert sections">
+      <button
+        className="pw-alert-nav-button"
+        ref={section === "alerts" ? activeRef : undefined}
+        data-active={section === "alerts"}
+        aria-current={section === "alerts" ? "page" : undefined}
+        onClick={() => onChange("alerts")}
+      >
+        <Bell size={15} />
+        Alerts
+        <span className="pw-alert-count">{count}</span>
+      </button>
+      <button
+        className="pw-alert-nav-button"
+        ref={section === "history" ? activeRef : undefined}
+        data-active={section === "history"}
+        aria-current={section === "history" ? "page" : undefined}
+        onClick={() => onChange("history")}
+      >
+        <History size={15} /> History
+      </button>
+      <button
+        className="pw-alert-nav-button"
+        ref={section === "destinations" ? activeRef : undefined}
+        data-active={section === "destinations"}
+        aria-current={section === "destinations" ? "page" : undefined}
+        onClick={() => onChange("destinations")}
+      >
+        <Zap size={15} /> Destinations
+      </button>
+      <span
+        className="pw-alert-nav-indicator"
+        aria-hidden="true"
+        style={{ width: indicator.width, transform: `translateX(${indicator.left}px)` }}
+      />
+    </nav>
+  );
+}
+
+function AlertBuilderView({
+  scope,
+  editing,
+  name,
+  setName,
+  targetType,
+  setTargetType,
+  targetValue,
+  setTargetValue,
+  matchLogic,
+  setMatchLogic,
+  enabled,
+  setEnabled,
+  expressions,
+  setExpressions,
+  destinationRefs,
+  setDestinationRefs,
+  destinations,
+  destinationsLoading,
+  refreshDestinations,
+  loading,
+  onBack,
+  onSave,
+}: {
+  scope: ProjectScope;
+  editing: AlertRule | null;
+  name: string;
+  setName: (value: string) => void;
+  targetType: string;
+  setTargetType: (value: string) => void;
+  targetValue: string;
+  setTargetValue: (value: string) => void;
+  matchLogic: "all" | "any";
+  setMatchLogic: (value: "all" | "any") => void;
+  enabled: boolean;
+  setEnabled: (value: boolean) => void;
+  expressions: Array<{ type: string; params: string }>;
+  setExpressions: Dispatch<SetStateAction<Array<{ type: string; params: string }>>>;
+  destinationRefs: DestinationRef[];
+  setDestinationRefs: Dispatch<SetStateAction<DestinationRef[]>>;
+  destinations: ProjectDestination[];
+  destinationsLoading: boolean;
+  refreshDestinations: () => void;
+  loading: boolean;
+  onBack: () => void;
+  onSave: () => void;
+}) {
+  const [step, setStep] = useState<AlertBuilderStep>(1);
+  const selectedType = expressions[0]?.type ?? "";
+  const stepComplete = (value: AlertBuilderStep) => {
+    if (value === 1) return Boolean(selectedType);
+    if (value === 2) return Boolean(targetType);
+    if (value === 3) return Boolean(name.trim() && expressions.length);
+    return destinationRefs.length > 0;
+  };
+  const toggleDestination = (destination: ProjectDestination) => {
+    setDestinationRefs((current) =>
+      current.some((item) => item.id === destination.id)
+        ? current.filter((item) => item.id !== destination.id)
+        : [...current, { id: destination.id, scope: destination.scope }],
+    );
+  };
+  const updateExpression = (index: number, patch: Partial<{ type: string; params: string }>) =>
+    setExpressions((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    );
+  const toggleStep = (value: AlertBuilderStep) =>
+    setStep((current) => (current === value ? current : value));
+
+  const stepTitle = (value: AlertBuilderStep) =>
+    (value === 1 && "Type") ||
+    (value === 2 && "Target") ||
+    (value === 3 && "Parameters") ||
+    "Destinations";
+  const stepDescription = (value: AlertBuilderStep) =>
+    (value === 1 && "Select an alert trigger type.") ||
+    (value === 2 && "Select addresses for which the alert will be triggered.") ||
+    (value === 3 && "Set alert trigger parameters.") ||
+    "Select the destinations to which alert notifications will be sent.";
+
+  return (
+    <section className="pw-alert-builder" aria-labelledby="alert-builder-title">
+      <div className="pw-alert-builder-head">
+        <div>
+          <button className="pw-alert-back" onClick={onBack}>
+            <ArrowLeft size={15} /> Back to alerts
+          </button>
+          <h2 id="alert-builder-title">{editing ? "Edit alert" : "New alert"}</h2>
+          <p>Build a focused notification rule for activity in this project.</p>
+        </div>
+        <span className="pw-alert-builder-status">
+          {enabled ? "Enabled on save" : "Paused on save"}
+        </span>
+      </div>
+
+      <div className="pw-alert-steps">
+        {([1, 2, 3, 4] as AlertBuilderStep[]).map((value) => {
+          const complete = stepComplete(value);
+          const expanded = step === value;
+          return (
+            <div className={`pw-alert-step ${expanded ? "expanded" : ""} ${complete ? "finished" : ""}`} key={value}>
+              <button className="pw-alert-step-header" onClick={() => toggleStep(value)} aria-expanded={expanded}>
+                <span className="pw-alert-step-icon">
+                  {complete && !expanded ? <Check size={15} /> : value}
+                </span>
+                <span className="pw-alert-step-info">
+                  <strong>{stepTitle(value)}</strong>
+                  <span>{stepDescription(value)}</span>
+                </span>
+                <ChevronDown className="pw-alert-step-chevron" size={17} />
+              </button>
+              <div className="pw-alert-step-body-wrapper">
+                <div className="pw-alert-step-body-inner">
+                  <div className="pw-alert-step-divider" />
+                  <div className="pw-alert-step-body">
+                    {value === 1 && (
+                      <>
+                        <div className="pw-alert-options-grid">
+                          {expressionOptions.map(([type, label]) => (
+                            (() => {
+                              const detail = alertTypeDetails[type] ?? {
+                                description: "Triggers when matching activity is detected.",
+                                icon: Bell,
+                              };
+                              const OptionIcon = detail.icon;
+                              return (
+                                <button
+                                  className="pw-alert-option"
+                                  data-selected={selectedType === type}
+                                  key={type}
+                                  onClick={() => {
+                                    setExpressions((current) => [
+                                      { type, params: current[0]?.params ?? "{}" },
+                                      ...current.slice(1),
+                                    ]);
+                                    setStep(2);
+                                  }}
+                                >
+                                  <OptionIcon className="pw-alert-option-icon" size={17} />
+                                  <span className="pw-alert-option-copy">
+                                    <strong>{label}</strong>
+                                    <small>{detail.description}</small>
+                                  </span>
+                                  {selectedType === type && <Check className="pw-alert-option-check" size={15} />}
+                                </button>
+                              );
+                            })()
+                          ))}
+                        </div>
+                        <div className="pw-alert-step-actions">
+                          <Button primary onClick={() => setStep(2)} disabled={!selectedType}>
+                            Continue <ChevronRight size={14} />
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                    {value === 2 && (
+                      <>
+                        <div className="pw-alert-options-grid pw-alert-target-grid">
+                          {alertTargetDetails.map(({ type, label, description, icon: TargetIcon }) => (
+                            <button
+                              className="pw-alert-option"
+                              data-selected={targetType === type}
+                              key={type}
+                              onClick={() => {
+                                setTargetType(type);
+                                setStep(3);
+                              }}
+                            >
+                              <TargetIcon className="pw-alert-option-icon" size={17} />
+                              <span className="pw-alert-option-copy">
+                                <strong>{label}</strong>
+                                <small>{description}</small>
+                              </span>
+                              {targetType === type && <Check className="pw-alert-option-check" size={15} />}
+                            </button>
+                          ))}
+                        </div>
+                        {targetType !== "project" && (
+                          <label className="pw-label pw-alert-field-block">
+                            Target value
+                            <input
+                              className="pw-field pw-mono"
+                              value={targetValue}
+                              onChange={(event) => setTargetValue(event.target.value)}
+                              placeholder={targetType === "address" ? "G... or C..." : targetType === "network" ? scope.network : "production"}
+                            />
+                          </label>
+                        )}
+                        <div className="pw-alert-step-actions">
+                          <Button primary onClick={() => setStep(3)}>Continue <ChevronRight size={14} /></Button>
+                        </div>
+                      </>
+                    )}
+                    {value === 3 && (
+                      <>
+                        <div className="pw-alert-parameter-grid">
+                          <label className="pw-label">
+                            Rule name
+                            <input className="pw-field" autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Failed checkout invocation" />
+                          </label>
+                          <label className="pw-label">
+                            Match conditions
+                            <select className="pw-field" value={matchLogic} onChange={(event) => setMatchLogic(event.target.value as "all" | "any")}>
+                              <option value="all">All conditions</option>
+                              <option value="any">Any condition</option>
+                            </select>
+                          </label>
+                        </div>
+                        <div className="pw-label pw-alert-condition-list">
+                          <span>Conditions</span>
+                          {expressions.map((expression, index) => (
+                            <div className="pw-alert-condition" key={index}>
+                              <select className="pw-field" value={expression.type} onChange={(event) => updateExpression(index, { type: event.target.value })}>
+                                {expressionOptions.map(([option, label]) => <option key={option} value={option}>{label}</option>)}
+                              </select>
+                              <textarea className="pw-field pw-mono" rows={3} value={expression.params} onChange={(event) => updateExpression(index, { params: event.target.value })} aria-label={`Params JSON for condition ${index + 1}`} />
+                              <Button iconOnly danger aria-label="Remove condition" disabled={expressions.length === 1} onClick={() => setExpressions((current) => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={14} /></Button>
+                            </div>
+                          ))}
+                          <Button onClick={() => setExpressions((current) => [...current, { type: "event_emitted", params: "{}" }])}><Plus size={14} /> Add condition</Button>
+                        </div>
+                        <label className="pw-inline pw-alert-enable"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /> Enable immediately</label>
+                        <div className="pw-alert-step-actions">
+                          <Button primary onClick={() => setStep(4)} disabled={!name.trim() || !expressions.length}>Continue <ChevronRight size={14} /></Button>
+                        </div>
+                      </>
+                    )}
+                    {value === 4 && (
+                      <>
+                        <div className="pw-alert-destinations-header">
+                          <div>
+                            <strong>Notification destinations</strong>
+                            <p>Choose where matching activity should be delivered.</p>
+                          </div>
+                          <button className="pw-alert-refresh" onClick={refreshDestinations} disabled={destinationsLoading}>
+                            <RotateCcw className={destinationsLoading ? "pw-spin" : ""} size={14} /> Refresh destinations
+                          </button>
+                        </div>
+                        <div className="pw-alert-info"><Bell size={16} /><span>Click a configured integration to connect it. Each destination can be reused across alert rules.</span></div>
+                        {destinationsLoading ? <div className="pw-alert-loading"><LoaderCircle className="pw-spin" size={16} /> Loading destinations</div> : (
+                          <div className="pw-alert-integrations-grid">
+                            {alertDestinationOptions.map(({ type, label, description, icon: DestinationIcon }) => {
+                              const configured = destinations.filter((destination) => destination.type === type);
+                              return configured.length ? configured.map((destination) => {
+                                const selectedDestination = destinationRefs.some((item) => item.id === destination.id);
+                                return (
+                                  <button className="pw-alert-integration-card" data-configured="true" data-selected={selectedDestination} key={destination.id} onClick={() => toggleDestination(destination)}>
+                                    <span className="pw-alert-integration-icon"><DestinationIcon size={18} /></span>
+                                    <span className="pw-alert-integration-copy"><strong>{label}</strong><small>{destination.config?.url ? String(destination.config.url) : description}</small></span>
+                                    <span className="pw-alert-destination-check">{selectedDestination && <Check size={14} />}</span>
+                                  </button>
+                                );
+                              }) : (
+                                <div className="pw-alert-integration-card" data-configured="false" key={type}>
+                                  <span className="pw-alert-integration-icon"><DestinationIcon size={18} /></span>
+                                  <span className="pw-alert-integration-copy"><strong>{label}</strong><small>{description}</small></span>
+                                  <span className="pw-alert-integration-state">Not configured</span>
+                                </div>
+                              );
+                            })}
+                            {destinations.filter((destination) => !alertDestinationOptions.some((option) => option.type === destination.type)).map((destination) => {
+                              const selectedDestination = destinationRefs.some((item) => item.id === destination.id);
+                              return <button className="pw-alert-integration-card" data-configured="true" data-selected={selectedDestination} key={destination.id} onClick={() => toggleDestination(destination)}><span className="pw-alert-integration-icon"><Zap size={18} /></span><span className="pw-alert-integration-copy"><strong>{destination.type}</strong><small>{destination.config?.url ? String(destination.config.url) : "Project destination"}</small></span><span className="pw-alert-destination-check">{selectedDestination && <Check size={14} />}</span></button>;
+                            })}
+                          </div>
+                        )}
+                        <div className="pw-alert-step-actions"><Button onClick={() => setStep(3)}><ArrowLeft size={14} /> Back</Button></div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="pw-alert-actions">
+        <Button onClick={onBack}>Cancel</Button>
+        <Button primary disabled={loading || !name.trim() || !expressions.length} onClick={onSave}>
+          {loading ? <LoaderCircle className="pw-spin" size={14} /> : <Bell size={14} />} {editing ? "Save changes" : "Create alert"}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function AlertDestinationsView({
+  destinations,
+  loading,
+  onRefresh,
+}: {
+  destinations: ProjectDestination[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="pw-surface pw-alert-section">
+      <div className="pw-alert-section-head"><div><h2>Destinations</h2><p>Project-level endpoints available to your alert rules.</p></div><Button onClick={onRefresh} disabled={loading}><RotateCcw className={loading ? "pw-spin" : ""} size={14} /> Refresh</Button></div>
+      {loading ? <div className="pw-alert-loading"><LoaderCircle className="pw-spin" size={16} /> Loading destinations</div> : destinations.length ? <div className="pw-alert-destination-list">{destinations.map((destination) => <div className="pw-alert-destination-row" key={destination.id}><span className="pw-alert-destination-icon"><Zap size={17} /></span><div><strong>{destination.type}</strong><span>{destination.config?.url ? String(destination.config.url) : "Project destination"}</span></div><code>{truncateEntity(destination.id, 8, 6)}</code></div>)}</div> : <EmptyState icon={<Zap size={22} />} title="No destinations" body="Project destinations will appear here when they are configured." />}
+    </div>
+  );
+}
+
+function AlertHistoryView({
+  rows,
+  loading,
+}: {
+  rows: Array<{ alert: AlertRule; firing: AlertFiring }>;
+  loading: boolean;
+}) {
+  return (
+    <div className="pw-surface pw-alert-section">
+      <div className="pw-alert-section-head"><div><h2>History</h2><p>Recent alert firings across this project.</p></div></div>
+      {loading ? <div className="pw-alert-loading"><LoaderCircle className="pw-spin" size={16} /> Loading history</div> : rows.length ? <div className="pw-alert-history-list">{rows.map(({ alert, firing }) => <div className="pw-alert-history-row" key={`${alert.id}-${firing.id}`}><span className="pw-alert-history-status"><Check size={14} /></span><div><strong>{alert.name}</strong><span>{timeLabel(firing.fired_at)}</span></div><code>{firing.tx_hash ? truncateEntity(firing.tx_hash, 12, 8) : "Simulation or indexed event"}</code></div>)}</div> : <EmptyState icon={<History size={22} />} title="No alert history" body="Matches from indexed transactions and simulations will appear here." />}
+    </div>
+  );
+}
+
 export function AlertsPage({ scope }: { scope: ProjectScope }) {
   const router = useRouter();
   const [page, setPage] = useState<CursorPage<AlertRule>>({ data: [] });
   const [selected, setSelected] = useState<AlertRule | null>(null);
   const [history, setHistory] = useState<CursorPage<AlertFiring>>({ data: [] });
   const [tab, setTab] = useState<"overview" | "history">("overview");
+  const [section, setSection] = useState<AlertSection>("alerts");
   const [showBuilder, setShowBuilder] = useState(false);
+  const [historyRows, setHistoryRows] = useState<Array<{ alert: AlertRule; firing: AlertFiring }>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [destinations, setDestinations] = useState<ProjectDestination[]>([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(false);
+  const [destinationRefs, setDestinationRefs] = useState<DestinationRef[]>([]);
   const [editing, setEditing] = useState<AlertRule | null>(null);
   const [name, setName] = useState("");
   const [targetType, setTargetType] = useState("project");
@@ -5925,6 +5734,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
   const alertsPath = scopePath(scope, "/alerts");
+  const destinationsPath = scopePath(scope, "/destinations");
   const load = useCallback(
     async (cursor: string | null = null) => {
       if (!alertsPath) return;
@@ -5945,7 +5755,57 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
     void load();
   }, [load]);
 
+  const loadDestinations = useCallback(async () => {
+    if (!destinationsPath) return;
+    setDestinationsLoading(true);
+    try {
+      const result = await api.get<CursorPage<ProjectDestination>>(`${destinationsPath}?limit=100`);
+      setDestinations(result.data);
+    } catch (cause) {
+      setError(errorMessage(cause, "Could not load destinations."));
+    } finally {
+      setDestinationsLoading(false);
+    }
+  }, [destinationsPath]);
+  useEffect(() => {
+    void loadDestinations();
+  }, [loadDestinations]);
+
+  useEffect(() => {
+    if (section !== "history" || !alertsPath) return;
+    let active = true;
+    setHistoryLoading(true);
+    void Promise.all(
+      page.data.map(async (alert) => {
+        try {
+          const result = await api.get<CursorPage<AlertFiring>>(
+            `${alertsPath}/${encodeURIComponent(alert.id)}/history?limit=20`,
+          );
+          return result.data.map((firing) => ({ alert, firing }));
+        } catch {
+          return [];
+        }
+      }),
+    ).then((results) => {
+      if (!active) return;
+      setHistoryRows(
+        results
+          .flat()
+          .sort(
+            (left, right) =>
+              new Date(right.firing.fired_at).getTime() -
+              new Date(left.firing.fired_at).getTime(),
+          ),
+      );
+      setHistoryLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [alertsPath, page.data, section]);
+
   const resetBuilder = (rule?: AlertRule) => {
+    setSelected(null);
     setEditing(rule ?? null);
     setName(rule?.name ?? "");
     setTargetType(rule?.target.type ?? "project");
@@ -5958,6 +5818,8 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
         params: JSON.stringify(expression.params ?? {}, null, 2),
       })) ?? [{ type: "failed_transaction", params: "{}" }],
     );
+    setDestinationRefs(rule?.destinations ?? []);
+    setSection("alerts");
     setShowBuilder(true);
   };
 
@@ -5984,7 +5846,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
       },
       expressions: parsedExpressions,
       match_logic: matchLogic,
-      destinations: editing?.destinations ?? [],
+      destinations: destinationRefs,
       enabled,
     };
     setLoading(true);
@@ -5996,6 +5858,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
         );
       else await api.post(alertsPath, body);
       setShowBuilder(false);
+      setSection("alerts");
       setMessage(editing ? "Alert updated." : "Alert created.");
       setError(null);
       await load();
@@ -6145,7 +6008,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
       setBulkTagging(false);
       setTagName("");
       setMessage(
-        `Tag "${tag.name}" created. Tags attach to wallets and contracts — reference this tag as an alert target.`,
+        `Tag "${tag.name}" created. Tags attach to wallets and contracts â€” reference this tag as an alert target.`,
       );
       setError(null);
     } catch (cause) {
@@ -6297,18 +6160,60 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
     );
 
   return (
-    <div className="pw-page">
-      <Header
-        title="Alerts"
-        description="Monitor Stellar transactions, Soroban calls, events, balances, state changes, and simulation failures."
-        actions={
-          <Button primary onClick={() => resetBuilder()}>
-            <Plus size={15} /> Create alert
-          </Button>
-        }
-      />
-      {message && <Message>{message}</Message>}
-      {error && <Message error>{error}</Message>}
+    <div className="pw-page pw-alerts-page">
+      {!showBuilder && (
+        <>
+          <Header
+            title="Alerts"
+            description="Monitor Stellar transactions, Soroban calls, events, balances, state changes, and simulation failures."
+            actions={
+              <Button primary className="pw-catalog-create-button" onClick={() => resetBuilder()}>
+                <Plus size={17} /> Create alert
+              </Button>
+            }
+          />
+          {message && <Message>{message}</Message>}
+          {error && <Message error>{error}</Message>}
+          <AlertSectionNav
+            section={section}
+            onChange={(next) => {
+              setSection(next);
+              setShowBuilder(false);
+            }}
+            count={page.data.length}
+          />
+        </>
+      )}
+      {showBuilder ? (
+        <AlertBuilderView
+          scope={scope}
+          editing={editing}
+          name={name}
+          setName={setName}
+          targetType={targetType}
+          setTargetType={setTargetType}
+          targetValue={targetValue}
+          setTargetValue={setTargetValue}
+          matchLogic={matchLogic}
+          setMatchLogic={setMatchLogic}
+          enabled={enabled}
+          setEnabled={setEnabled}
+          expressions={expressions}
+          setExpressions={setExpressions}
+          destinationRefs={destinationRefs}
+          setDestinationRefs={setDestinationRefs}
+          destinations={destinations}
+          destinationsLoading={destinationsLoading}
+          refreshDestinations={() => void loadDestinations()}
+          loading={loading}
+          onBack={() => setShowBuilder(false)}
+          onSave={() => void save()}
+        />
+      ) : section === "history" ? (
+        <AlertHistoryView rows={historyRows} loading={historyLoading} />
+      ) : section === "destinations" ? (
+        <AlertDestinationsView destinations={destinations} loading={destinationsLoading} onRefresh={() => void loadDestinations()} />
+      ) : (
       <div className="pw-surface">
         <div className="pw-toolbar">
           <div className="pw-search">
@@ -6374,8 +6279,8 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
             }
             action={
               !query ? (
-                <Button primary onClick={() => resetBuilder()}>
-                  <Plus size={15} /> Create alert
+                <Button primary className="pw-catalog-create-button" onClick={() => resetBuilder()}>
+                  <Plus size={17} /> Create alert
                 </Button>
               ) : undefined
             }
@@ -6451,7 +6356,8 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
           </div>
         )}
       </div>
-      <Pagination page={page} onPage={load} />
+      )}
+      {!showBuilder && section === "alerts" && <Pagination page={page} onPage={load} />}
       {bulkTagging && (
         <Modal
           title="Tag selected alerts"
@@ -6545,157 +6451,6 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
             {(deleteTargets ?? selectedVisible).length === 1 ? "" : "s"} from
             this project and stop future deliveries.
           </p>
-        </Modal>
-      )}
-      {showBuilder && (
-        <Modal
-          title={editing ? "Edit alert" : "Create alert"}
-          onClose={() => setShowBuilder(false)}
-          footer={
-            <>
-              <Button onClick={() => setShowBuilder(false)}>Cancel</Button>
-              <Button
-                primary
-                disabled={loading || !name.trim() || !expressions.length}
-                onClick={() => void save()}
-              >
-                {loading ? <LoaderCircle size={14} /> : <Bell size={14} />}{" "}
-                {editing ? "Save changes" : "Create alert"}
-              </Button>
-            </>
-          }
-        >
-          <label className="pw-label">
-            Rule name
-            <input
-              autoFocus
-              className="pw-field"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Failed checkout invocation"
-            />
-          </label>
-          <div className="pw-field-grid">
-            <label className="pw-label">
-              Target
-              <select
-                className="pw-field"
-                value={targetType}
-                onChange={(event) => setTargetType(event.target.value)}
-              >
-                <option value="project">Entire project</option>
-                <option value="network">Network</option>
-                <option value="address">Wallet or contract</option>
-                <option value="tag">Tag</option>
-              </select>
-            </label>
-            {targetType !== "project" && (
-              <label className="pw-label">
-                Target value
-                <input
-                  className="pw-field pw-mono"
-                  value={targetValue}
-                  onChange={(event) => setTargetValue(event.target.value)}
-                  placeholder={
-                    targetType === "address"
-                      ? "G... or C..."
-                      : targetType === "network"
-                        ? scope.network
-                        : "production"
-                  }
-                />
-              </label>
-            )}
-          </div>
-          <label className="pw-label">
-            Match
-            <select
-              className="pw-field"
-              value={matchLogic}
-              onChange={(event) =>
-                setMatchLogic(event.target.value as "all" | "any")
-              }
-            >
-              <option value="all">All conditions</option>
-              <option value="any">Any condition</option>
-            </select>
-          </label>
-          <div className="pw-label">
-            <span>Conditions</span>
-            {expressions.map((expression, index) => (
-              <div className="pw-surface" style={{ padding: 10 }} key={index}>
-                <div className="pw-inline">
-                  <select
-                    className="pw-field"
-                    value={expression.type}
-                    onChange={(event) =>
-                      setExpressions((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, type: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  >
-                    {expressionOptions.map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    iconOnly
-                    danger
-                    aria-label="Remove condition"
-                    disabled={expressions.length === 1}
-                    onClick={() =>
-                      setExpressions((current) =>
-                        current.filter((_, itemIndex) => itemIndex !== index),
-                      )
-                    }
-                  >
-                    <Trash2 size={14} />
-                  </Button>
-                </div>
-                <label className="pw-label" style={{ marginTop: 8 }}>
-                  Params JSON
-                  <textarea
-                    className="pw-field pw-mono"
-                    rows={3}
-                    value={expression.params}
-                    onChange={(event) =>
-                      setExpressions((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, params: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                </label>
-              </div>
-            ))}
-            <Button
-              onClick={() =>
-                setExpressions((current) => [
-                  ...current,
-                  { type: "event_emitted", params: "{}" },
-                ])
-              }
-            >
-              <Plus size={14} /> Add condition
-            </Button>
-          </div>
-          <label className="pw-inline">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(event) => setEnabled(event.target.checked)}
-            />{" "}
-            Enable immediately
-          </label>
         </Modal>
       )}
     </div>

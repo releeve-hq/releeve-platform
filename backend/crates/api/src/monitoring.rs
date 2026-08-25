@@ -2,8 +2,7 @@
 
 use alerts::{
     AlertExpression, AlertTarget, DeliveryPayload, DeliveryStatus, DestinationKind, MatchLogic,
-    SorobanRpcViewRunner, TransactionFacts, deliver_http_destination, evaluate_alert, health_probe,
-    next_backoff_seconds,
+    TransactionFacts, deliver_http_destination, evaluate_alert, health_probe, next_backoff_seconds,
 };
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -789,6 +788,16 @@ pub async fn create_alert(
     let auth = resolve_project(&state, user_id, &org, &project).await?;
     auth.org.require_alerts()?;
     validate_alert_req(&req)?;
+    if req
+        .expressions
+        .iter()
+        .any(|e| matches!(e.expression_type, alerts::ExpressionType::BalanceChange))
+        && req.target.target_type != alerts::TargetType::Address
+    {
+        return Err(Error::BadRequest(
+            "balance change alerts use only the address scope".into(),
+        ));
+    }
     for dest in &req.destinations {
         validate_destination_ref(&state.db, &auth, dest).await?;
     }
@@ -862,6 +871,16 @@ pub async fn patch_alert(
     let auth = resolve_project(&state, user_id, &org, &project).await?;
     auth.org.require_alerts()?;
     validate_alert_req(&req)?;
+    if req
+        .expressions
+        .iter()
+        .any(|e| matches!(e.expression_type, alerts::ExpressionType::BalanceChange))
+        && req.target.target_type != alerts::TargetType::Address
+    {
+        return Err(Error::BadRequest(
+            "balance change alerts use only the address scope".into(),
+        ));
+    }
     for dest in &req.destinations {
         validate_destination_ref(&state.db, &auth, dest).await?;
     }
@@ -915,6 +934,8 @@ pub struct FiringResponse {
     tx_hash: Option<String>,
     simulation_id: Option<Uuid>,
     fired_at: DateTime<Utc>,
+    firing_context: Value,
+    firing_message: Value,
 }
 
 pub async fn alert_history(
@@ -938,7 +959,7 @@ pub async fn alert_history(
     let cursor = parse_cursor(&q.cursor)?;
     let had_cursor = cursor.is_some();
     let rows = if let Some((ts, id)) = cursor {
-        sqlx::query("SELECT id, alert_id, tx_hash, simulation_id, fired_at FROM alert_firings WHERE alert_id = $1 AND (fired_at, id) < ($2,$3) ORDER BY fired_at DESC, id DESC LIMIT $4")
+        sqlx::query("SELECT id, alert_id, tx_hash, simulation_id, fired_at, firing_context, firing_message FROM alert_firings WHERE alert_id = $1 AND (fired_at, id) < ($2,$3) ORDER BY fired_at DESC, id DESC LIMIT $4")
             .bind(alert_id)
             .bind(ts)
             .bind(id)
@@ -947,7 +968,7 @@ pub async fn alert_history(
             .await
             .map_err(Error::internal)?
     } else {
-        sqlx::query("SELECT id, alert_id, tx_hash, simulation_id, fired_at FROM alert_firings WHERE alert_id = $1 ORDER BY fired_at DESC, id DESC LIMIT $2")
+        sqlx::query("SELECT id, alert_id, tx_hash, simulation_id, fired_at, firing_context, firing_message FROM alert_firings WHERE alert_id = $1 ORDER BY fired_at DESC, id DESC LIMIT $2")
             .bind(alert_id)
             .bind(limit + 1)
             .fetch_all(&state.db)
@@ -971,6 +992,12 @@ pub async fn alert_history(
             tx_hash: r.get("tx_hash"),
             simulation_id: r.get("simulation_id"),
             fired_at: r.get("fired_at"),
+            firing_context: r
+                .get::<Option<Value>, _>("firing_context")
+                .unwrap_or(json!({})),
+            firing_message: r
+                .get::<Option<Value>, _>("firing_message")
+                .unwrap_or(json!({})),
         })
         .collect();
     Ok(Json(page(data, cursors, limit, had_cursor)))
@@ -1060,51 +1087,155 @@ async fn tx_facts(
     })
 }
 
+async fn project_addresses(
+    pool: &sqlx::PgPool,
+    project_id: Uuid,
+    network: Option<&str>,
+) -> Result<Vec<String>, Error> {
+    let sql = match network {
+        Some(net) => format!(
+            "SELECT address FROM wallets WHERE project_id = $1 AND network = '{net}'
+             UNION SELECT address FROM contracts WHERE project_id = $1 AND network = '{net}'"
+        ),
+        None => format!(
+            "SELECT address FROM wallets WHERE project_id = $1
+             UNION SELECT address FROM contracts WHERE project_id = $1"
+        ),
+    };
+    let rows = sqlx::query(&sql).bind(project_id).fetch_all(pool).await.map_err(Error::internal)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>(0))
+        .collect())
+}
+
+async fn tagged_addresses(
+    pool: &sqlx::PgPool,
+    project_id: Uuid,
+    tag: &str,
+) -> Result<Vec<String>, Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT w.address FROM tags t
+        JOIN tag_attachments a ON a.tag_id = t.id
+        JOIN wallets w ON a.entity_type = 'wallet' AND w.id = a.entity_id
+        WHERE t.project_id = $1 AND t.name = $2
+        UNION
+        SELECT c.address FROM tags t
+        JOIN tag_attachments a ON a.tag_id = t.id
+        JOIN contracts c ON a.entity_type = 'contract' AND c.id = a.entity_id
+        WHERE t.project_id = $1 AND t.name = $2
+        "#,
+    )
+    .bind(project_id)
+    .bind(tag)
+    .fetch_all(pool)
+    .await
+    .map_err(Error::internal)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>(0))
+        .collect())
+}
+
+fn tx_involves(tx: &TransactionFacts, addresses: &[String]) -> bool {
+    addresses.iter().any(|a| {
+        tx.source_account == *a
+            || tx.fund_flow.iter().any(|e| e.from == *a || e.to == *a)
+            || tx.call_tree.iter().any(|c| c.contract_id == *a)
+    })
+}
+
 async fn target_matches(
     pool: &sqlx::PgPool,
     project_id: Uuid,
     alert: &AlertResponse,
     tx: &TransactionFacts,
 ) -> Result<bool, Error> {
-    Ok(match alert.target.target_type {
-        alerts::TargetType::Network | alerts::TargetType::Project => true,
-        alerts::TargetType::Address => alert.target.value.as_ref().is_none_or(|addr| {
-            tx.source_account == *addr
-                || tx
-                    .fund_flow
-                    .iter()
-                    .any(|e| e.from == *addr || e.to == *addr)
-                || tx.call_tree.iter().any(|c| c.contract_id == *addr)
-        }),
+    let is_contract_event = alert.expressions.iter().any(|e| {
+        matches!(
+            e.expression_type,
+            alerts::ExpressionType::EventEmitted | alerts::ExpressionType::EventParameter
+        )
+    });
+    if is_contract_event {
+        // Contract Event binds to exactly ONE contract (chosen from the scope's
+        // dropdown); scope only decides which list the address was picked from.
+        let Some(contract) = alert.target.value.as_ref() else {
+            return Ok(false);
+        };
+        return Ok(tx.events.iter().any(|ev| ev.contract_id == *contract));
+    }
+    let is_transfer = alert
+        .expressions
+        .iter()
+        .any(|e| matches!(e.expression_type, alerts::ExpressionType::TokenTransfer));
+    if is_transfer {
+        // Asset Transfer: scope = watched address set; direction/asset from params.
+        let addresses: Vec<String> = match alert.target.target_type {
+            alerts::TargetType::Network => {
+                project_addresses(pool, project_id, alert.target.value.as_deref()).await?
+            }
+            alerts::TargetType::Project => project_addresses(pool, project_id, None).await?,
+            alerts::TargetType::Address => {
+                if let Some(addr) = alert.target.value.as_ref() {
+                    vec![addr.clone()]
+                } else {
+                    return Ok(false);
+                }
+            }
+            alerts::TargetType::Tag => {
+                let Some(tag) = alert.target.value.as_ref() else {
+                    return Ok(false);
+                };
+                tagged_addresses(pool, project_id, tag).await?
+            }
+        };
+        if addresses.is_empty() {
+            return Ok(false);
+        }
+        let expr = alert
+            .expressions
+            .iter()
+            .find(|e| matches!(e.expression_type, alerts::ExpressionType::TokenTransfer));
+        let params = expr.map(|e| &e.params);
+        let direction = params
+            .and_then(|p| p.get("direction"))
+            .and_then(Value::as_str)
+            .map(str::to_ascii_lowercase);
+        let asset = params.and_then(|p| p.get("asset")).and_then(Value::as_str);
+        return Ok(tx.fund_flow.iter().any(|edge| {
+            let addr_match = addresses.iter().any(|a| match direction.as_deref() {
+                Some("from") => edge.from == *a,
+                Some("to") => edge.to == *a,
+                _ => edge.from == *a || edge.to == *a,
+            });
+            let asset_match = asset.is_none_or(|a| edge.asset.eq_ignore_ascii_case(a));
+            addr_match && asset_match
+        }));
+    }
+    // Successful/Failed/allowlist/blacklist/balance/state-change: scope selects
+    // the watched address set (network = project addresses on that network).
+    let addresses: Vec<String> = match alert.target.target_type {
+        alerts::TargetType::Network => {
+            project_addresses(pool, project_id, alert.target.value.as_deref()).await?
+        }
+        alerts::TargetType::Project => project_addresses(pool, project_id, None).await?,
+        alerts::TargetType::Address => {
+            if let Some(addr) = alert.target.value.as_ref() {
+                vec![addr.clone()]
+            } else {
+                return Ok(false);
+            }
+        }
         alerts::TargetType::Tag => {
             let Some(tag) = alert.target.value.as_ref() else {
                 return Ok(false);
             };
-            sqlx::query_scalar::<_, bool>(
-                r#"
-                SELECT EXISTS(
-                  SELECT 1 FROM tags t
-                  JOIN tag_attachments a ON a.tag_id = t.id
-                  LEFT JOIN wallets w ON a.entity_type = 'wallet' AND w.id = a.entity_id
-                  LEFT JOIN contracts c ON a.entity_type = 'contract' AND c.id = a.entity_id
-                  WHERE t.project_id = $1 AND t.name = $2
-                    AND (
-                      w.address = $3 OR c.address = $3
-                      OR EXISTS (SELECT 1 FROM tx_fund_flow_edges e WHERE e.tx_hash = $4 AND (e.from_address = w.address OR e.to_address = w.address))
-                      OR EXISTS (SELECT 1 FROM tx_call_tree_nodes n WHERE n.tx_hash = $4 AND n.contract_id = c.address)
-                    )
-                )
-                "#,
-            )
-            .bind(project_id)
-            .bind(tag)
-            .bind(&tx.source_account)
-            .bind(&tx.hash)
-            .fetch_one(pool)
-            .await
-            .map_err(Error::internal)?
+            tagged_addresses(pool, project_id, tag).await?
         }
-    })
+    };
+    Ok(tx_involves(tx, &addresses))
 }
 
 async fn fire_alert(
@@ -1113,11 +1244,30 @@ async fn fire_alert(
     alert: &AlertResponse,
     tx: &TransactionFacts,
 ) -> Result<Option<Uuid>, Error> {
+    // Build enriched firing context for history rendering (covers the
+    // destination message sections: Observed/Condition/Scope/Context/
+    // Transaction/Ledger/Time + deep links).
+    let firing_context = json!({
+        "alert_name": alert.name,
+        "trigger": alert.expressions.first().map(|e| format!("{:?}", e.expression_type)).unwrap_or_else(|| "successful_transaction".into()),
+        "scope": alert.target,
+        "project_id": auth.project_id,
+        "network": tx.network,
+        "transaction_hash": tx.hash,
+        "ledger": tx.ledger,
+        "timestamp": tx.timestamp,
+        "source_account": tx.source_account,
+        "observed_value": tx.status,
+        "condition": "status == success",
+        "expressions": alert.expressions,
+        "match_logic": format!("{:?}", alert.match_logic),
+    });
     let firing = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO alert_firings (alert_id, tx_hash) VALUES ($1,$2) ON CONFLICT (alert_id, tx_hash) WHERE simulation_id IS NULL DO NOTHING RETURNING id",
+        "INSERT INTO alert_firings (alert_id, tx_hash, firing_context) VALUES ($1,$2,$3) ON CONFLICT (alert_id, tx_hash) WHERE simulation_id IS NULL DO NOTHING RETURNING id",
     )
     .bind(alert.id)
     .bind(&tx.hash)
+    .bind(&firing_context)
     .fetch_optional(&state.db)
     .await
     .map_err(Error::internal)?;
@@ -1309,21 +1459,18 @@ pub async fn evaluate_transaction_alerts(
         .fetch_all(&state.db)
         .await
         .map_err(Error::internal)?;
-    let view_runner = SorobanRpcViewRunner::new(state.settings.soroban_rpc_url.clone());
     let mut fired = Vec::new();
     for row in alert_rows {
         let alert = load_alert(&state.db, project_id, row.get("id")).await?;
         if !target_matches(&state.db, project_id, &alert, &tx).await? {
             continue;
         }
-        let outcome = evaluate_alert(
-            &alert.expressions,
-            alert.match_logic,
-            &tx,
-            Some(&view_runner),
-        )
-        .await
-        .map_err(|e| Error::BadRequest(e.to_string()))?;
+        // Balance Change needs the watched address at evaluation time; it is
+        // carried by the scope, so inject it into the expression params.
+        let expressions = scope_scoped_expressions(&alert);
+        let outcome = evaluate_alert(&expressions, alert.match_logic, &tx)
+            .await
+            .map_err(|e| Error::BadRequest(e.to_string()))?;
         if outcome.matched
             && let Some(id) = fire_alert(state, &auth, &alert, &tx).await?
         {
@@ -1331,6 +1478,29 @@ pub async fn evaluate_transaction_alerts(
         }
     }
     Ok(fired)
+}
+
+/// Copies expressions, injecting the alert's scope address into
+/// `balance_change` params (the evaluator compares fund-flow edges against it).
+fn scope_scoped_expressions(alert: &AlertResponse) -> Vec<alerts::AlertExpression> {
+    alert
+        .expressions
+        .iter()
+        .map(|e| {
+            if matches!(e.expression_type, alerts::ExpressionType::BalanceChange)
+                && let Some(addr) = alert.target.value.as_ref()
+            {
+                let mut params = e.params.clone();
+                params["address"] = json!(addr);
+                alerts::AlertExpression {
+                    expression_type: e.expression_type.clone(),
+                    params,
+                }
+            } else {
+                e.clone()
+            }
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -1377,6 +1547,98 @@ async fn load_delivery(pool: &sqlx::PgPool, id: Uuid) -> Result<DeliveryResponse
         response_code: row.get("response_code"),
         sent_at: row.get("sent_at"),
     })
+}
+
+#[derive(Deserialize)]
+pub struct AlertEventTopicsQuery {
+    /// The single contract address whose events are being loaded.
+    address: String,
+}
+
+pub async fn list_alert_event_topics(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project)): Path<(String, String)>,
+    Query(q): Query<AlertEventTopicsQuery>,
+) -> Result<Json<Value>, Error> {
+    let _auth = resolve_project(&state, user_id, &org, &project).await?;
+    // Any project member can list topics for the alert builder.
+    let rows = sqlx::query(
+        "SELECT DISTINCT jsonb_array_elements_text(topics) AS topic FROM tx_events WHERE contract_id = $1 ORDER BY topic ASC LIMIT 200"
+    )
+    .bind(&q.address)
+    .fetch_all(&state.db)
+    .await
+    .map_err(Error::internal)?;
+    let topics: Vec<String> = rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("topic"))
+        .collect();
+    Ok(Json(json!({ "topics": topics })))
+}
+
+#[derive(Deserialize)]
+pub struct AlertAssetsQuery {
+    target_type: String,
+    /// For network scope this is the network; for address/tag it's the
+    /// address / tag name. An optional second network field is not needed:
+    /// network scope's value IS the network.
+    target_value: Option<String>,
+}
+
+/// Token picker for Asset Transfer alerts: distinct assets seen in the fund
+/// flow of the scope's address set (project wallets+contracts, tagged
+/// entities, the single address, or project addresses on a network).
+pub async fn list_alert_assets(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project)): Path<(String, String)>,
+    Query(q): Query<AlertAssetsQuery>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    let addresses: Vec<String> = match q.target_type.as_str() {
+        "network" => {
+            let net = q.target_value.as_deref().ok_or_else(|| {
+                Error::BadRequest("target_value is required for network scope".into())
+            })?;
+            project_addresses(&state.db, auth.project_id, Some(net)).await?
+        }
+        "project" => project_addresses(&state.db, auth.project_id, None).await?,
+        "address" => {
+            let addr = q.target_value.as_deref().ok_or_else(|| {
+                Error::BadRequest("target_value is required for address scope".into())
+            })?;
+            vec![addr.to_owned()]
+        }
+        "tag" => {
+            let tag = q.target_value.as_deref().ok_or_else(|| {
+                Error::BadRequest("target_value is required for tag scope".into())
+            })?;
+            tagged_addresses(&state.db, auth.project_id, tag).await?
+        }
+        _ => {
+            return Err(Error::BadRequest(
+                "target_type must be project, address, tag, or network".into(),
+            ));
+        }
+    };
+    if addresses.is_empty() {
+        return Ok(Json(json!({ "assets": [] })));
+    }
+    let rows = sqlx::query(
+        "SELECT DISTINCT asset FROM tx_fund_flow_edges
+          WHERE from_address = ANY($1) OR to_address = ANY($1)
+          ORDER BY asset ASC LIMIT 200",
+    )
+    .bind(&addresses)
+    .fetch_all(&state.db)
+    .await
+    .map_err(Error::internal)?;
+    let assets: Vec<String> = rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("asset"))
+        .collect();
+    Ok(Json(json!({ "assets": assets })))
 }
 
 pub async fn test_project_destination(

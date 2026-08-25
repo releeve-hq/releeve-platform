@@ -37,20 +37,13 @@ pub struct AlertTarget {
 pub enum ExpressionType {
     SuccessfulTransaction,
     FailedTransaction,
-    TxError,
-    FunctionCall,
-    FunctionParams,
     EventEmitted,
     EventParameter,
     TokenTransfer,
     AllowlistedCallers,
     BlocklistedCallers,
     BalanceChange,
-    TransactionValue,
     StateChange,
-    ViewFunction,
-    NoAction,
-    TokenTransferMatcher,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -129,78 +122,14 @@ pub struct EvaluationOutcome {
 pub enum AlertError {
     #[error("invalid alert: {0}")]
     Invalid(String),
-    #[error("view function failed: {0}")]
-    ViewFunction(String),
     #[error("delivery failed: {0}")]
     Delivery(String),
-}
-
-#[async_trait::async_trait]
-pub trait ViewFunctionRunner: Send + Sync {
-    async fn simulate_view_function(&self, params: &Value) -> Result<Value, AlertError>;
-}
-
-pub struct SorobanRpcViewRunner {
-    client: reqwest::Client,
-    rpc_url: String,
-}
-
-impl SorobanRpcViewRunner {
-    pub fn new(rpc_url: impl Into<String>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            rpc_url: rpc_url.into(),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl ViewFunctionRunner for SorobanRpcViewRunner {
-    async fn simulate_view_function(&self, params: &Value) -> Result<Value, AlertError> {
-        if self.rpc_url.trim().is_empty() {
-            return Err(AlertError::ViewFunction("soroban RPC URL is empty".into()));
-        }
-        let tx = params
-            .get("transaction")
-            .or_else(|| params.get("tx"))
-            .cloned()
-            .unwrap_or_else(|| {
-                json!({
-                    "contract_id": params.get("contract_id"),
-                    "function_name": params.get("function_name"),
-                    "args": params.get("args").cloned().unwrap_or(Value::Array(vec![]))
-                })
-            });
-        let envelope = json!({
-            "jsonrpc": "2.0",
-            "id": "releeve-alert-view-function",
-            "method": "simulateTransaction",
-            "params": { "transaction": tx }
-        });
-        let res = self
-            .client
-            .post(&self.rpc_url)
-            .json(&envelope)
-            .send()
-            .await
-            .map_err(|e| AlertError::ViewFunction(e.to_string()))?;
-        let status = res.status();
-        let body: Value = res
-            .json()
-            .await
-            .map_err(|e| AlertError::ViewFunction(e.to_string()))?;
-        if !status.is_success() {
-            return Err(AlertError::ViewFunction(format!("RPC returned {status}")));
-        }
-        Ok(body.get("result").cloned().unwrap_or(body))
-    }
 }
 
 pub async fn evaluate_alert(
     expressions: &[AlertExpression],
     logic: MatchLogic,
     tx: &TransactionFacts,
-    view_runner: Option<&dyn ViewFunctionRunner>,
 ) -> Result<EvaluationOutcome, AlertError> {
     if expressions.is_empty() {
         return Err(AlertError::Invalid(
@@ -209,7 +138,7 @@ pub async fn evaluate_alert(
     }
     let mut results = Vec::with_capacity(expressions.len());
     for expression in expressions {
-        let result = evaluate_expression(expression, tx, view_runner).await?;
+        let result = evaluate_expression(expression, tx).await?;
         results.push(result);
     }
     let matched = match logic {
@@ -225,26 +154,11 @@ pub async fn evaluate_alert(
 pub async fn evaluate_expression(
     expression: &AlertExpression,
     tx: &TransactionFacts,
-    view_runner: Option<&dyn ViewFunctionRunner>,
 ) -> Result<bool, AlertError> {
     let p = &expression.params;
     Ok(match expression.expression_type {
         ExpressionType::SuccessfulTransaction => tx.status.eq_ignore_ascii_case("success"),
         ExpressionType::FailedTransaction => tx.status.eq_ignore_ascii_case("failed"),
-        ExpressionType::TxError => {
-            tx.status.eq_ignore_ascii_case("failed")
-                || p.get("error")
-                    .is_some_and(|needle| value_contains(&json!(tx), needle))
-        }
-        ExpressionType::FunctionCall => tx.call_tree.iter().any(|node| {
-            string_param_matches(p, "contract_id", &node.contract_id)
-                && string_param_matches(p, "function_name", &node.function_name)
-        }),
-        ExpressionType::FunctionParams => tx.call_tree.iter().any(|node| {
-            string_param_matches(p, "contract_id", &node.contract_id)
-                && string_param_matches(p, "function_name", &node.function_name)
-                && param_object_matches(&node.args, p.get("params").or_else(|| p.get("args")))
-        }),
         ExpressionType::EventEmitted => tx.events.iter().any(|event| {
             string_param_matches(p, "contract_id", &event.contract_id)
                 && optional_contains(p.get("topic"), &event.topics)
@@ -263,38 +177,33 @@ pub async fn evaluate_expression(
             let blocked = address_set(p, "addresses");
             blocked.contains(&tx.source_account)
         }
-        ExpressionType::BalanceChange | ExpressionType::TransactionValue => tx
+        ExpressionType::BalanceChange => tx
             .fund_flow
             .iter()
-            .filter(|edge| transfer_matches(p, edge))
-            .any(|edge| numeric_condition(edge.amount.parse::<f64>().ok(), p)),
+            .filter(|edge| {
+                let addr = p.get("address").and_then(Value::as_str);
+                addr.is_none_or(|a| edge.from == a || edge.to == a)
+            })
+            .any(|edge| {
+                let Ok(actual) = edge.amount.parse::<i128>() else {
+                    return false;
+                };
+                let Some(expected) = params_i128(p, "value") else {
+                    return false;
+                };
+                let comparator = p
+                    .get("comparator")
+                    .and_then(Value::as_str)
+                    .unwrap_or(">=");
+                compare_i128(actual, expected, comparator)
+            }),
         ExpressionType::StateChange => tx.state_changes.iter().any(|change| {
             string_param_matches(p, "entry_type", &change.entry_type)
                 && string_param_matches(p, "storage_key", &change.key)
                 && string_param_matches(p, "key", &change.key)
                 && state_condition_matches(change, p)
         }),
-        ExpressionType::ViewFunction => {
-            let runner = view_runner.ok_or_else(|| {
-                AlertError::ViewFunction("view_function expression requires a runner".into())
-            })?;
-            let result = runner.simulate_view_function(p).await?;
-            value_condition_matches(&result, p.get("condition"))
-        }
-        ExpressionType::NoAction => false,
-        ExpressionType::TokenTransferMatcher => token_transfer_matcher(tx, p),
     })
-}
-
-pub fn no_action_should_fire(
-    last_activity: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-    inactivity_window_seconds: i64,
-) -> bool {
-    match last_activity {
-        None => true,
-        Some(last) => now.signed_duration_since(last).num_seconds() >= inactivity_window_seconds,
-    }
 }
 
 fn string_param_matches(params: &Value, key: &str, actual: &str) -> bool {
@@ -352,6 +261,27 @@ fn transfer_matches(params: &Value, edge: &FundFlowEdge) -> bool {
         && string_param_matches(params, "asset", &edge.asset)
 }
 
+/// Reads a param as an exact integer, accepting either a JSON number or a
+/// numeric string (amounts are stroops and must never round through f64).
+fn params_i128(params: &Value, key: &str) -> Option<i128> {
+    params
+        .get(key)
+        .and_then(|v| v.as_str().and_then(|s| s.parse::<i128>().ok()))
+        .or_else(|| params.get(key).and_then(Value::as_i64).map(i128::from))
+}
+
+fn compare_i128(actual: i128, expected: i128, comparator: &str) -> bool {
+    match comparator {
+        "==" => actual == expected,
+        "!=" => actual != expected,
+        ">" => actual > expected,
+        "<" => actual < expected,
+        ">=" => actual >= expected,
+        "<=" => actual <= expected,
+        _ => false,
+    }
+}
+
 fn numeric_condition(value: Option<f64>, params: &Value) -> bool {
     let Some(value) = value else {
         return false;
@@ -406,19 +336,6 @@ fn select_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
         current = current.get(part)?;
     }
     Some(current)
-}
-
-fn token_transfer_matcher(tx: &TransactionFacts, params: &Value) -> bool {
-    let asset = params.get("asset").and_then(Value::as_str);
-    let event_mentions_transfer = tx.events.iter().any(|event| {
-        optional_contains(Some(&Value::String("transfer".into())), &event.topics)
-            && asset.is_none_or(|a| value_contains(&event.data, &Value::String(a.into())))
-    });
-    let flow_mentions_asset = tx
-        .fund_flow
-        .iter()
-        .any(|edge| asset.is_none_or(|a| edge.asset.eq_ignore_ascii_case(a)));
-    event_mentions_transfer == flow_mentions_asset
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -670,18 +587,11 @@ mod tests {
 
     #[tokio::test]
     async fn expression_matchers_cover_core_positive_paths() {
+        // Covers the 9 supported triggers on a successful tx.
         let expressions = vec![
             AlertExpression {
                 expression_type: ExpressionType::SuccessfulTransaction,
                 params: json!({}),
-            },
-            AlertExpression {
-                expression_type: ExpressionType::FunctionCall,
-                params: json!({ "function_name": "liquidate" }),
-            },
-            AlertExpression {
-                expression_type: ExpressionType::FunctionParams,
-                params: json!({ "params": { "asset": "XLM" } }),
             },
             AlertExpression {
                 expression_type: ExpressionType::EventEmitted,
@@ -696,27 +606,23 @@ mod tests {
                 params: json!({ "asset": "XLM", "to": "GALICE" }),
             },
             AlertExpression {
+                expression_type: ExpressionType::AllowlistedCallers,
+                params: json!({ "addresses": ["GBLOCKED"] }),
+            },
+            AlertExpression {
                 expression_type: ExpressionType::BlocklistedCallers,
                 params: json!({ "addresses": ["GBLOCKED"] }),
             },
             AlertExpression {
                 expression_type: ExpressionType::BalanceChange,
-                params: json!({ "asset": "XLM", "min": 40 }),
-            },
-            AlertExpression {
-                expression_type: ExpressionType::TransactionValue,
-                params: json!({ "asset": "XLM", "threshold": 42 }),
+                params: json!({ "address": "GBLOCKED", "comparator": ">=", "value": 40 }),
             },
             AlertExpression {
                 expression_type: ExpressionType::StateChange,
                 params: json!({ "storage_key": "balance:GBLOCKED", "condition": { "any_change": true } }),
             },
-            AlertExpression {
-                expression_type: ExpressionType::TokenTransferMatcher,
-                params: json!({ "asset": "XLM" }),
-            },
         ];
-        let outcome = evaluate_alert(&expressions, MatchLogic::All, &tx(), None)
+        let outcome = evaluate_alert(&expressions, MatchLogic::All, &tx())
             .await
             .unwrap();
         assert!(outcome.matched);
@@ -726,8 +632,8 @@ mod tests {
     async fn match_logic_any_and_all_are_distinct() {
         let expressions = vec![
             AlertExpression {
-                expression_type: ExpressionType::FunctionCall,
-                params: json!({ "function_name": "missing" }),
+                expression_type: ExpressionType::FailedTransaction,
+                params: json!({}),
             },
             AlertExpression {
                 expression_type: ExpressionType::TokenTransfer,
@@ -735,55 +641,70 @@ mod tests {
             },
         ];
         assert!(
-            evaluate_alert(&expressions, MatchLogic::Any, &tx(), None)
+            evaluate_alert(&expressions, MatchLogic::Any, &tx())
                 .await
                 .unwrap()
                 .matched
         );
         assert!(
-            !evaluate_alert(&expressions, MatchLogic::All, &tx(), None)
+            !evaluate_alert(&expressions, MatchLogic::All, &tx())
                 .await
                 .unwrap()
                 .matched
         );
-    }
-
-    struct StubView;
-
-    #[async_trait::async_trait]
-    impl ViewFunctionRunner for StubView {
-        async fn simulate_view_function(&self, _: &Value) -> Result<Value, AlertError> {
-            Ok(json!({ "result": { "price": 10 } }))
-        }
     }
 
     #[tokio::test]
-    async fn view_function_uses_runner_and_condition() {
-        let expr = AlertExpression {
-            expression_type: ExpressionType::ViewFunction,
-            params: json!({ "condition": { "path": "result.price", "min": 9 } }),
+    async fn balance_change_compares_with_all_comparators_i128() {
+        // tx() has one fund_flow edge: GBLOCKED -> GALICE, XLM, amount "42".
+        let base = |comparator: &str, value: i64| AlertExpression {
+            expression_type: ExpressionType::BalanceChange,
+            params: json!({ "address": "GBLOCKED", "comparator": comparator, "value": value }),
         };
-        assert!(
-            evaluate_expression(&expr, &tx(), Some(&StubView))
-                .await
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn no_action_window_detects_inactivity() {
-        let now = Utc.timestamp_opt(1000, 0).unwrap();
-        assert!(no_action_should_fire(None, now, 60));
-        assert!(no_action_should_fire(
-            Some(Utc.timestamp_opt(900, 0).unwrap()),
-            now,
-            60
-        ));
-        assert!(!no_action_should_fire(
-            Some(Utc.timestamp_opt(980, 0).unwrap()),
-            now,
-            60
-        ));
+        // value is accepted as a JSON number or a numeric string.
+        for (comparator, value, expect) in [
+            ("==", 42, true),
+            ("==", 43, false),
+            ("!=", 43, true),
+            ("!=", 42, false),
+            (">", 41, true),
+            (">", 42, false),
+            ("<", 43, true),
+            ("<", 42, false),
+            (">=", 42, true),
+            (">=", 43, false),
+            ("<=", 42, true),
+            ("<=", 41, false),
+        ] {
+            let expr = base(comparator, value);
+            let outcome = evaluate_alert(&[expr], MatchLogic::All, &tx()).await.unwrap();
+            assert_eq!(
+                outcome.matched,
+                expect,
+                "comparator {comparator} value {value}"
+            );
+        }
+        // String form of value also works (stroops must not round through f64).
+        let expr = AlertExpression {
+            expression_type: ExpressionType::BalanceChange,
+            params: json!({ "address": "GBLOCKED", "comparator": ">=", "value": "42" }),
+        };
+        assert!(evaluate_alert(&[expr], MatchLogic::All, &tx()).await.unwrap().matched);
+        // Large i128 amounts (beyond f64 precision) compare exactly.
+        let big_tx = TransactionFacts {
+            fund_flow: vec![FundFlowEdge {
+                from: "GBLOCKED".into(),
+                to: "GALICE".into(),
+                asset: "XLM".into(),
+                amount: "9007199254740993".into(),
+            }],
+            ..tx()
+        };
+        let expr = AlertExpression {
+            expression_type: ExpressionType::BalanceChange,
+            params: json!({ "address": "GBLOCKED", "comparator": "==", "value": "9007199254740993" }),
+        };
+        assert!(evaluate_alert(&[expr], MatchLogic::All, &big_tx).await.unwrap().matched);
     }
 
     #[test]

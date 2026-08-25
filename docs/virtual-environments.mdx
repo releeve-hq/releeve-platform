@@ -20,10 +20,26 @@ The environment records its base network, protocol, and ledger provenance. Overr
 
 Follow-latest environments can resolve against the authoritative latest state for their supported network lane. A stale or unverifiable environment must be marked invalid rather than silently rebased.
 
+## Linked wallets and virtual accounts
+
+Linking a wallet does not create a keypair, take custody of a secret, or change the Stellar network. Releeve checks whether the address has an account entry on the environment's selected source network.
+
+- If the account exists, its balance is read from the virtual environment state. Frozen environments use their frozen snapshot; follow-latest environments use the latest verified state available to that environment.
+- If the account does not exist on the selected source network, the modal offers **Create account**. This creates an account only inside the virtual environment and applies the minimum initial XLM account reserve used by the environment. The creation and reserve funding appear as separate Activity and Fund history records.
+- Existing linked wallets and funding history are never cleared when another wallet is linked or when a virtual account is created.
+
+## Virtual balance semantics
+
+A wallet balance starts from the account state represented by the environment's snapshot or latest synced state. After a virtual write affects that account or asset, subsequent reads use the cumulative virtual overlay for that entry:
+
+`virtual balance = source balance at the write boundary + virtual top-ups - virtual spending`
+
+The affected virtual state is not replaced by a newly fetched mainnet balance after the write. Nothing in this overlay is broadcast to Stellar consensus.
+
 ## Branching
 
 Branch an environment when a scenario needs an independent line of experimentation. The original environment remains available for comparison.
 
 ## Writes
 
-Environment write behavior is being completed and verified. Until the write path is explicitly enabled for your account and environment, use simulations for read-only experimentation. Nothing in a virtual environment is broadcast to Stellar consensus.
+Virtual environment writes are implemented and remain isolated from Stellar consensus. They update the environment's cumulative state so later transactions and reads in that environment can depend on them. Use simulations for isolated, non-persistent experiments and environments when state must persist across operations.

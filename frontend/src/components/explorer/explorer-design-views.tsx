@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Bell, Check, Copy, Globe2, MoreHorizontal, Play, Search, Share2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bell, Check, ChevronLeft, Copy, Globe2, MoreHorizontal, Play, Search, Share2, X } from "lucide-react";
 import type {
   ExplorerAccountDetail,
   ExplorerAccountTransaction,
@@ -19,6 +19,10 @@ import { AssetTransfers } from "@/components/explorer/asset-transfers";
 import { TransactionTrace } from "@/components/explorer/transaction-trace";
 import { FundFlowGraph } from "@/components/explorer/fund-flow-graph";
 import { ResourceUsagePanel } from "@/components/explorer/resource-usage";
+import {
+  EntityPagination,
+  ExplorerEntityShell,
+} from "@/components/explorer/entity-design-views";
 
 type Tab = "summary" | "contracts" | "events" | "state" | "fundflow" | "resources";
 
@@ -403,7 +407,7 @@ function ResourcePanel({ tx }: { tx: ExplorerTxDetail }) {
   return <div className="rx-card"><div className="rx-card-header-row"><span>Resource usage <span className="rx-dim">(measured against declared Soroban limits)</span></span></div><ResourceUsagePanel usage={tx.resource_usage} /></div>;
 }
 
-export function WalletExplorerDesign({ account, network, address, embedded = false, onBack }: { account: ExplorerAccountDetail; network: string; address: string; embedded?: boolean; onBack?: () => void }) {
+export function WalletExplorerDesign({ account, network, address, embedded = false, environmentScoped = false, onBack }: { account: ExplorerAccountDetail; network: string; address: string; embedded?: boolean; environmentScoped?: boolean; onBack?: () => void }) {
   const [tab, setTab] = useState("transactions");
   const [limit, setLimit] = useState(20);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -414,6 +418,12 @@ export function WalletExplorerDesign({ account, network, address, embedded = fal
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    if (environmentScoped) {
+      setPage({ data: [], pagination: { limit, next_cursor: null, prev_cursor: null } });
+      setLoading(false);
+      setError(null);
+      return;
+    }
     let alive = true;
     setLoading(true);
     setError(null);
@@ -426,7 +436,7 @@ export function WalletExplorerDesign({ account, network, address, embedded = fal
     return () => {
       alive = false;
     };
-  }, [network, address, limit, cursor]);
+  }, [environmentScoped, network, address, limit, cursor]);
 
   const rows = page?.data ?? [];
   const nextCursor = page?.pagination.next_cursor ?? null;
@@ -457,79 +467,96 @@ export function WalletExplorerDesign({ account, network, address, embedded = fal
   };
 
   return (
-    <div className={`rx-root ${embedded ? "rx-root-embedded" : ""}`}>
-      <ExplorerDesignStyles />
-      <style>{`.rx-wallet-identity{display:flex;flex-direction:column;gap:3px;min-width:0}.rx-wallet-identity .rx-waddr{display:block}.rx-address-line{position:relative;display:inline-flex;align-items:center;flex-wrap:nowrap;gap:7px;min-width:0;white-space:nowrap}.rx-address-line .rx-waddr{min-width:0;overflow:hidden;text-overflow:ellipsis}.rx-address-line .rx-icon-only-btn{width:16px;height:16px;flex:0 0 16px;padding:0;color:var(--text-faint);border:0;background:transparent}.rx-address-line .rx-icon-only-btn svg{width:14px;height:14px}.rx-address-line .rx-icon-only-btn:hover{color:var(--text)}.rx-root-embedded .rx-copy-tip{display:none}.rx-root-embedded{min-height:0;background:transparent}.rx-root-embedded .rx-page{max-width:none;padding:0}.rx-root-embedded .rx-subheader{padding:0 0 16px}.rx-root-embedded .rx-chat-fab{display:none}.rx-root-embedded .rx-back-btn{width:44px;height:30px;justify-content:center;align-self:center;border:1px solid var(--border);border-radius:6px;background:var(--panel);font-size:0}.rx-root-embedded .rx-back-btn svg{width:14px;height:14px}.rx-root-embedded .rx-subheader-right .rx-share-item{height:34px;padding:0 12px;border:1px solid var(--border);border-radius:7px;background:var(--panel);font:inherit;font-size:12.5px;font-weight:600}`}</style>
-      <style>{`.rx-root-embedded{position:relative;top:-14px;margin:0 -36px}.rx-root-embedded .rx-page{padding:0 36px 60px}.rx-root-embedded .rx-subheader{padding:0 36px 16px;border-bottom:1px solid var(--border)}@media(max-width:899px){.rx-root-embedded{top:-3px;margin:0 -3px}.rx-root-embedded .rx-page{padding:0 3px 45px}.rx-root-embedded .rx-subheader{padding-inline:3px}}`}</style>
-      {!embedded && <TopBar network={network} kind="account" value={address} />}
-      <div className="rx-subheader">
-        <div className="rx-subheader-left">
-          {embedded && onBack && <button className="rx-back-btn" type="button" onClick={onBack}><ArrowLeft /> Back to project</button>}
-          <div className="rx-wallet-crumb">
-            <EntityIdenticon value={address} kind={isContractAddress(address) ? "contract" : "account"} size={26} />
-            <span className="rx-wallet-identity">
-              <span className="rx-wtag">Wallet</span>
-              <span className="rx-address-line"><span className="rx-waddr mono">{truncateEntity(address, 8, 6)}</span><button className="rx-icon-only-btn" type="button" aria-label="Copy wallet address" title={copied ? "Copied" : "Copy wallet address"} onClick={() => void copyAddress()}>{copied ? <Check /> : <Copy />}</button></span>
-            </span>
+    <ExplorerEntityShell
+      network={network}
+      kind="account"
+      value={address}
+      embedded={embedded}
+    >
+      <section className="entity-subhead">
+        {embedded && onBack && (
+          <button
+            className="entity-embedded-back"
+            type="button"
+            aria-label="Back to wallets"
+            onClick={onBack}
+          >
+            <ChevronLeft />
+            <span>Back to wallets</span>
+          </button>
+        )}
+        <div className="entity-title">
+          <EntityIdenticon value={address} kind={isContractAddress(address) ? "contract" : "account"} size={26} />
+          <div className="entity-identity">
+            <span>Wallet</span>
+            <div className="entity-address-line">
+              <h1 title={address}>{truncateEntity(address, 8, 6)}</h1>
+              <button
+                className="entity-copy-inline"
+                type="button"
+                aria-label="Copy wallet address"
+                title={copied ? "Copied" : "Copy wallet address"}
+                onClick={() => void copyAddress()}
+              >
+                {copied ? <Check /> : <Copy />}
+              </button>
+            </div>
           </div>
         </div>
-        <div className="rx-subheader-right">
-          <button className={embedded ? "rx-share-item" : "rx-btn rx-btn-outline"} type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>
-          {embedded && <a className="rx-btn rx-btn-outline" href={stellarExpertRoute(network, "account", address)} target="_blank" rel="noreferrer"><Globe2 /> Explorer</a>}
-          <button className="rx-btn rx-btn-outline" type="button"><Bell /> Create Alert</button>
-          {!embedded && <button className="rx-btn rx-btn-outline" type="button">Add to Project</button>}
-          <Link className="rx-btn rx-btn-outline" href={`/simulator?impersonate=${encodeURIComponent(address)}`}>Impersonate</Link>
-          <Link className="rx-btn rx-btn-green" href={`/simulator?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
+        <div className="entity-buttons">
+          {embedded && <button className="entity-button" type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>}
+          {embedded && <a className="entity-button" href={stellarExpertRoute(network, "account", address)} target="_blank" rel="noreferrer"><Globe2 /> Explorer</a>}
+          <button className="entity-button" type="button"><Bell /> Create alert</button>
+          <Link className="entity-button" href={`/simulator?impersonate=${encodeURIComponent(address)}`}>Impersonate</Link>
+          <Link className="entity-button primary" href={`/simulator?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
         </div>
-      </div>
-      <div className="rx-page">
-        <div className="rx-stat-row-wallet">
-          <div className="rx-sw-item"><span className="rx-sw-label">Network</span><span className="rx-sw-value"><StellarNetworkLabel network={network} /></span></div>
-          <div className="rx-sw-item"><span className="rx-sw-label">XLM balance</span><span className="rx-sw-value">{account.xlm_balance ?? "Not indexed"}</span></div>
-          <div className="rx-sw-item"><span className="rx-sw-label">USD value</span><span className="rx-sw-value">{account.usd_value ?? "Not available"}</span></div>
-          <div className="rx-sw-item"><span className="rx-sw-label">Token holdings</span><span className="rx-sw-value">{account.token_holdings.length}<span className="rx-sub">assets</span></span></div>
-          <div className="rx-sw-item"><span className="rx-sw-label">Project tracking</span><span className="rx-sw-value">{account.tracked ? "Tracked" : "Public lookup"}</span></div>
+      </section>
+      <div className="entity-page">
+        <dl className="entity-grid">
+          <div className="entity-field"><dt>Network</dt><dd><StellarNetworkLabel network={network} /></dd></div>
+          <div className="entity-field"><dt>XLM balance</dt><dd>{account.xlm_balance ?? "Not indexed"}</dd></div>
+          <div className="entity-field"><dt>USD value</dt><dd>{account.usd_value ?? "Not available"}</dd></div>
+          <div className="entity-field"><dt>Token holdings</dt><dd>{account.token_holdings.length} assets</dd></div>
+          <div className="entity-field"><dt>Project tracking</dt><dd>{account.tracked ? "Tracked" : "Public lookup"}</dd></div>
+        </dl>
+        <div className="entity-tabs">
+          <button className={tab === "transactions" ? "active" : ""} onClick={() => setTab("transactions")}>Transactions</button>
+          <button className={tab === "simulations" ? "active" : ""} onClick={() => setTab("simulations")}>Simulations</button>
+          <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>Assets</button>
         </div>
-        <div className="rx-tabs-row2">
-          <button className={`rx-tab2 ${tab === "transactions" ? "active" : ""}`} onClick={() => setTab("transactions")}>Transactions</button>
-          <button className={`rx-tab2 ${tab === "simulations" ? "active" : ""}`} onClick={() => setTab("simulations")}>Simulations</button>
-          <button className={`rx-tab2 ${tab === "assets" ? "active" : ""}`} onClick={() => setTab("assets")}>Assets</button>
-        </div>
-        <div className="rx-filter-row"><span className="rx-filter-chip active">All</span><span className="rx-filter-chip">Direct</span><span className="rx-filter-chip">Internal</span><span className="rx-filter-chip">Token asset transfers</span><span className="rx-filter-chip">Authorizations</span></div>
-        {tab === "assets" ? (
-          <div className="rx-wallet-table-wrap">
-            <table className="rx-wtable">
-              <thead><tr><th>Asset</th><th>Balance</th><th>USD value</th><th>Network</th></tr></thead>
-              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{displayAsset(holding.asset)}</td><td className="mono">{holding.balance ?? "Not indexed"}</td><td>{holding.usd_value ?? "Not available"}</td><td><StellarNetworkLabel network={network} /></td></tr>) : <tr><td colSpan={4} className="rx-empty">No token holdings indexed for this wallet yet.</td></tr>}</tbody>
-            </table>
-          </div>
+        {tab === "transactions" ? (
+          <>
+            <div className="entity-table-wrap">
+              <table className="entity-table contract-transactions-table">
+                <thead><tr><th>Transaction hash</th><th>Source</th><th>Target</th><th>Operation</th><th>Ledger</th><th>Status</th></tr></thead>
+                <tbody>
+                  {loading ? <tr><td colSpan={6}>Loading transactions...</td></tr> : error ? <tr><td colSpan={6}>{error}</td></tr> : rows.length ? rows.map((tx) => (
+                    <tr key={tx.hash}>
+                      <td><Link href={explorerRoutes.tx(network, tx.hash)}><code>{truncateEntity(tx.hash, 8, 6)}</code></Link></td>
+                      <td>{tx.source_account ? <EntityAnchor network={network} value={tx.source_account} type="address" /> : "Not indexed"}</td>
+                      <td>{tx.destination_account ? <EntityAnchor network={network} value={tx.destination_account} type="address" /> : "No transfer"}</td>
+                      <td>{tx.call_trace?.root_function ?? tx.operation_type}</td>
+                      <td>{tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</td>
+                      <td className={tx.status === "success" ? "status-ok" : ""}>{tx.status}</td>
+                    </tr>
+                  )) : <tr><td colSpan={6}>No transactions indexed for this wallet yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <EntityPagination limit={limit} onLimitChange={changeLimit} canBack={canGoBack} canNext={canGoNext} loading={loading} pageNumber={history.length + 1} onBack={goBack} onNext={goNext} />
+          </>
+        ) : tab === "simulations" ? (
+          <div className="entity-table-wrap"><div className="entity-table-head"><h2>Simulations</h2></div><div className="entity-empty">No simulations are linked to this public wallet view yet.</div></div>
         ) : (
-          <div className="rx-wallet-table-wrap">
-            <table className="rx-wtable">
-              <thead><tr><th>Tx Hash</th><th>Status</th><th>From</th><th>To</th><th>Function</th><th>Value</th></tr></thead>
-              <tbody>
-                {tab === "simulations" ? <tr><td colSpan={6} className="rx-empty">No simulations are linked to this public wallet view yet.</td></tr> : loading ? <tr><td colSpan={6} className="rx-empty">Loading transactions...</td></tr> : error ? <tr><td colSpan={6} className="rx-empty">{error}</td></tr> : rows.length ? rows.map((tx) => (
-                  <tr key={tx.hash}>
-                    <td className="mono"><Link href={explorerRoutes.tx(network, tx.hash)}>{truncateEntity(tx.hash, 8, 6)}</Link><div className="rx-dim">Ledger {tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</div></td>
-                    <td><span className={`rx-status-pill ${tx.status === "success" ? "ok" : "bad"}`}>{tx.status}</span></td>
-                    <td className="mono">{tx.source_account ? <EntityAnchor network={network} value={tx.source_account} type="address" /> : "Not indexed"}</td>
-                    <td className="mono">{tx.destination_account ? <EntityAnchor network={network} value={tx.destination_account} type="address" /> : <span className="rx-dim">No transfer</span>}</td>
-                    <td>{tx.call_trace?.root_function ? <span>{tx.call_trace.root_function}<span className="rx-dim"> ({tx.call_trace.count} call{tx.call_trace.count === 1 ? "" : "s"})</span></span> : tx.operation_type}</td>
-                    <td>{tx.asset === "CALL" ? "Contract call" : tx.amount ? `${tx.amount} ${displayAsset(tx.asset) ?? ""}` : "No asset transfer"}</td>
-                  </tr>
-                )) : <tr><td colSpan={6} className="rx-empty">No transactions indexed for this wallet yet.</td></tr>}
-              </tbody>
+          <div className="entity-table-wrap">
+            <div className="entity-table-head"><h2>Assets</h2></div>
+            <table className="entity-table">
+              <thead><tr><th>Asset</th><th>Balance</th><th>USD value</th><th>Network</th></tr></thead>
+              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{displayAsset(holding.asset)}</td><td><code>{holding.balance ?? "Not indexed"}</code></td><td>{holding.usd_value ?? "Not available"}</td><td><StellarNetworkLabel network={network} /></td></tr>) : <tr><td colSpan={4}>No token holdings indexed for this wallet yet.</td></tr>}</tbody>
             </table>
           </div>
         )}
-        <div className="rx-pagination-row">
-          <div className="rx-dim"><select aria-label="Transactions per page" value={limit} onChange={(event) => changeLimit(Number(event.target.value))}>{[20, 50, 100].map((size) => <option key={size} value={size}>{size} per page</option>)}</select></div>
-          <button className="rx-btn rx-btn-outline" type="button" disabled={!canGoBack} onClick={goBack}>Back</button>
-          <span className="rx-page-num">{history.length + 1}</span>
-          <button className="rx-btn rx-btn-outline" type="button" disabled={!canGoNext} onClick={goNext}>Next</button>
-        </div>
       </div>
-      {!embedded && <div className="rx-chat-fab"><Search /></div>}
-    </div>
+    </ExplorerEntityShell>
   );
 }
