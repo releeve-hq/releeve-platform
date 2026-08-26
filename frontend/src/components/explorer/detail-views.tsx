@@ -30,7 +30,7 @@ type DetailProps = {
 const pageStyle: CSSProperties = {
   minHeight: "100vh",
   background: "#121212",
-  color: "#f5f5f5",
+  color: "#ffffff",
   padding: "28px min(5vw, 56px)",
 };
 

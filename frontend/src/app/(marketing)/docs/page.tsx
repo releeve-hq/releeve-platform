@@ -4,7 +4,7 @@ import { getDocGuide } from "@/components/marketing/docs-data";
 
 export const metadata: Metadata = {
   title: "Documentation | Releeve",
-  description: "Guides for Releeve simulations, virtual environments, monitoring, explorer workflows, debugging, protocol support, and API access.",
+  description: "Guides for Releeve simulations, virtual networks, monitoring, explorer workflows, debugging, protocol support, and API access.",
   alternates: { canonical: "/docs" },
 };
 

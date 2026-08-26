@@ -388,6 +388,90 @@ impl SourceLensClient {
         Ok(bytes.to_vec())
     }
 
+    /// Storage-key schema (the parsed `contracttype` catalog) for a verification.
+    pub async fn get_storage_schema(
+        &self,
+        actor: &ServiceActor,
+        verification_id: Uuid,
+    ) -> Result<Value> {
+        self.json(
+            actor,
+            Method::GET,
+            &format!("/v1/verifications/{verification_id}/storage-schema"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Builds a `LedgerKey::ContractData` XDR from a storage-key label.
+    pub async fn encode_storage_key(
+        &self,
+        actor: &ServiceActor,
+        verification_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.json(
+            actor,
+            Method::POST,
+            &format!("/v1/verifications/{verification_id}/storage-keys/encode"),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
+    /// Decodes a `LedgerKey::ContractData` XDR into its readable label.
+    pub async fn decode_storage_key(
+        &self,
+        actor: &ServiceActor,
+        verification_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.json(
+            actor,
+            Method::POST,
+            &format!("/v1/verifications/{verification_id}/storage-keys/decode"),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
+    /// Decodes a `LedgerEntryData::ContractData` XDR into its key + value.
+    pub async fn decode_storage_value(
+        &self,
+        actor: &ServiceActor,
+        verification_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.json(
+            actor,
+            Method::POST,
+            &format!("/v1/verifications/{verification_id}/storage-keys/decode-value"),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
+    /// Re-encodes a `LedgerEntryData::ContractData` XDR with a new stored value.
+    pub async fn edit_storage_value(
+        &self,
+        actor: &ServiceActor,
+        verification_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.json(
+            actor,
+            Method::POST,
+            &format!("/v1/verifications/{verification_id}/storage-keys/edit-value"),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
     async fn json(
         &self,
         actor: &ServiceActor,

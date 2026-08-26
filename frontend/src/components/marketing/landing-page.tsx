@@ -204,10 +204,10 @@ export function LandingPage() {
         <div className="marketing-frame marketing-feature-inner">
           <EnvironmentPreview />
           <FeatureCopy
-            index="03 / VIRTUAL ENVIRONMENTS"
+            index="03 / VIRTUAL NETWORKS"
             icon={<Blocks size={17} />}
             title="Keep a controlled version of the network."
-            body="A Virtual Environment gives your team a controlled version of Stellar where you can keep building, testing, breaking, resetting, and testing again."
+            body="A Virtual Network gives your team a controlled version of Stellar where you can keep building, testing, breaking, resetting, and testing again."
             points={["Named environments from mainnet, testnet, or futurenet state."
 , "Persisted overrides and simulation history", "Synchronize untouched state while keeping the state your scenario intentionally changed."]}
             link="/docs/virtual-environments"
@@ -270,7 +270,7 @@ export function LandingPage() {
               </PlatformCard>
             </div>
             <div className="platform-row platform-row-b">
-              <PlatformCard title="Virtual environments" desc="Frozen snapshots, follow-latest sync, branching, and non-destructive rollback." href="/docs/virtual-environments">
+              <PlatformCard title="Virtual networks" desc="Frozen snapshots, follow-latest sync, branching, and non-destructive rollback." href="/docs/virtual-environments">
                 <div className="platform-visual"><EnvironmentsScene /></div>
               </PlatformCard>
               <PlatformCard title="Access tokens" desc="Issue API credentials per organization and use them in local tools or CI." href="/docs/api-reference">
@@ -607,7 +607,7 @@ function WebhookScene() {
 function EnvironmentsScene() {
   return (
     <svg className="platform-scene" viewBox="0 0 360 356" preserveAspectRatio="xMidYMid slice" aria-hidden="true" style={{ "--acc": "var(--m-blue)" } as CSSProperties}>
-      <text x="24" y="26" className="sc-label">VIRTUAL ENVIRONMENTS</text>
+      <text x="24" y="26" className="sc-label">VIRTUAL NETWORKS</text>
       <rect className="sc-panel" x="24" y="38" width="312" height="92" rx="10" />
       <rect x="42" y="56" width="12" height="12" rx="3" fill="var(--m-signal)" />
       <text x="62" y="66" className="sc-panel-head">acme-mainnet</text>

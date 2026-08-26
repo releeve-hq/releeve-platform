@@ -191,10 +191,7 @@ pub async fn evaluate_expression(
                 let Some(expected) = params_i128(p, "value") else {
                     return false;
                 };
-                let comparator = p
-                    .get("comparator")
-                    .and_then(Value::as_str)
-                    .unwrap_or(">=");
+                let comparator = p.get("comparator").and_then(Value::as_str).unwrap_or(">=");
                 compare_i128(actual, expected, comparator)
             }),
         ExpressionType::StateChange => tx.state_changes.iter().any(|change| {
@@ -296,13 +293,40 @@ fn numeric_condition(value: Option<f64>, params: &Value) -> bool {
 
 fn state_condition_matches(change: &StateChangeRecord, params: &Value) -> bool {
     let condition = params.get("condition");
-    if condition.is_none() {
+    let Some(condition) = condition else {
         return change.before != change.after;
+    };
+    // Comparison operator on the new value, e.g.
+    // `{ "comparator": ">", "value": 1500 }` against `change.after` (the stored
+    // value after the transaction). Non-numeric values simply do not match.
+    if let Some(comparator) = condition.get("comparator").and_then(Value::as_str) {
+        let Some(expected) = params_i128(condition, "value") else {
+            return false;
+        };
+        let Some(actual) = change.after.as_ref().and_then(numeric_value_of) else {
+            return false;
+        };
+        return compare_i128(actual, expected, comparator);
     }
     value_condition_matches(
         &json!({ "before": change.before, "after": change.after }),
-        condition,
+        Some(condition),
     )
+}
+
+/// Extracts an integer from a state-change value (ingest `ledger_entry_json` or
+/// a bare `scval_json`): decimal-string ints, JSON numbers, or an object's
+/// `value` field.
+fn numeric_value_of(value: &Value) -> Option<i128> {
+    match value {
+        Value::String(s) => s.parse::<i128>().ok(),
+        Value::Number(n) => n.as_i64().map(i128::from),
+        Value::Object(map) => map
+            .get("value")
+            .and_then(numeric_value_of)
+            .or_else(|| map.get("amount").and_then(numeric_value_of)),
+        _ => None,
+    }
 }
 
 fn value_condition_matches(value: &Value, condition: Option<&Value>) -> bool {
@@ -629,6 +653,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn state_change_numeric_comparator_matches_new_value() {
+        let key = "CAWBRPRYOXMQNCDTJYQYVK6XYGKYSKXEFACIFHWYC5KJY5SDLSQMXBCF:[\"Balance\",\"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF\"]";
+        let mut facts = tx();
+        facts.state_changes = vec![StateChangeRecord {
+            entry_type: "contract_data".into(),
+            key: key.into(),
+            before: Some(json!({ "value": "1500" })),
+            after: Some(json!({ "value": "2000" })),
+        }];
+        let expr = |params: serde_json::Value| AlertExpression {
+            expression_type: ExpressionType::StateChange,
+            params,
+        };
+        // "new value > 1500" fires.
+        let matched = evaluate_expression(
+            &expr(
+                json!({ "storage_key": key, "condition": { "comparator": ">", "value": "1500" } }),
+            ),
+            &facts,
+        )
+        .await
+        .unwrap();
+        assert!(matched, "value 2000 must satisfy > 1500");
+        // "new value < 1500" does not.
+        let not_matched = evaluate_expression(
+            &expr(
+                json!({ "storage_key": key, "condition": { "comparator": "<", "value": "1500" } }),
+            ),
+            &facts,
+        )
+        .await
+        .unwrap();
+        assert!(!not_matched, "value 2000 must not satisfy < 1500");
+        // Non-numeric values never satisfy a numeric comparator.
+        facts.state_changes[0].after = Some(json!({ "value": { "symbol": "paused" } }));
+        let non_numeric = evaluate_expression(
+            &expr(json!({ "storage_key": key, "condition": { "comparator": ">", "value": "0" } })),
+            &facts,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !non_numeric,
+            "non-numeric value must not satisfy a numeric comparator"
+        );
+    }
+
+    #[tokio::test]
     async fn match_logic_any_and_all_are_distinct() {
         let expressions = vec![
             AlertExpression {
@@ -677,10 +749,11 @@ mod tests {
             ("<=", 41, false),
         ] {
             let expr = base(comparator, value);
-            let outcome = evaluate_alert(&[expr], MatchLogic::All, &tx()).await.unwrap();
+            let outcome = evaluate_alert(&[expr], MatchLogic::All, &tx())
+                .await
+                .unwrap();
             assert_eq!(
-                outcome.matched,
-                expect,
+                outcome.matched, expect,
                 "comparator {comparator} value {value}"
             );
         }
@@ -689,7 +762,12 @@ mod tests {
             expression_type: ExpressionType::BalanceChange,
             params: json!({ "address": "GBLOCKED", "comparator": ">=", "value": "42" }),
         };
-        assert!(evaluate_alert(&[expr], MatchLogic::All, &tx()).await.unwrap().matched);
+        assert!(
+            evaluate_alert(&[expr], MatchLogic::All, &tx())
+                .await
+                .unwrap()
+                .matched
+        );
         // Large i128 amounts (beyond f64 precision) compare exactly.
         let big_tx = TransactionFacts {
             fund_flow: vec![FundFlowEdge {
@@ -704,7 +782,12 @@ mod tests {
             expression_type: ExpressionType::BalanceChange,
             params: json!({ "address": "GBLOCKED", "comparator": "==", "value": "9007199254740993" }),
         };
-        assert!(evaluate_alert(&[expr], MatchLogic::All, &big_tx).await.unwrap().matched);
+        assert!(
+            evaluate_alert(&[expr], MatchLogic::All, &big_tx)
+                .await
+                .unwrap()
+                .matched
+        );
     }
 
     #[test]

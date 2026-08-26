@@ -13,7 +13,7 @@ const rows = [
   ["Projects and tracked entities", true, true, true],
   ["One-shot simulations", true, true, true],
   ["Monitoring and destinations", true, true, true],
-  ["Persistent virtual environments", false, true, true],
+  ["Persistent virtual networks", false, true, true],
   ["Continuous state sync", false, true, true],
   ["Higher API and history quotas", false, true, true],
   ["Multiple organizations", false, false, true],

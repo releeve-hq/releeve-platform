@@ -1,16 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  Activity, ArrowUpRight, Braces, Check, ChevronDown, ChevronLeft, CircleDollarSign, Code2,
+  Activity, ArrowUpRight, Check, ChevronDown, ChevronLeft, CircleDollarSign, Code2,
   Copy, FileCode2, GitFork, Globe, KeyRound, Layers3, LoaderCircle, Pause,
-  Play, Plug, Plus, RefreshCw, RotateCcw, Settings, Trash2, Upload, Wallet, X, MoreVertical,
+  Pencil, Plug, Plus, RefreshCw, Settings, SlidersHorizontal, Trash2, Wallet, X, MoreVertical,
   Search,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { truncateEntity } from "@/lib/explorer-routes";
 import { SimulatorPage } from "./project-pages";
+import { RpcBuilder } from "./rpc-builder";
 import { WalletExplorerDesign } from "@/components/explorer/explorer-design-views";
 import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import type { ExplorerAccountDetail } from "@/lib/explorer-api";
@@ -71,7 +72,7 @@ const styles = `
 .ew{--ew-green:#a3ff5f;display:flex;min-width:0;min-height:0;flex:1;flex-direction:column;overflow-x:hidden;color:var(--text)}
 @media(min-width:900px){.ew{margin-top:-24px}}
 .ew-top{display:flex;min-height:36px;align-items:center;justify-content:space-between;gap:16px;padding:4px 0 8px}.ew-title{display:flex;min-width:0;align-items:center;gap:9px}.ew-title h1{margin:0;font-size:17px;font-weight:500;line-height:20px}.ew-status{display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);font-size:12px}.ew-dot{width:7px;height:7px;border-radius:50%;background:var(--green)}.ew-status[data-state=failed] .ew-dot{background:#ff6b6b}.ew-status[data-state=preparing] .ew-dot{animation:ewPulse 1.2s infinite}@keyframes ewPulse{50%{opacity:.3}}
-.ew-tabs{position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;gap:2px 4px;min-width:0;overflow-x:auto;overflow-y:hidden;border-bottom:1px solid var(--border);background:var(--bg);scrollbar-width:none}.ew-tabs::-webkit-scrollbar{display:none}.ew-tab{display:flex;min-width:0;flex:0 1 auto;align-items:center;gap:7px;height:42px;padding:0 9px;border:0;background:transparent;color:var(--text-dim);font:inherit;font-size:14px;cursor:pointer;transition:color .18s ease}.ew-tab svg{width:15px}.ew-tab[data-active=true]{color:var(--text)}.ew-indicator{position:absolute;bottom:-1px;height:2px;background:var(--green);transition:transform .22s ease,width .22s ease}
+.ew-tabs{position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;justify-content:center;gap:2px 4px;min-width:0;overflow-x:auto;overflow-y:hidden;border-bottom:1px solid var(--border);background:var(--bg);scrollbar-width:none;padding-left:42px}.ew-tabs::-webkit-scrollbar{display:none}.ew-tab{position:relative;display:flex;min-width:0;flex:0 1 auto;align-items:center;gap:7px;height:42px;padding:0 9px;border:0;background:transparent;color:var(--text-dim);font:inherit;font-size:14px;cursor:pointer;transition:color .18s ease}.ew-tab svg{width:15px}.ew-tab[data-active=true]{color:var(--text)}.ew-tab[data-active=true]::after{content:"";position:absolute;right:0;bottom:0;left:0;height:2px;background:var(--green)}.ew-tab-action{position:absolute;top:6px;z-index:2}.ew-tab-back{left:6px}.ew-tab-sync{right:6px}.ew-indicator{display:none}
 .ew-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:0;border:0}.ew-btn,.ew-icon-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:30px;border:1px solid var(--border);border-radius:6px;padding:0 10px;background:var(--panel);color:var(--text);font:inherit;font-size:12px;cursor:pointer;transition:border-color .15s,background .15s}.ew-icon-btn{width:30px;padding:0}.ew-back-btn{width:26px;min-width:26px;min-height:28px;height:28px;padding:0;border-color:transparent;background:transparent;color:var(--text-dim)}.ew-btn:hover,.ew-icon-btn:hover{border-color:var(--text-faint);background:var(--panel-2)}.ew-back-btn:hover{border-color:var(--text-faint);background:transparent;color:var(--text)}.ew-btn.primary{border-color:#4f8d31;background:var(--green);color:#101310}.ew-btn.danger{color:#ff8585}.ew-btn:disabled{cursor:not-allowed;opacity:.5}.ew .pw-catalog-create-button{height:32px;min-height:32px;gap:6px;padding:0 10px;border:1px solid #0f8a4d;border-right-color:#0f8a4d;border-radius:6px;background:#078a4f;color:#fff;font-family:var(--font-inter),-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:12.5px;font-weight:650;letter-spacing:normal;line-height:normal}.ew .pw-catalog-create-button:hover:not(:disabled){border-color:#079d59;background:#079d59}
 .ew-content{min-height:360px;padding:18px 0}.ew-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.ew-band{border-top:1px solid var(--border);padding:14px 0}.ew-band:first-child{border-top:0}.ew-band h2{margin:0 0 12px;font-size:14px;font-weight:500}.ew-rpc-band{padding-top:0}.ew-subtabs{display:flex;align-items:flex-end;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border)}.ew-subtab{position:relative;display:inline-flex;min-height:40px;align-items:center;gap:7px;border:0;padding:0 10px;background:transparent;color:var(--text-dim);font:inherit;font-size:13px;cursor:pointer}.ew-subtab[data-active=true]{color:var(--text)}.ew-subtab[data-active=true]::after{content:"";position:absolute;right:0;bottom:-1px;left:0;height:2px;background:var(--green)}.ew-kv{display:grid;grid-template-columns:minmax(130px,.55fr) minmax(0,1fr);gap:0}.ew-kv span{min-height:36px;padding:9px 0;border-bottom:1px solid var(--border);font-size:12px}.ew-kv span:nth-child(odd){color:var(--text-dim)}.ew-verification{display:inline-flex;align-items:center;gap:6px}.ew-kv .ew-verification{min-height:36px;padding:9px 0;color:var(--text)}.ew-verification-icon{display:inline-flex;width:17px;height:17px;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:50%;color:var(--text-faint)}.ew-kv .ew-verification-icon{min-height:17px;height:17px;padding:0}.ew-verification-icon > span{display:block;width:5px;height:5px;min-height:5px;padding:0;border-radius:50%;background:var(--text-faint)}.ew-verification-icon svg{stroke-width:3}.ew-verification.is-verified .ew-verification-icon{border-color:var(--green);background:var(--green);color:#101310}.ew-verification.is-failed .ew-verification-icon{border-color:var(--red);background:var(--red);color:#fff}.ew-mono{overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 .ew-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.ew-section-head h2{margin:0}.ew-action-head{align-items:center}.ew-section-tools{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}.ew-inline-search{position:relative;display:flex;width:min(240px,28vw);min-width:180px;height:36px;align-items:center}.ew-inline-search svg{position:absolute;left:11px;width:14px;height:14px;color:var(--text-dim);pointer-events:none}.ew-inline-search .ew-input{height:36px;min-height:36px;padding:0 10px 0 34px;background:var(--panel-2);font-size:12px}.ew-form{display:grid;max-width:680px;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.ew-field{display:grid;gap:6px;color:var(--text-dim);font-size:12px}.ew-field.full{grid-column:1/-1}.ew-input,.ew-textarea{width:100%;min-height:36px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;background:var(--panel);color:var(--text);font:inherit;font-size:12px;transition:border-color .15s,box-shadow .15s}.ew-textarea{min-height:110px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.ew-input:focus,.ew-textarea:focus{outline:0;border-color:var(--text-faint);box-shadow:0 0 0 3px color-mix(in srgb,var(--text) 10%,transparent)}
@@ -80,19 +81,53 @@ const styles = `
 .ew-list{display:grid;border-top:1px solid var(--border)}.ew-row{display:grid;grid-template-columns:minmax(180px,1fr) 140px 130px 36px;align-items:center;gap:12px;min-height:54px;border-bottom:1px solid var(--border);font-size:12px}.ew-row strong{font-weight:500}.ew-row small{color:var(--text-dim);font-size:12px}.ew-empty{display:grid;min-height:180px;place-items:center;border:1px dashed var(--border);border-radius:6px;color:var(--text-dim);font-size:13px;text-align:center}.ew-message{margin-bottom:12px;border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--text-dim);font-size:12px}.ew-message.error{border-color:#743d3d;color:#ff9a9a}.ew-code{position:relative;margin:0;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:14px;background:var(--panel);color:var(--text-dim);font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.ew-progress{height:3px;overflow:hidden;background:var(--border)}.ew-progress span{display:block;height:100%;background:var(--green);transition:width .25s ease}
 .ew-wallet-dialog-viewport{overflow:hidden}.ew-wallet-dialog-track{display:flex;width:200%;transform:translateX(0);transition:transform .24s ease}.ew-wallet-dialog-track.is-virtual{transform:translateX(-50%)}.ew-wallet-dialog-panel{width:50%;flex:0 0 50%}.ew-wallet-dialog-warning{display:grid;gap:10px}.ew-wallet-dialog-warning h3{margin:0;color:var(--text);font-size:14px;font-weight:500}.ew-wallet-dialog-warning p{margin:0;color:var(--text-dim);font-size:12px;line-height:1.55}.ew-wallet-dialog-warning strong{color:var(--text)}
 .ew-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border);border-radius:6px}.ew-stat{display:grid;gap:5px;padding:11px 12px;border:0;border-right:1px solid var(--border);background:transparent;color:inherit;font:inherit;text-align:left}.ew-stat:last-child{border-right:0}.ew-stat:hover{background:var(--panel-2);cursor:pointer}.ew-stat small{color:var(--text-dim);font-size:11px}.ew-stat strong{font-size:15px;font-weight:500}.ew-search{position:relative;max-width:360px;margin:0 0 12px}.ew-search svg{position:absolute;left:10px;top:50%;width:14px;transform:translateY(-50%);color:var(--text-dim);pointer-events:none}.ew-search .ew-input{padding-left:32px}
+.ew-overview{display:grid;gap:20px}.ew-overview-heading{display:flex;align-items:baseline;gap:10px;min-width:0}.ew-overview-heading h1{margin:0;color:var(--text);font-size:17px;font-weight:500;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ew-overview-heading .ew-status{flex:0 0 auto}.ew-overview-top{display:grid;grid-template-columns:minmax(245px,.9fr) repeat(2,minmax(0,1fr));gap:18px;align-items:stretch}.ew-overview-meta{display:grid;align-content:center;gap:16px;padding:4px 0}.ew-meta-row{display:flex;align-items:baseline;gap:9px;min-width:0;color:var(--text-dim);font-size:12px}.ew-meta-row strong{min-width:0;overflow:hidden;color:var(--text);font-size:12px;font-weight:550;text-overflow:ellipsis;white-space:nowrap}.ew-meta-network{display:inline-flex;align-items:center;gap:5px}.ew-meta-network svg{color:var(--green);flex:0 0 auto}.ew-meta-separator{color:var(--text-faint)}.ew-chart-card{position:relative;min-width:0;min-height:176px;border:1px solid var(--border);border-radius:6px;padding:14px 14px 10px;background:var(--panel);overflow:hidden}.ew-chart-card h2{position:relative;z-index:2;margin:0;color:var(--text);font-size:13px;font-weight:600}.ew-chart-plot{position:relative;height:132px;margin-top:8px}.ew-chart-bars{position:absolute;inset:14px 3px 0;display:flex;align-items:flex-end;gap:6px;opacity:.72}.ew-chart-bar{min-width:0;flex:1;border-radius:2px 2px 0 0;background:linear-gradient(to top,color-mix(in srgb,var(--text-faint) 16%,transparent),color-mix(in srgb,var(--text-faint) 38%,transparent));}.ew-chart-empty{position:absolute;z-index:2;inset:42px 8px 0;display:grid;place-items:center;color:var(--text-dim);font-size:12px;text-align:center;text-shadow:0 1px 8px var(--panel)}
 @media(max-width:760px){.ew-grid,.ew-form{grid-template-columns:1fr}.ew-field.full{grid-column:auto}.ew-row{grid-template-columns:minmax(0,1fr) 84px 34px}.ew-row>:nth-child(3){display:none}.ew-top{align-items:flex-start}.ew-title h1{font-size:16px}}
 .ew-content > .entity-root-embedded{top:0 !important}
 .ew-simulation-band{padding-top:0}.ew-simulation-band > .pw-sim-editor{width:100%;max-width:none;margin:0;min-height:0}.ew-simulation-band .pw-sim-top{padding-left:0}.ew-simulation-band .pw-sim-top h1{font-size:14px}.ew-simulation-band .pw-sim-layout{min-height:calc(100vh - 220px)}.ew-simulation-band .pw-json{max-height:none;overflow:visible}
 .ew-funding-table{overflow-x:auto}.ew-funding-table-head,.ew-funding-row{grid-template-columns:minmax(260px,1fr) minmax(150px,.75fr) 140px 90px 150px;min-width:780px}.ew-funding-row{cursor:default}.ew-funding-row:hover{background:transparent}.ew-wallet-balance,.ew-wallet-added{color:var(--text)!important}.ew-asset-logo{display:block;flex:0 0 auto;border-radius:50%;object-fit:cover}.ew-asset-selected,.ew-asset-option-label,.ew-asset-cell{display:inline-flex;min-width:0;align-items:center;gap:7px}.ew-asset-option-label span:last-child,.ew-asset-cell span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ew-asset-menu{max-height:260px;overflow:auto}.ew-asset-search{position:relative;display:flex;align-items:center;gap:7px;margin:2px 2px 5px;padding:0 8px;border:1px solid var(--border);border-radius:4px;color:var(--text-dim)}.ew-asset-search input{width:100%;height:30px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:12px}.ew-asset-empty{padding:9px;color:var(--text-dim);font-size:12px}.ew-inline-field{display:flex;align-items:center;gap:8px}.ew-inline-field .ew-input{min-width:0}.ew-readonly-field{display:flex;align-items:center;justify-content:space-between}.ew-readonly-field strong{color:var(--text)}
-@media(max-width:520px){.ew-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.ew-stat:nth-child(2){border-right:0}.ew-stat:nth-child(-n+2){border-bottom:1px solid var(--border)}}
+.ew-integrate{display:grid;gap:34px;padding:0 0 42px}.ew-integrate-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.ew-integrate-tabs>button{display:grid;min-height:122px;align-content:center;gap:10px;border:1px solid var(--border);border-radius:var(--card-radius,4px);padding:17px 18px;background:var(--bg);color:var(--text-dim);font:inherit;text-align:left;cursor:pointer;transition:border-color .16s,color .16s,background .16s}.ew-integrate-tabs>button:hover{border-color:var(--text-faint);background:var(--panel)}.ew-integrate-tabs>button[data-active=true]{border-color:var(--green);background:color-mix(in srgb,var(--green) 2%,var(--bg));color:var(--green)}.ew-integrate-tab-title{display:flex;align-items:center;gap:11px;color:var(--text)}.ew-integrate-tab-title svg{flex:0 0 auto;color:var(--text-faint)}.ew-integrate-tabs>button[data-active=true] .ew-integrate-tab-title,.ew-integrate-tabs>button[data-active=true] .ew-integrate-tab-title svg{color:var(--green)}.ew-integrate-tab-title strong{font-size:17px;font-weight:650}.ew-integrate-tabs>button>span:last-child{font-size:14px;line-height:1.45}.ew-integrate-prompt{display:flex;min-height:68px;align-items:center;justify-content:space-between;gap:20px;border:1px solid var(--border);border-radius:var(--card-radius,4px);padding:12px 18px;background:var(--bg)}.ew-integrate-prompt>span{display:flex;align-items:center;gap:11px}.ew-integrate-prompt>span svg{color:var(--text-faint)}.ew-integrate-prompt strong{font-size:14px;font-weight:550}.ew-integrate-copy-prompt{display:inline-flex;min-height:42px;align-items:center;justify-content:center;gap:9px;border:1px solid color-mix(in srgb,var(--green) 65%,var(--border));border-radius:var(--card-radius,4px);padding:0 14px;background:color-mix(in srgb,var(--green) 16%,var(--panel));color:var(--text);font:inherit;font-size:14px;font-weight:650;cursor:pointer}.ew-integrate-copy-prompt:hover{border-color:var(--green);background:color-mix(in srgb,var(--green) 23%,var(--panel))}.ew-integrate-steps{display:grid;gap:34px}.ew-integrate-step{position:relative;display:grid;grid-template-columns:38px minmax(0,1fr);gap:0 18px}.ew-integrate-step:not(.is-last)::before{content:"";position:absolute;top:38px;bottom:-34px;left:18px;border-left:1px solid var(--border)}.ew-integrate-step-number{position:relative;z-index:1;display:grid;width:36px;height:36px;place-items:center;border:1px solid var(--border);border-radius:50%;background:var(--panel);color:var(--text);font-size:12px;font-weight:700}.ew-integrate-step-body{display:grid;min-width:0;gap:14px}.ew-integrate-step-body h3{min-height:36px;display:flex;align-items:center;margin:0;color:var(--text);font-size:15px;font-weight:550}.ew-integrate-code-card{min-width:0;overflow:hidden;border:1px solid var(--border);border-radius:var(--card-radius,4px);background:var(--panel)}.ew-integrate-code-head{display:flex;min-height:56px;align-items:center;justify-content:space-between;gap:16px;padding:10px 14px;border-bottom:1px solid var(--border)}.ew-integrate-code-head strong{font-size:14px;font-weight:550}.ew-integrate-code-head button{display:grid;width:32px;height:32px;flex:0 0 32px;place-items:center;border:1px solid transparent;border-radius:var(--card-radius,4px);background:transparent;color:var(--text-dim);cursor:pointer}.ew-integrate-code-head button:hover{border-color:var(--border);color:var(--text)}.ew-integrate-code{max-height:430px;margin:0;overflow:auto;padding:12px;background:var(--bg);color:var(--text);font:12.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;scrollbar-width:thin;scrollbar-color:var(--text-faint) transparent}.ew-integrate-code::-webkit-scrollbar{width:6px;height:6px}.ew-integrate-code::-webkit-scrollbar-track{background:transparent}.ew-integrate-code::-webkit-scrollbar-thumb{border-radius:999px;background:var(--text-faint)}.ew-syntax-line{display:block;min-height:1.55em}.ew-syntax-comment{color:#7f8c9f;font-style:italic}.ew-syntax-key{color:#d39b13}.ew-syntax-string{color:#65c66c}.ew-syntax-variable{color:#5fd3e5}.ew-syntax-value{color:#c78bea}
+@media(max-width:900px){.ew-overview-top{grid-template-columns:1fr 1fr}.ew-overview-meta{grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px}.ew-integrate-tabs{grid-template-columns:1fr}.ew-integrate-tabs>button{min-height:96px}}@media(max-width:520px){.ew-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.ew-stat:nth-child(2){border-right:0}.ew-stat:nth-child(-n+2){border-bottom:1px solid var(--border)}.ew-overview-top{grid-template-columns:1fr}.ew-overview-meta{grid-template-columns:1fr}.ew-chart-card{min-height:160px}.ew-integrate{gap:22px}.ew-integrate-prompt{align-items:stretch;flex-direction:column}.ew-integrate-copy-prompt{width:100%}.ew-integrate-step{grid-template-columns:32px minmax(0,1fr);gap:0 10px}.ew-integrate-step-number{width:30px;height:30px}.ew-integrate-step:not(.is-last)::before{top:30px;left:15px}.ew-integrate-step-body h3{min-height:30px;font-size:14px}}
 @media(prefers-reduced-motion:reduce){.ew *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+.ew-wallet-menu button{display:flex;align-items:center;gap:7px}
+.ew-wallet-table,.ew-wallet-dialog,.ew-empty,.ew-message,.ew-code,.ew-chart-card{border-radius:var(--card-radius,4px)!important}
 `;
 
 function formatTime(value?: string) {
   if (!value) return "Pending";
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? "Pending" : date.toLocaleString();
+}
+
+function activityBars(timestamps: Array<string | undefined>) {
+  const bars = Array.from({ length: 24 }, () => 0);
+  const now = Date.now();
+  for (const timestamp of timestamps) {
+    if (!timestamp) continue;
+    const time = new Date(timestamp).valueOf();
+    if (Number.isNaN(time)) continue;
+    const hoursAgo = Math.floor((now - time) / 3_600_000);
+    if (hoursAgo >= 0 && hoursAgo < 24) bars[23 - hoursAgo] += 1;
+  }
+  return bars;
+}
+
+function ActivityChart({ title, timestamps }: { title: string; timestamps: Array<string | undefined> }) {
+  const bars = activityBars(timestamps);
+  const maximum = Math.max(...bars, 1);
+  const hasActivity = bars.some(Boolean);
+  return (
+    <section className="ew-chart-card" aria-label={`${title} activity`}>
+      <h2>{title}</h2>
+      <div className="ew-chart-plot">
+        <div className="ew-chart-bars" aria-hidden="true">
+          {bars.map((value, index) => <span key={`${title}-${index}`} className="ew-chart-bar" style={{ height: `${value ? Math.max(18, (value / maximum) * 100) : 8}%` }} />)}
+        </div>
+        {!hasActivity && <div className="ew-chart-empty">No activity in the last 24 hours.</div>}
+      </div>
+    </section>
+  );
 }
 
 function VerificationBadge({ status }: { status?: string }) {
@@ -109,6 +144,158 @@ function VerificationBadge({ status }: { status?: string }) {
   );
 }
 
+type IntegrateView = "rpc" | "cli" | "sdk" | "cicd";
+
+function SyntaxCode({ code, language = "text" }: { code: string; language?: "text" | "env" | "yaml" | "javascript" | "shell" }) {
+  const renderTokens = (value: string) => value.split(/(https?:\/\/\S+|\$\{\{[^}]+\}\}|\$[A-Z][A-Z0-9_]*|"[^"]*"|'[^']*'|\b(?:true|false|null)\b|\b\d+\b)/g).map((part, index) => {
+    if (!part) return null;
+    const tokenClass = /^https?:\/\//.test(part) || /^['"]/.test(part)
+      ? "ew-syntax-string"
+      : /^\$/.test(part)
+        ? "ew-syntax-variable"
+        : /^(true|false|null|\d+)$/.test(part)
+          ? "ew-syntax-value"
+          : "";
+    return <span className={tokenClass || undefined} key={`${part}-${index}`}>{part}</span>;
+  });
+
+  return <code>{code.split("\n").map((line, index) => {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("#") || trimmed.startsWith("//")) {
+      return <span className="ew-syntax-line ew-syntax-comment" key={index}>{line || " "}</span>;
+    }
+    if (language === "env" && line.includes("=")) {
+      const separator = line.indexOf("=");
+      return <span className="ew-syntax-line" key={index}><span className="ew-syntax-key">{line.slice(0, separator)}</span>=<span className="ew-syntax-string">{line.slice(separator + 1)}</span></span>;
+    }
+    if (language === "yaml") {
+      const match = line.match(/^(\s*)([A-Za-z_][\w-]*)(:)(.*)$/);
+      if (match) return <span className="ew-syntax-line" key={index}>{match[1]}<span className="ew-syntax-key">{match[2]}</span>{match[3]}{renderTokens(match[4])}</span>;
+    }
+    return <span className="ew-syntax-line" key={index}>{line ? renderTokens(line) : " "}</span>;
+  })}</code>;
+}
+
+function IntegrateCodeCard({ title, code, language, onCopy }: { title: string; code: string; language?: "text" | "env" | "yaml" | "javascript" | "shell"; onCopy: (value: string) => Promise<void> }) {
+  return <div className="ew-integrate-code-card">
+    <div className="ew-integrate-code-head"><strong>{title}</strong><button type="button" aria-label={`Copy ${title}`} title={`Copy ${title}`} onClick={()=>void onCopy(code)}><Copy size={17}/></button></div>
+    <pre className="ew-integrate-code"><SyntaxCode code={code} language={language}/></pre>
+  </div>;
+}
+
+function IntegrateStep({ number, title, children, last = false }: { number: number; title: string; children: ReactNode; last?: boolean }) {
+  return <section className={`ew-integrate-step${last ? " is-last" : ""}`}>
+    <span className="ew-integrate-step-number">{number}</span>
+    <div className="ew-integrate-step-body"><h3>{title}</h3>{children}</div>
+  </section>;
+}
+
+function EnvironmentIntegrateSection({ rpcUrl, network, onCopy }: { rpcUrl: string; network: string; onCopy: (value: string) => Promise<void> }) {
+  const [view, setView] = useState<IntegrateView>("cicd");
+  const networkName = network.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  const rpcVariable = `RELEEVE_RPC_${networkName}`;
+  const networkPassphrase = network === "mainnet"
+    ? "Public Global Stellar Network ; September 2015"
+    : network === "futurenet"
+      ? "Test SDF Future Network ; October 2022"
+      : "Test SDF Network ; September 2015";
+  const rpcSecret = `${rpcVariable}=${rpcUrl}`;
+  const rpcConfig = `# .env.local\n${rpcVariable}=${rpcUrl}\nSTELLAR_NETWORK_PASSPHRASE="${networkPassphrase}"`;
+  const healthCheck = `curl --fail --silent --show-error \\
+  -X POST "$${rpcVariable}" \\
+  -H "content-type: application/json" \\
+  --data \'{"jsonrpc":"2.0","id":"health","method":"getHealth","params":{}}\'`;
+  const cliNetworkName = `releeve-${network}`;
+  const cliNetwork = `stellar network add ${cliNetworkName} \\
+  --rpc-url "${rpcUrl}" \\
+  --network-passphrase "${networkPassphrase}"`;
+  const cliDeploy = `stellar contract deploy \\
+  --wasm target/wasm32v1-none/release/contract.wasm \\
+  --source deployer \\
+  --network ${cliNetworkName}`;
+  const sdkInstall = `npm install @stellar/stellar-sdk`;
+  const sdkClient = `// lib/virtual-network.ts
+import { rpc } from "@stellar/stellar-sdk";
+
+export const virtualNetwork = new rpc.Server(
+  process.env.${rpcVariable}!,
+  { allowHttp: process.env.NODE_ENV !== "production" }
+);
+
+export const networkPassphrase =
+  "${networkPassphrase}";`;
+  const ciYaml = `# .github/workflows/virtual-network.yml
+name: Test on Releeve Virtual Network
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Verify virtual network
+        env:
+          ${rpcVariable}: $\{\{ secrets.${rpcVariable} \}\}
+        run: |
+          curl --fail --silent --show-error \\
+            -X POST "$${rpcVariable}" \\
+            -H "content-type: application/json" \\
+            --data '{"jsonrpc":"2.0","id":1,"method":"getHealth","params":{}}'
+      - run: npm test`;
+  const prompts: Record<IntegrateView, string> = {
+    rpc: `Add the Releeve Virtual Network RPC endpoint ${rpcUrl} to this application's environment configuration. Use ${rpcVariable} as the server-only variable and ${networkPassphrase} as the Stellar network passphrase. Add a JSON-RPC health check and never log credentials.`,
+    cli: `Configure Stellar CLI to use the Releeve Virtual Network at ${rpcUrl}. Register it as ${cliNetworkName} with the ${network} network passphrase, then add safe commands for deploying and invoking Soroban contracts through this RPC endpoint.`,
+    sdk: `Add @stellar/stellar-sdk to this application and create a reusable server-side RPC client for ${rpcUrl}. Use ${rpcVariable} for the endpoint, ${networkPassphrase} for transaction building, and include a getHealth connectivity check.`,
+    cicd: `Configure CI/CD for this repository against the Releeve Virtual Network. Store ${rpcUrl} as the GitHub Actions secret ${rpcVariable}, verify the endpoint with getHealth before tests, and use the ${network} Stellar passphrase. Keep the RPC value out of committed files.`,
+  };
+  const promptLabels: Record<IntegrateView, string> = {
+    rpc: "Add the RPC by pasting the prompt to your agent.",
+    cli: "Set up Stellar CLI by pasting the prompt to your agent.",
+    sdk: "Set up the Stellar SDK by pasting the prompt to your agent.",
+    cicd: "Set up CI/CD by pasting the prompt to your agent.",
+  };
+  const cards: Array<{ id: IntegrateView; title: string; description: string; icon: typeof Code2 }> = [
+    { id: "rpc", title: "RPC endpoints", description: "Add the RPC to your config", icon: Plug },
+    { id: "cli", title: "Stellar CLI", description: "Deploy and invoke contracts", icon: Code2 },
+    { id: "sdk", title: "Stellar SDK", description: "Connect your application", icon: Layers3 },
+    { id: "cicd", title: "CI/CD", description: "Automate your tests and contract deployments", icon: GitFork },
+  ];
+
+  return <div className="ew-integrate">
+    <h2 className="sr-only">Integrate</h2>
+    <div className="ew-integrate-tabs" role="tablist" aria-label="Integration setup">
+      {cards.map(({ id, title, description, icon: Icon }) => <button type="button" role="tab" aria-selected={view===id} data-active={view===id} onClick={()=>setView(id)} key={id}><span className="ew-integrate-tab-title"><Icon size={19}/><strong>{title}</strong></span><span>{description}</span></button>)}
+    </div>
+    <div className="ew-integrate-prompt"><span><Activity size={18}/><strong>{promptLabels[view]}</strong></span><button type="button" className="ew-integrate-copy-prompt" onClick={()=>void onCopy(prompts[view])}><Copy size={17}/>Copy prompt</button></div>
+    <div className="ew-integrate-steps">
+      {view === "rpc" && <>
+        <IntegrateStep number={1} title="Add the Virtual Network RPC to your environment"><IntegrateCodeCard title="Application environment" code={rpcConfig} language="env" onCopy={onCopy}/></IntegrateStep>
+        <IntegrateStep number={2} title="Verify RPC connectivity" last><IntegrateCodeCard title="Health check" code={healthCheck} language="shell" onCopy={onCopy}/></IntegrateStep>
+      </>}
+      {view === "cli" && <>
+        <IntegrateStep number={1} title="Register the Virtual Network in Stellar CLI"><IntegrateCodeCard title="Add network" code={cliNetwork} language="shell" onCopy={onCopy}/></IntegrateStep>
+        <IntegrateStep number={2} title="Deploy a Soroban contract through the RPC" last><IntegrateCodeCard title="Deploy contract" code={cliDeploy} language="shell" onCopy={onCopy}/></IntegrateStep>
+      </>}
+      {view === "sdk" && <>
+        <IntegrateStep number={1} title="Install the Stellar SDK"><IntegrateCodeCard title="Install dependency" code={sdkInstall} language="shell" onCopy={onCopy}/></IntegrateStep>
+        <IntegrateStep number={2} title="Create a reusable Virtual Network client" last><IntegrateCodeCard title="virtual-network.ts" code={sdkClient} language="javascript" onCopy={onCopy}/></IntegrateStep>
+      </>}
+      {view === "cicd" && <>
+        <IntegrateStep number={1} title="Add a GitHub repository secret for this RPC"><IntegrateCodeCard title="GitHub Actions RPC secret" code={rpcSecret} language="env" onCopy={onCopy}/></IntegrateStep>
+        <IntegrateStep number={2} title="Set up the GitHub Action" last><IntegrateCodeCard title="virtual-network.yml" code={ciYaml} language="yaml" onCopy={onCopy}/></IntegrateStep>
+      </>}
+    </div>
+  </div>;
+}
+
 function decimalAmount(units: string, decimals: number) {
   const negative = units.startsWith("-");
   const digits = negative ? units.slice(1) : units;
@@ -117,15 +304,6 @@ function decimalAmount(units: string, decimals: number) {
   const whole = padded.slice(0, -decimals);
   const fraction = padded.slice(-decimals).replace(/0+$/, "");
   return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
-}
-
-async function blobToBase64(file: File) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
 }
 
 function WorkspaceSelect({ value, options, onChange, label, placeholder }: {
@@ -251,11 +429,12 @@ function FundWalletDialogLegacy({ wallets, resource, error, busy, onClose, onFun
 
 void FundWalletDialogLegacy;
 
-function FundWalletModal({ wallets, resource, error, busy, onClose, onFund }: {
+function FundWalletModal({ wallets, resource, error, busy, initialAddress, onClose, onFund }: {
   wallets: WalletLink[];
   resource: string;
   error: string | null;
   busy: boolean;
+  initialAddress?: string;
   onClose: () => void;
   onFund: (request: FundWalletRequest) => Promise<boolean>;
 }) {
@@ -269,7 +448,7 @@ function FundWalletModal({ wallets, resource, error, busy, onClose, onFund }: {
   const [selectedAsset, setSelectedAsset] = useState("");
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
-  const [walletAddress, setWalletAddress] = useState("");
+  const [walletAddress, setWalletAddress] = useState(initialAddress ?? "");
   const [amount, setAmount] = useState("");
   const assetOptions = [nativeAsset, ...Array.from(new Map([...knownAssets, ...fetchedAssets].map(asset => [asset.value, asset])).values())];
   const selected = assetOptions.find(asset => asset.value === selectedAsset);
@@ -349,15 +528,11 @@ export function EnvironmentWorkspace({ environment, basePath, scope, onBack, onD
   const [selectedWallet, setSelectedWallet] = useState<WalletLink | null>(null);
   const [renameTarget, setRenameTarget] = useState<WalletLink | null>(null);
   const [renameLabel, setRenameLabel] = useState("");
-  const [wasm, setWasm] = useState<File | null>(null);
-  const [deploySource, setDeploySource] = useState("");
+  const [contractSearch, setContractSearch] = useState("");
+  const [contractFilterOpen, setContractFilterOpen] = useState(false);
+  const [contractFilter, setContractFilter] = useState<"all" | "with_hash">("all");
   const [forkName, setForkName] = useState("");
   const [revisionId, setRevisionId] = useState("");
-  const [rpcMethod, setRpcMethod] = useState("getLatestLedger");
-  const [rpcParams, setRpcParams] = useState("{}");
-  const [rpcResult, setRpcResult] = useState("");
-  const [rpcSearch, setRpcSearch] = useState("");
-  const [rpcSubtab, setRpcSubtab] = useState<"builder" | "calls">("builder");
   const [name, setName] = useState(environment.name);
   const [rpcSlug, setRpcSlug] = useState(environment.rpc_slug ?? "");
   const [publicExplorer, setPublicExplorer] = useState(Boolean(environment.public_explorer_enabled));
@@ -366,6 +541,12 @@ export function EnvironmentWorkspace({ environment, basePath, scope, onBack, onD
   const activeTab = useRef<HTMLButtonElement>(null);
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
   const resource = `${basePath}/environments/${encodeURIComponent(environment.id)}`;
+  const visibleDeployments = data.deployments.filter((deployment) => {
+    const query = contractSearch.trim().toLowerCase();
+    const matchesSearch = !query || `${deployment.contract_id} ${deployment.wasm_hash ?? ""} ${deployment.source_account ?? ""}`.toLowerCase().includes(query);
+    const matchesFilter = contractFilter === "all" || Boolean(deployment.wasm_hash);
+    return matchesSearch && matchesFilter;
+  });
 
   const load = useCallback(async (force = false) => {
     const saved = cache.get(resource);
@@ -490,14 +671,20 @@ export function EnvironmentWorkspace({ environment, basePath, scope, onBack, onD
 
   const copy = async (value: string) => { await navigator.clipboard.writeText(value); setToastMessage("Copied to clipboard."); };
   const copyAddress = (value: string) => { void navigator.clipboard.writeText(value).catch(() => undefined); };
+  const refreshRpcLogs = async () => {
+    try {
+      const response = await api.get<{ logs: RpcLog[] }>(`${resource}/rpc-logs?limit=200`);
+      setData(current => ({ ...current, logs: response.logs ?? [] }));
+    } catch {
+      // A completed request remains visible even if the secondary log refresh fails.
+    }
+  };
   const browserOrigin = typeof window === "undefined" ? "http://localhost:8080" : window.location.origin.replace(/:\d+$/, ":8080");
   const projectPath = basePath.replace(/^\/api\/v1/, "");
   const endpointSegment = environment.rpc_slug || environment.id;
   const rpcUrl = environment.rpc_url ?? `${browserOrigin}/v${projectPath}/${endpointSegment}`;
   const explorerUrl = `/virtual-explorer${projectPath}/${endpointSegment}`;
   const status = environment.initialization_status ?? (environment.sync_status === "error" ? "failed" : "ready");
-  const failedCalls = data.logs.filter(log => log.status !== "success" && log.status !== "ok" && !String(log.status).startsWith("2")).length;
-  const visibleLogs = data.logs.filter(log => `${log.method} ${log.status} ${log.caller_class}`.toLowerCase().includes(rpcSearch.trim().toLowerCase()));
   const normalizedWalletSearch = walletSearch.trim().toLowerCase();
   const visibleWallets = data.wallets.filter(wallet => `${wallet.label ?? ""} ${wallet.address} ${environment.network} ${(wallet.balances ?? []).map(balance => `${decimalAmount(balance.amount, balance.decimals)} ${balance.asset === "native" ? "XLM" : balance.asset}`).join(" ")}`.toLowerCase().includes(normalizedWalletSearch));
   const nativeBalance = selectedWallet?.balances?.find(balance => balance.asset === "native");
@@ -537,9 +724,9 @@ export function EnvironmentWorkspace({ environment, basePath, scope, onBack, onD
 
   const walletDialogs = <>
     <WorkspaceToast message={toastMessage} onDone={() => setToastMessage(null)} />
-    {tab === "fund" && fundModalOpen && typeof document !== "undefined" && createPortal(
+    {fundModalOpen && typeof document !== "undefined" && createPortal(
       <div className="pw-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setFundModalOpen(false); }}>
-        <FundWalletModal wallets={data.wallets} resource={resource} error={error} busy={busy} onClose={() => setFundModalOpen(false)} onFund={fundWallet} />
+        <FundWalletModal wallets={data.wallets} resource={resource} error={error} busy={busy} initialAddress={selectedWallet?.address} onClose={() => setFundModalOpen(false)} onFund={fundWallet} />
       </div>, document.body
     )}
     {tab === "wallets" && walletDialogOpen && typeof document !== "undefined" && createPortal(
@@ -570,23 +757,20 @@ export function EnvironmentWorkspace({ environment, basePath, scope, onBack, onD
     )}
   </>;
 
-  return <div className="ew"><style>{styles}</style>
-    <div className="ew-top">
-      <div className="ew-title"><button className="ew-icon-btn ew-back-btn" onClick={onBack} aria-label="Back"><ChevronLeft size={18} /></button><div><h1>{environment.name}</h1><span className="ew-status" data-state={status}><span className="ew-dot"/>{status === "preparing" ? `Preparing environment ${environment.initialization_progress ?? 0}%` : status === "failed" ? "Preparation failed" : `${environment.network} / ${environment.mode === "follow_latest" ? "Network sync" : "Frozen"}`}</span></div></div>
-      <div className="ew-actions"><button className="ew-icon-btn" title="Refresh" onClick={()=>void load(true)}><RotateCcw size={14}/></button><button className="ew-icon-btn" title="Open RPC endpoint" onClick={()=>window.open(rpcUrl,"_blank","noopener,noreferrer")}><ArrowUpRight size={14}/></button><button className="ew-icon-btn" title={environment.sync_enabled?"Freeze environment":"Resume network sync"} onClick={()=>void mutate(async()=>{await api.post(`${resource}/sync/${environment.sync_enabled?"stop":"start"}`,undefined,environment.sync_enabled?undefined:{headers:{"Idempotency-Key":crypto.randomUUID()}});await onRefresh()},environment.sync_enabled?"Environment frozen at its current ledger.":"Network sync started.")}>{environment.sync_enabled?<Pause size={14}/>:<RefreshCw size={14}/>}</button></div>
-    </div>
+  return <div className="ew"><style>{styles}</style><style>{`.ew-contract-filter{position:relative}.ew-contract-filter-menu{top:calc(100% + 6px);right:0;min-width:150px}`}</style><style>{`.ew{overflow-x:clip}@media(min-width:900px){.ew{margin-top:-24px}}.ew-overview-name{margin:0 0 6px;color:var(--text);font-size:17px;font-weight:500;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ew-tabs{position:sticky;top:12px;margin-top:-37px;overflow:hidden;padding-left:24px;column-gap:22px;background:var(--bg);box-shadow:0 3px 0 var(--bg)}@media(min-width:900px){.ew-tabs{position:fixed;top:113px;left:100px;right:36px;z-index:60;margin:0}}.ew-content{padding-top:55px}.ew-tab-back{left:0;top:auto;bottom:10px;width:18px;min-width:18px;height:22px;min-height:22px;padding:0;border-radius:4px;background:var(--bg);border-color:transparent}.ew-tab-back:hover{background:var(--bg);border-color:var(--text-faint)}`}</style>
+    <style>{`.ew .ew-integrate{gap:20px;padding-bottom:26px}.ew .ew-integrate-tabs{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.ew .ew-integrate-tabs>button{min-height:78px;gap:6px;padding:10px 12px}.ew .ew-integrate-tab-title{gap:7px}.ew .ew-integrate-tab-title svg{width:15px;height:15px}.ew .ew-integrate-tab-title strong{font-size:13.5px}.ew .ew-integrate-tabs>button>span:last-child{font-size:11.5px;line-height:1.3}.ew .ew-integrate-prompt{min-height:50px;gap:12px;padding:8px 12px}.ew .ew-integrate-prompt>span{gap:8px}.ew .ew-integrate-prompt>span svg{width:15px;height:15px}.ew .ew-integrate-prompt strong{font-size:12px}.ew .ew-integrate-copy-prompt{min-height:34px;gap:7px;padding:0 10px;font-size:12px}.ew .ew-integrate-copy-prompt svg{width:14px}.ew .ew-integrate-steps{gap:22px}.ew .ew-integrate-step{grid-template-columns:30px minmax(0,1fr);gap:0 12px}.ew .ew-integrate-step:not(.is-last)::before{top:30px;bottom:-22px;left:14px}.ew .ew-integrate-step-number{width:28px;height:28px;font-size:10px}.ew .ew-integrate-step-body{gap:10px}.ew .ew-integrate-step-body h3{min-height:28px;font-size:13px}.ew .ew-integrate-code-head{min-height:42px;padding:7px 11px}.ew .ew-integrate-code-head strong{font-size:12.5px}.ew .ew-integrate-code-head button{width:28px;height:28px;flex-basis:28px}.ew .ew-integrate-code-head button svg{width:14px}.ew .ew-integrate-code{max-height:320px;padding:10px;font-size:11.5px;line-height:1.5}@media(max-width:900px){.ew .ew-integrate-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.ew .ew-integrate-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.ew .ew-integrate-tabs{grid-template-columns:1fr}}`}</style>
     {status === "preparing" && <div className="ew-progress"><span style={{width:`${environment.initialization_progress ?? 0}%`}}/></div>}
     {status === "failed" && <div className="ew-message error">{environment.initialization_error?.message ?? "This environment could not prove its anchored state. No newer network state was substituted."}</div>}
-    <div ref={tabList} className="ew-tabs">{tabs.map(([id,label,Icon]) => <button ref={tab===id?activeTab:undefined} key={id} className="ew-tab" data-active={tab===id} onClick={()=>selectTab(id)}><Icon/>{label}</button>)}<span className="ew-indicator" style={{width:indicator.width,transform:`translateX(${indicator.left}px)`}}/></div>
-    <div className="ew-content">{selectedWallet && selectedWalletAccount && <WalletExplorerDesign account={selectedWalletAccount} network={environment.network} address={selectedWallet.address} embedded environmentScoped onBack={() => setSelectedWallet(null)} />}{!selectedWallet && <div className="ew-wallet-content">{error&&<div className="ew-message error">{error}</div>}{loading?<div className="ew-empty"><LoaderCircle className="pw-spin"/></div>:<>
-      {tab==="overview"&&<><div className="ew-stats" aria-label="Environment usage"><div className="ew-stat"><small>RPC calls</small><strong>{data.logs.length}</strong></div><div className="ew-stat"><small>Errors</small><strong>{failedCalls}</strong></div><button type="button" className="ew-stat" aria-label={`Open ${data.wallets.length} linked wallets`} onClick={()=>setTab("wallets")}><small>Wallets</small><strong>{data.wallets.length}</strong></button><div className="ew-stat"><small>Deployments</small><strong>{data.deployments.length}</strong></div></div><div className="ew-grid"><section className="ew-band"><h2>Environment details</h2><div className="ew-kv"><span>Network</span><span>{environment.network}</span><span>Mode</span><span>{environment.mode === "follow_latest"?"Network sync":"Frozen"}</span><span>Pinned state ledger</span><span>{(environment.state_ledger??environment.base_ledger_sequence).toLocaleString()}</span><span>Execution ledger</span><span>{environment.execution_ledger?.toLocaleString()??"Preparing"}</span><span>Protocol</span><span>{environment.protocol}</span><span>Verification</span><VerificationBadge status={environment.verification_status}/><span>State hash</span><span className="ew-mono">{environment.state_hash??"Preparing"}</span></div></section><section className="ew-band"><h2>Recent activity</h2>{data.activity.length?<div className="ew-list">{data.activity.slice(0,6).map(item=><div className="ew-row" key={item.id}><strong>{item.summary}</strong><small>{item.kind}</small><small>{formatTime(item.created_at)}</small><span/></div>)}</div>:<div className="ew-empty">No activity yet.</div>}</section></div></>}
-      {tab==="wallets"&&<section className="ew-band"><div className="ew-section-head ew-action-head"><h2>Linked wallets</h2><div className="ew-section-tools"><label className="ew-inline-search"><Search/><span className="sr-only">Search linked wallets</span><input className="ew-input" value={walletSearch} onChange={event=>setWalletSearch(event.target.value)} placeholder="Search wallets"/></label><button type="button" className="ew-btn pw-button pw-catalog-create-button" disabled={busy} onClick={()=>{setError(null);setWalletDialogOpen(true)}}><Plus size={14}/>Link wallet</button></div></div>{data.wallets.length?<div className="ew-wallet-table"><div className="ew-wallet-table-head"><span>Wallet</span><span>Network</span><span>Balance</span><span>Added</span><span /></div>{visibleWallets.map(wallet=><div className="ew-wallet-row" role="button" tabIndex={0} key={wallet.id} aria-label={`Open wallet ${wallet.label||wallet.address}`} onClick={()=>openWallet(wallet)} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openWallet(wallet)}}}><span className="ew-wallet-identity"><EntityIdenticon value={wallet.address} kind="account" size={28}/><span className="ew-wallet-identity-copy"><strong>{wallet.label||"Unlabelled wallet"}</strong><span className="ew-wallet-address"><span className="ew-address-text">{truncateEntity(wallet.address,15,11)}</span><button type="button" className="ew-copy-inline" aria-label={`Copy ${wallet.address}`} title="Copy wallet address" onClick={event=>{event.stopPropagation();copyAddress(wallet.address)}}><Copy size={12}/></button></span></span></span><span>{environment.network}</span><small className="ew-wallet-balance">{wallet.balances?.length?wallet.balances.map(balance=>`${decimalAmount(balance.amount,balance.decimals)} ${balance.asset==="native"?"XLM":balance.asset.slice(0,6)+"..."}`).join(" / "):"0"}</small><small className="ew-wallet-added">{formatTime(wallet.created_at)}</small><div className="ew-wallet-actions" onClick={event=>event.stopPropagation()}><button type="button" className="ew-icon-btn" title="Wallet actions" aria-label={`Wallet actions for ${wallet.label||wallet.address}`} aria-expanded={walletMenuId===wallet.id} onClick={()=>setWalletMenuId(current=>current===wallet.id?null:wallet.id)}><MoreVertical size={14}/></button>{walletMenuId===wallet.id&&<div className="ew-wallet-menu" role="menu"><button type="button" role="menuitem" onClick={()=>openRenameWallet(wallet)}>Rename label</button></div>}</div></div>)}{!visibleWallets.length&&<div className="ew-link-empty"><strong>No wallets match this search</strong><span>Try a different wallet label or address.</span></div>}</div>:<div className="ew-link-empty"><strong>No wallets linked yet</strong><span>Link any Stellar wallet to inspect its virtual balances.</span></div>}</section>}
-      {tab==="contracts"&&<section className="ew-band"><div className="ew-section-head"><h2>Deploy contract</h2><button className="ew-btn primary" disabled={busy||!wasm||!deploySource} onClick={()=>void mutate(async()=>{if(!wasm)return;await api.post(`${resource}/deploy`,{source_account:deploySource,wasm:await blobToBase64(wasm)},{headers:{"Idempotency-Key":crypto.randomUUID()}});setWasm(null)},"Contract deployed.")}><Upload size={14}/>Deploy WASM</button></div><div className="ew-form"><label className="ew-field">Source account<input className="ew-input ew-mono" value={deploySource} onChange={e=>setDeploySource(e.target.value)} placeholder="G..."/></label><label className="ew-field">WASM<input className="ew-input" type="file" accept=".wasm,application/wasm" onChange={e=>setWasm(e.target.files?.[0]??null)}/></label></div><div className="ew-list" style={{marginTop:16}}>{data.deployments.map(item=><div className="ew-row" key={item.id}><div><strong className="ew-mono">{item.contract_id}</strong><br/><small className="ew-mono">{item.wasm_hash}</small></div><small>{item.source_account||"Virtual deploy"}</small><small>{formatTime(item.created_at)}</small><button className="ew-icon-btn" onClick={()=>void copy(item.contract_id)}><Copy size={13}/></button></div>)}</div></section>}
-      {tab==="fund"&&<section className="ew-band"><div className="ew-section-head ew-action-head"><h2>Fund Wallet</h2><div className="ew-section-tools"><label className="ew-inline-search"><Search/><span className="sr-only">Search funding history</span><input className="ew-input" value={fundSearch} onChange={event=>setFundSearch(event.target.value)} placeholder="Search funding history"/></label><button type="button" className="ew-btn pw-button pw-catalog-create-button" disabled={!data.wallets.length||busy} onClick={()=>{setError(null);setFundModalOpen(true)}}><CircleDollarSign size={14}/>Fund</button></div></div><div className="ew-wallet-table ew-funding-table"><div className="ew-wallet-table-head ew-funding-table-head"><span>Wallet</span><span>Asset</span><span>Amount</span><span>Decimals</span><span>Funded</span></div>{visibleFundingRecords.length?visibleFundingRecords.map(record=><div className="ew-wallet-row ew-funding-row" key={record.id}><span className="ew-wallet-identity"><EntityIdenticon value={record.address} kind="account" size={28}/><span className="ew-wallet-identity-copy"><strong>{walletLabelFor(record.address)}</strong><span className="ew-wallet-address"><span className="ew-address-text">{truncateEntity(record.address,15,11)}</span><button type="button" className="ew-copy-inline" aria-label={`Copy ${record.address}`} title="Copy wallet address" onClick={event=>{event.stopPropagation();copyAddress(record.address)}}><Copy size={12}/></button></span></span></span><span className="ew-asset-cell"><AssetMark asset={record.asset} size={16}/><span>{record.asset==="native"?"XLM":`SAC ${record.asset.slice(0,8)}...`}</span></span><span>{record.amount}</span><small>{record.decimals}</small><small>{formatTime(record.created_at)}</small></div>):<div className="ew-link-empty"><strong>{fundingRecords.length?"No funding records match this search":"No funding history yet"}</strong><span>{fundingRecords.length?"Try a different wallet, asset, or amount.":"Fund a linked wallet to see each virtual balance change here."}</span></div>}</div></section>}
+    <div ref={tabList} className="ew-tabs">{tabs.map(([id,label,Icon]) => <button ref={tab===id?activeTab:undefined} key={id} className="ew-tab" data-active={tab===id} onClick={()=>selectTab(id)}><Icon/>{label}</button>)}<span className="ew-indicator" style={{width:indicator.width,transform:`translateX(${indicator.left}px)`}}/>{environment.mode === "follow_latest" && <button className="ew-icon-btn ew-tab-action ew-tab-sync" title={environment.sync_enabled?"Freeze environment":"Resume network sync"} onClick={()=>void mutate(async()=>{await api.post(`${resource}/sync/${environment.sync_enabled?"stop":"start"}`,undefined,environment.sync_enabled?undefined:{headers:{"Idempotency-Key":crypto.randomUUID()}});await onRefresh()},environment.sync_enabled?"Environment frozen at its current ledger.":"Network sync started.")}>{environment.sync_enabled?<Pause size={14}/>:<RefreshCw size={14}/>}</button>}<button className="ew-icon-btn ew-tab-action ew-tab-back" onClick={onBack} aria-label="Back" title="Back"><ChevronLeft size={18} /></button></div>
+    <div className="ew-content">{selectedWallet && selectedWalletAccount && <WalletExplorerDesign account={selectedWalletAccount} network={environment.network} address={selectedWallet.address} label={selectedWallet.label} environmentId={environment.id} embedded environmentScoped onBack={() => setSelectedWallet(null)} onFund={() => { setError(null); setFundModalOpen(true); }} onWatch={() => setToastMessage("Wallet added to your watchlist.")} onSend={() => setToastMessage("Send flow is available from the RPC Builder.")} />}{!selectedWallet && <div className="ew-wallet-content">{error&&<div className="ew-message error">{error}</div>}{loading?<div className="ew-empty"><LoaderCircle className="pw-spin"/></div>:<>
+      {tab==="overview"&&<div className="ew-overview"><div className="ew-overview-top"><div className="ew-overview-meta" aria-label="Environment summary"><h1 className="ew-overview-name">{environment.name}</h1><div className="ew-meta-row"><span>Forked from</span><strong className="ew-meta-network"><img src="/stellar-logo.jpg" alt="Stellar" width={13} height={13} style={{width:13,height:13,display:"block",flexShrink:0,objectFit:"cover",mixBlendMode:"screen",filter:"invert(1)"}} />{environment.network}</strong><span className="ew-meta-separator">•</span><span>Protocol {environment.protocol}</span></div><div className="ew-meta-row"><span>Current block</span><strong>{(environment.execution_ledger??environment.state_ledger??environment.base_ledger_sequence).toLocaleString()}</strong><span className="ew-meta-separator">•</span><span>Virtual blocks {data.revisions.length}</span></div><div className="ew-meta-row"><span>Mode</span><strong>{environment.mode === "follow_latest"?"Network sync":"Frozen"}</strong><span className="ew-meta-separator">•</span><span>Last interaction {formatTime([...data.activity.map(item=>item.created_at), ...data.logs.map(item=>item.created_at)].filter(Boolean).sort().pop())}</span></div></div><ActivityChart title="Transactions" timestamps={data.activity.map(item=>item.created_at)}/><ActivityChart title="RPC Requests" timestamps={data.logs.map(item=>item.created_at)}/></div><div className="ew-grid"><section className="ew-band"><h2>Environment details</h2><div className="ew-kv"><span>Network</span><span>{environment.network}</span><span>Mode</span><span>{environment.mode === "follow_latest"?"Network sync":"Frozen"}</span><span>Pinned state ledger</span><span>{(environment.state_ledger??environment.base_ledger_sequence).toLocaleString()}</span><span>Execution ledger</span><span>{environment.execution_ledger?.toLocaleString()??"Preparing"}</span><span>Protocol</span><span>{environment.protocol}</span><span>Verification</span><VerificationBadge status={environment.verification_status}/><span>State hash</span><span className="ew-mono">{environment.state_hash??"Preparing"}</span></div></section><section className="ew-band"><h2>Recent activity</h2>{data.activity.length?<div className="ew-list">{data.activity.slice(0,6).map(item=><div className="ew-row" key={item.id}><strong>{item.summary}</strong><small>{item.kind}</small><small>{formatTime(item.created_at)}</small><span/></div>)}</div>:<div className="ew-empty">No activity yet.</div>}</section></div></div>}
+      {tab==="wallets"&&<section className="ew-band"><div className="ew-section-head ew-action-head"><h2>Linked wallets</h2><div className="ew-section-tools"><label className="ew-inline-search"><Search/><span className="sr-only">Search linked wallets</span><input className="ew-input" value={walletSearch} onChange={event=>setWalletSearch(event.target.value)} placeholder="Search wallets"/></label><button type="button" className="ew-btn pw-button pw-catalog-create-button" disabled={busy} onClick={()=>{setError(null);setWalletDialogOpen(true)}}><Plus size={14}/>Link wallet</button></div></div>{data.wallets.length?<div className="ew-wallet-table"><div className="ew-wallet-table-head"><span>Wallet</span><span>Network</span><span>Balance</span><span>Added</span><span /></div>{visibleWallets.map(wallet=><div className="ew-wallet-row" role="button" tabIndex={0} key={wallet.id} aria-label={`Open wallet ${wallet.label||wallet.address}`} onClick={()=>openWallet(wallet)} onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openWallet(wallet)}}}><span className="ew-wallet-identity"><EntityIdenticon value={wallet.address} kind="account" size={28}/><span className="ew-wallet-identity-copy"><strong>{wallet.label||"Unlabelled wallet"}</strong><span className="ew-wallet-address"><span className="ew-address-text">{truncateEntity(wallet.address,15,11)}</span><button type="button" className="ew-copy-inline" aria-label={`Copy ${wallet.address}`} title="Copy wallet address" onClick={event=>{event.stopPropagation();copyAddress(wallet.address)}}><Copy size={12}/></button></span></span></span><span>{environment.network}</span><small className="ew-wallet-balance">{wallet.balances?.length?wallet.balances.map(balance=>`${decimalAmount(balance.amount,balance.decimals)} ${balance.asset==="native"?"XLM":balance.asset.slice(0,6)+"..."}`).join(" / "):"0"}</small><small className="ew-wallet-added">{formatTime(wallet.created_at)}</small><div className="ew-wallet-actions" onClick={event=>event.stopPropagation()}><button type="button" className="ew-icon-btn" title="Wallet actions" aria-label={`Wallet actions for ${wallet.label||wallet.address}`} aria-expanded={walletMenuId===wallet.id} onClick={()=>setWalletMenuId(current=>current===wallet.id?null:wallet.id)}><MoreVertical size={14}/></button>{walletMenuId===wallet.id&&<div className="ew-wallet-menu" role="menu"><button type="button" role="menuitem" onClick={()=>openRenameWallet(wallet)}><Pencil size={13}/>Rename</button></div>}</div></div>)}{!visibleWallets.length&&<div className="ew-link-empty"><strong>No wallets match this search</strong><span>Try a different wallet label or address.</span></div>}</div>:<div className="ew-link-empty"><strong>No wallets linked yet</strong><span>Link any Stellar wallet to inspect its virtual balances.</span></div>}</section>}
+      {tab==="contracts"&&<section className="ew-band"><div className="ew-section-head ew-action-head"><h2>Deploy contract</h2><div className="ew-section-tools"><label className="ew-inline-search"><Search/><span className="sr-only">Search deployed contracts</span><input className="ew-input" value={contractSearch} onChange={event=>setContractSearch(event.target.value)} placeholder="Search contracts"/></label><button type="button" className="ew-icon-btn" aria-label="Refresh contracts" title="Refresh contracts" disabled={loading} onClick={()=>void load(true)}><RefreshCw size={14}/></button><div className="ew-contract-filter"><button type="button" className="ew-icon-btn" aria-label="Filter contracts" title="Filter contracts" aria-expanded={contractFilterOpen} onClick={()=>setContractFilterOpen(open=>!open)}><SlidersHorizontal size={14}/></button>{contractFilterOpen&&<div className="ew-wallet-menu ew-contract-filter-menu" role="menu"><button type="button" role="menuitem" onClick={()=>{setContractFilter("all");setContractFilterOpen(false)}}>All contracts</button><button type="button" role="menuitem" onClick={()=>{setContractFilter("with_hash");setContractFilterOpen(false)}}>With WASM hash</button></div>}</div></div></div>{data.deployments.length?<div className="ew-list" style={{marginTop:16}}>{visibleDeployments.length?visibleDeployments.map(item=><div className="ew-row" key={item.id}><div><strong className="ew-mono">{item.contract_id}</strong><br/><small className="ew-mono">{item.wasm_hash||"WASM hash unavailable"}</small></div><small>{item.source_account||"Virtual deploy"}</small><small>{formatTime(item.created_at)}</small><button className="ew-icon-btn" onClick={()=>void copy(item.contract_id)}><Copy size={13}/></button></div>):<div className="ew-link-empty"><strong>No contracts match this search</strong><span>Try a different contract ID or filter.</span></div>}</div>:<div className="ew-link-empty"><strong>No contracts deployed yet</strong><span>Deploy contracts through the JSON-RPC endpoint to see them here.</span></div>}</section>}
+      {tab==="fund"&&<section className="ew-band"><div className="ew-section-head ew-action-head"><h2>Fund Wallet</h2><div className="ew-section-tools"><label className="ew-inline-search"><Search/><span className="sr-only">Search funding history</span><input className="ew-input" value={fundSearch} onChange={event=>setFundSearch(event.target.value)} placeholder="Search funding history"/></label><button type="button" className="ew-btn pw-button pw-catalog-create-button" disabled={!data.wallets.length||busy} onClick={()=>{setError(null);setFundModalOpen(true)}}><CircleDollarSign size={14}/>Fund</button></div></div>{fundingRecords.length?<div className="ew-wallet-table ew-funding-table"><div className="ew-wallet-table-head ew-funding-table-head"><span>Wallet</span><span>Asset</span><span>Amount</span><span>Decimals</span><span>Funded</span></div>{visibleFundingRecords.length?visibleFundingRecords.map(record=><div className="ew-wallet-row ew-funding-row" key={record.id}><span className="ew-wallet-identity"><EntityIdenticon value={record.address} kind="account" size={28}/><span className="ew-wallet-identity-copy"><strong>{walletLabelFor(record.address)}</strong><span className="ew-wallet-address"><span className="ew-address-text">{truncateEntity(record.address,15,11)}</span><button type="button" className="ew-copy-inline" aria-label={`Copy ${record.address}`} title="Copy wallet address" onClick={event=>{event.stopPropagation();copyAddress(record.address)}}><Copy size={12}/></button></span></span></span><span className="ew-asset-cell"><AssetMark asset={record.asset} size={16}/><span>{record.asset==="native"?"XLM":`SAC ${record.asset.slice(0,8)}...`}</span></span><span>{record.amount}</span><small>{record.decimals}</small><small>{formatTime(record.created_at)}</small></div>):<div className="ew-link-empty"><strong>No funding records match this search</strong><span>Try a different wallet, asset, or amount.</span></div>}</div>:<div className="ew-link-empty"><strong>No funding history yet</strong><span>Fund a linked wallet to see each virtual balance change here.</span></div>}</section>}
       {tab==="fork"&&<section className="ew-band"><h2>Fork an immutable revision</h2><div className="ew-form"><label className="ew-field">Revision<WorkspaceSelect label="Revision" value={revisionId} onChange={setRevisionId} options={data.revisions.map(r=>({value:r.id,label:`Revision ${r.revision_number} / ledger ${r.state_ledger.toLocaleString()}`}))}/></label><label className="ew-field">New environment name<input className="ew-input" value={forkName} onChange={e=>setForkName(e.target.value)} placeholder="Incident branch"/></label><button className="ew-btn primary" disabled={busy||!revisionId||!forkName} onClick={()=>void mutate(async()=>{await api.post(`${resource}/revisions/${revisionId}/branch`,{name:forkName},{headers:{"Idempotency-Key":crypto.randomUUID()}});setForkName("");await onRefresh()},"Environment fork created.")}><GitFork size={14}/>Create fork</button></div><div className="ew-list" style={{marginTop:16}}>{data.revisions.map(r=><div className="ew-row" key={r.id}><strong>Revision {r.revision_number}</strong><small>Ledger {r.state_ledger.toLocaleString()}</small><small>{formatTime(r.created_at)}</small><span/></div>)}</div></section>}
       {tab==="simulations"&&<section className="ew-band ew-simulation-band"><SimulatorPage scope={scope} embeddedEnvironmentId={environment.id}/></section>}
-      {tab==="builder"&&<section className="ew-band ew-rpc-band"><div className="ew-subtabs" role="tablist" aria-label="RPC workspace"><button type="button" role="tab" aria-selected={rpcSubtab==="builder"} className="ew-subtab" data-active={rpcSubtab==="builder"} onClick={()=>setRpcSubtab("builder")}><Code2 size={14}/>RPC Builder</button><button type="button" role="tab" aria-selected={rpcSubtab==="calls"} className="ew-subtab" data-active={rpcSubtab==="calls"} onClick={()=>setRpcSubtab("calls")}><Braces size={14}/>JSON RPC Calls</button></div>{rpcSubtab==="builder"&&<div><h2>RPC Builder</h2><div className="ew-form"><label className="ew-field">Method<WorkspaceSelect label="RPC method" value={rpcMethod} onChange={setRpcMethod} options={["getLatestLedger","getLedgerEntries","getTransaction","simulateTransaction"].map(method=>({value:method,label:method}))}/></label><label className="ew-field full">Params JSON<textarea className="ew-textarea" value={rpcParams} onChange={e=>setRpcParams(e.target.value)}/></label><button className="ew-btn primary" disabled={busy} onClick={()=>void mutate(async()=>{const result=await api.post(`${resource}/rpc`,{jsonrpc:"2.0",id:crypto.randomUUID(),method:rpcMethod,params:JSON.parse(rpcParams)});setRpcResult(JSON.stringify(result,null,2))},"RPC request completed.")}><Play size={14}/>Send request</button></div>{rpcResult&&<pre className="ew-code" style={{marginTop:16}}>{rpcResult}</pre>}</div>}{rpcSubtab==="calls"&&<div><h2>JSON RPC Calls</h2><label className="ew-search"><Search/><span className="sr-only">Search RPC calls</span><input className="ew-input" value={rpcSearch} onChange={event=>setRpcSearch(event.target.value)} placeholder="Search method, status, or caller"/></label><div className="ew-list">{visibleLogs.map(log=><div className="ew-row" key={log.id}><strong className="ew-mono">{log.method}</strong><small>{log.status} / {log.latency_ms} ms</small><small>{log.caller_class} / {formatTime(log.created_at)}</small><span/></div>)}</div>{!visibleLogs.length&&<div className="ew-empty">{data.logs.length?"No calls match this search.":"No JSON-RPC calls recorded."}</div>}</div>}</section>}
-      {tab==="integrate"&&<section className="ew-band"><h2>Integrate</h2>{[["curl",`curl -X POST '${rpcUrl}' -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger","params":{}}'`],["JavaScript",`const response = await fetch('${rpcUrl}', {\n  method: 'POST',\n  headers: { 'content-type': 'application/json' },\n  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestLedger', params: {} })\n});`],["Stellar CLI",`stellar contract invoke --rpc-url '${rpcUrl}' --network-passphrase '${environment.network === "mainnet" ? "Public Global Stellar Network ; September 2015" : "Test SDF Network ; September 2015"}' --id C... -- function_name`],["GitHub Actions",`- name: Verify virtual environment\n  run: curl --fail -X POST '${rpcUrl}' -H 'content-type: application/json' --data @rpc-request.json`],["GitLab CI",`verify-environment:\n  script:\n    - curl --fail -X POST '${rpcUrl}' -H 'content-type: application/json' --data @rpc-request.json`],["Generic CI",`set -eu\ncurl --fail --silent --show-error -X POST '${rpcUrl}' \\\n  -H 'content-type: application/json' \\\n  --data '{"jsonrpc":"2.0","id":"health","method":"getLatestLedger","params":{}}'`]].map(([label,code])=><div className="ew-band" key={label}><h2>{label}</h2><pre className="ew-code">{code}</pre><button className="ew-btn" style={{marginTop:8}} onClick={()=>void copy(code)}><Copy size={13}/>Copy</button></div>)}</section>}
+      {tab==="builder"&&<section className="ew-band ew-rpc-band"><RpcBuilder resource={resource} rpcUrl={rpcUrl} network={environment.network} stateLedger={environment.execution_ledger ?? environment.state_ledger ?? environment.base_ledger_sequence} logs={data.logs} onRequestComplete={()=>void refreshRpcLogs()}/></section>}
+      {tab==="integrate"&&<section className="ew-band ew-integrate-band"><EnvironmentIntegrateSection rpcUrl={rpcUrl} network={environment.network} onCopy={copy}/></section>}
       {tab==="activity"&&<section className="ew-band"><h2>Environment activity</h2><div className="ew-list">{data.activity.map(item=><div className="ew-row" key={item.id}><strong>{item.summary}</strong><small>{item.kind}</small><small>{formatTime(item.created_at)}</small><span/></div>)}</div></section>}
       {tab==="configure"&&<section className="ew-band"><h2>Configure environment</h2>{oneTimeSecret&&<div className="ew-message"><strong>Admin secret, shown once:</strong> <span className="ew-mono">{oneTimeSecret}</span> <button className="ew-btn" onClick={()=>void copy(oneTimeSecret)}><Copy size={13}/>Copy</button></div>}<div className="ew-form"><label className="ew-field">Name<input className="ew-input" value={name} onChange={e=>setName(e.target.value)}/></label><label className="ew-field">Named RPC slug<input className="ew-input" value={rpcSlug} onChange={e=>setRpcSlug(e.target.value.toLowerCase())} placeholder="incident-investigation"/></label><label className="ew-field full"><span>Public Explorer</span><span style={{display:"flex",gap:8}}><button className={`ew-btn${publicExplorer?" primary":""}`} onClick={()=>setPublicExplorer(v=>!v)}>{publicExplorer?<Check size={14}/>:<Globe size={14}/>} {publicExplorer?"Enabled":"Disabled"}</button>{publicExplorer&&<button className="ew-btn" onClick={()=>window.open(explorerUrl,"_blank","noopener,noreferrer")}><ArrowUpRight size={14}/>Open Explorer</button>}</span></label><button className="ew-btn primary" disabled={busy||!name.trim()} onClick={()=>void mutate(async()=>{await api.patch(resource,{name:name.trim(),public_explorer_enabled:publicExplorer});await api.put(`${resource}/rpc-slug`,{rpc_slug:rpcSlug.trim()||null});await onRefresh()},"Configuration saved.")}><Settings size={14}/>Save configuration</button><button className="ew-btn" onClick={()=>void mutate(async()=>{const rotated=await api.post<{admin_secret:string}>(`${resource}/rpc-secret/rotate`);setOneTimeSecret(rotated.admin_secret)},"RPC credential rotated.")}><KeyRound size={14}/>Rotate credential</button><button className="ew-btn danger" onClick={()=>{if(confirm(`Delete ${environment.name}?`))void mutate(async()=>{await api.delete(resource,{headers:{"Idempotency-Key":crypto.randomUUID()}});onDeleted()},"Environment deleted.")}}><Trash2 size={14}/>Delete environment</button></div></section>}
     </>}</div>}</div>{walletDialogs}

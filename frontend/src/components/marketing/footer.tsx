@@ -8,7 +8,7 @@ const columns = [
     title: "Platform",
     links: [
       ["Simulator", "/#simulation"],
-      ["Virtual environments", "/#environments"],
+      ["Virtual networks", "/#environments"],
       ["Monitoring", "/#monitoring"],
       ["Public explorer", "/explorer/testnet"],
     ],

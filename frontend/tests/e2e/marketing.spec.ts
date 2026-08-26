@@ -53,7 +53,7 @@ test("mobile navigation exposes every primary destination", async ({ page }, tes
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Platform" }).click();
   const mobileMenu = page.getByRole("banner");
-  await expect(mobileMenu.getByRole("link", { name: "Virtual environments" })).toBeVisible();
+  await expect(mobileMenu.getByRole("link", { name: "Virtual networks" })).toBeVisible();
   await expect(mobileMenu.getByRole("link", { name: "Pricing" })).toBeVisible();
   await expect(mobileMenu.getByRole("link", { name: "Create account" })).toBeVisible();
 });

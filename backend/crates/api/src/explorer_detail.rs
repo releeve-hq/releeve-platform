@@ -212,6 +212,163 @@ fn map_source_lens(error: source_lens_client::Error) -> Error {
     }
 }
 
+/// Maps a platform `contract_verifications` id to its SourceLens verification
+/// id, scoped to the project.
+async fn resolve_source_lens_verification(
+    state: &AppState,
+    project_id: Uuid,
+    verification_id: Uuid,
+) -> Result<Uuid, Error> {
+    sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT v.source_lens_verification_id
+           FROM contract_verifications v
+           JOIN contracts c ON c.id = v.contract_id
+          WHERE v.id = $1 AND c.project_id = $2",
+    )
+    .bind(verification_id)
+    .bind(project_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .flatten()
+    .ok_or(Error::NotFound)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EncodeStorageKeyBody {
+    pub variant: String,
+    #[serde(default)]
+    pub fields: Vec<Value>,
+    #[serde(default)]
+    pub durability: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DecodeStorageKeyBody {
+    pub ledger_key_xdr: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DecodeStorageValueBody {
+    pub value_xdr: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EditStorageValueBody {
+    pub value_xdr: String,
+    pub value: Value,
+}
+
+/// The parsed `contracttype` storage-key schema for a verified contract.
+pub async fn verification_storage_schema(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, verification_id)): Path<(String, String, Uuid)>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_verified()?;
+    let lens_id =
+        resolve_source_lens_verification(&state, auth.project_id, verification_id).await?;
+    let result = source_lens(&state)?
+        .get_storage_schema(&source_lens_actor(user_id, &auth, Uuid::new_v4()), lens_id)
+        .await
+        .map_err(map_source_lens)?;
+    Ok(Json(result))
+}
+
+/// Builds a `LedgerKey::ContractData` XDR from a storage-key label.
+pub async fn verification_storage_encode(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, verification_id)): Path<(String, String, Uuid)>,
+    Json(body): Json<EncodeStorageKeyBody>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_verified()?;
+    let lens_id =
+        resolve_source_lens_verification(&state, auth.project_id, verification_id).await?;
+    let payload = json!({
+        "variant": body.variant,
+        "fields": body.fields,
+        "durability": body.durability,
+    });
+    let result = source_lens(&state)?
+        .encode_storage_key(
+            &source_lens_actor(user_id, &auth, Uuid::new_v4()),
+            lens_id,
+            &payload,
+        )
+        .await
+        .map_err(map_source_lens)?;
+    Ok(Json(result))
+}
+
+/// Decodes a `LedgerKey::ContractData` XDR into its readable label.
+pub async fn verification_storage_decode(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, verification_id)): Path<(String, String, Uuid)>,
+    Json(body): Json<DecodeStorageKeyBody>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_verified()?;
+    let lens_id =
+        resolve_source_lens_verification(&state, auth.project_id, verification_id).await?;
+    let result = source_lens(&state)?
+        .decode_storage_key(
+            &source_lens_actor(user_id, &auth, Uuid::new_v4()),
+            lens_id,
+            &json!({ "ledger_key_xdr": body.ledger_key_xdr }),
+        )
+        .await
+        .map_err(map_source_lens)?;
+    Ok(Json(result))
+}
+
+/// Decodes a `LedgerEntryData::ContractData` XDR into its key + value.
+pub async fn verification_storage_decode_value(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, verification_id)): Path<(String, String, Uuid)>,
+    Json(body): Json<DecodeStorageValueBody>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_verified()?;
+    let lens_id =
+        resolve_source_lens_verification(&state, auth.project_id, verification_id).await?;
+    let result = source_lens(&state)?
+        .decode_storage_value(
+            &source_lens_actor(user_id, &auth, Uuid::new_v4()),
+            lens_id,
+            &json!({ "value_xdr": body.value_xdr }),
+        )
+        .await
+        .map_err(map_source_lens)?;
+    Ok(Json(result))
+}
+
+/// Re-encodes a `LedgerEntryData::ContractData` XDR with a new stored value.
+pub async fn verification_storage_edit_value(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, verification_id)): Path<(String, String, Uuid)>,
+    Json(body): Json<EditStorageValueBody>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_verified()?;
+    let lens_id =
+        resolve_source_lens_verification(&state, auth.project_id, verification_id).await?;
+    let result = source_lens(&state)?
+        .edit_storage_value(
+            &source_lens_actor(user_id, &auth, Uuid::new_v4()),
+            lens_id,
+            &json!({ "value_xdr": body.value_xdr, "value": body.value }),
+        )
+        .await
+        .map_err(map_source_lens)?;
+    Ok(Json(result))
+}
+
 fn parse_time_cursor(raw: Option<&str>) -> Result<Option<(DateTime<Utc>, String)>, Error> {
     let Some(raw) = raw.filter(|s| !s.is_empty()) else {
         return Ok(None);

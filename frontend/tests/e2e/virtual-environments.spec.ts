@@ -64,6 +64,16 @@ async function mockPlatform(context: BrowserContext) {
     if (path.endsWith("/deployments")) return json({ deployments });
     if (path.endsWith("/activity")) return json({ activity: [{ id: "activity-1", kind: "funding", summary: "Funded Treasury with 250 XLM", created_at: "2026-08-23T12:02:00Z" }] });
     if (path.endsWith("/rpc-logs")) return json({ logs });
+    if (path.endsWith("/rpc") && request.method() === "POST") {
+      const rpcRequest = request.postDataJSON() as { id?: unknown; method?: string };
+      return json({
+        jsonrpc: "2.0",
+        id: rpcRequest.id ?? null,
+        result: rpcRequest.method === "getLatestLedger"
+          ? { id: "61234568-latest", protocolVersion: 27, sequence: 61234568, closeTime: null, entries: Array.from({ length: 80 }, (_, index) => ({ index, value: `entry-${index}` })) }
+          : {},
+      });
+    }
     if (path.endsWith("/revisions")) return json({ revisions: [{ id: "revision-1", revision_number: 1, state_ledger: 61234567, state_hash: environment.state_hash, created_at: "2026-08-23T12:00:00Z" }] });
     if (path === "/api/v1/public/virtual-explorer/acme/payments/production-mirror") return json({
       environment: { id: environment.id, name: environment.name, network: environment.network, state_ledger: environment.state_ledger, protocol: environment.protocol, status: "ready" },
@@ -105,7 +115,8 @@ test("environment workspace exposes every persisted workflow without layout over
   }));
   expect(tabOverflow.horizontal).toBe(false);
   expect(tabOverflow.vertical).toBe(false);
-  await expect(page.getByLabel("Environment usage")).toContainText("RPC calls2");
+  await expect(page.getByRole("heading", { name: "Transactions", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "RPC Requests", exact: true })).toBeVisible();
   await expect(page.getByText("61,234,567", { exact: true }).first()).toBeVisible();
 
   await page.getByRole("button", { name: "Wallets", exact: true }).click();
@@ -121,11 +132,9 @@ test("environment workspace exposes every persisted workflow without layout over
   const sections = [
     ["Wallets", "Linked wallets"],
     ["Contracts", "Deploy contract"],
-    ["Fund", "Virtual funding"],
+    ["Fund", "Fund Wallet"],
     ["Fork", "Fork an immutable revision"],
-    ["Simulations", "Environment simulations"],
-    ["JSON-RPC Calls", "Redacted JSON-RPC calls"],
-    ["RPC-Builder", "RPC Builder"],
+    ["Simulation", "New simulation"],
     ["Integrate", "Integrate"],
     ["Activity", "Environment activity"],
     ["Configure", "Configure environment"],
@@ -136,7 +145,9 @@ test("environment workspace exposes every persisted workflow without layout over
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
 
-  await page.getByRole("button", { name: "JSON-RPC Calls", exact: true }).click();
+  await page.getByRole("button", { name: "RPC Builder", exact: true }).click();
+  const rpcWorkspace = page.getByLabel("RPC Builder workspace");
+  await rpcWorkspace.getByRole("tab", { name: "JSON-RPC Calls", exact: true }).click();
   await page.getByPlaceholder("Search method, status, or caller").fill("simulate");
   await expect(page.getByText("simulateTransaction", { exact: true })).toBeVisible();
   await expect(page.getByText("getLatestLedger", { exact: true })).toHaveCount(0);
@@ -152,6 +163,49 @@ test("workspace honors reduced motion", async ({ page }) => {
   await page.getByText("Production mirror", { exact: true }).click();
   const transitionDuration = await page.locator(".ew-indicator").evaluate((element) => getComputedStyle(element).transitionDuration);
   expect(transitionDuration).toBe("0s");
+});
+
+test("RPC Builder opens examples, executes colorized JSON, and creates blank requests", async ({ page }) => {
+  await page.goto("/virtual-environments");
+  await page.getByText("Production mirror", { exact: true }).click();
+  await page.getByRole("button", { name: "RPC Builder", exact: true }).click();
+
+  const builder = page.getByLabel("RPC Builder workspace");
+  await expect(builder.getByRole("tab", { name: "RPC Builder", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(builder.getByRole("tab", { name: "JSON-RPC Calls", exact: true })).toBeVisible();
+  await builder.getByRole("tab", { name: "JSON-RPC Calls", exact: true }).click();
+  await expect(builder.getByRole("heading", { name: "JSON-RPC Calls", exact: true })).toBeVisible();
+  await expect(builder.getByRole("button", { name: "New Request", exact: true })).toHaveCount(0);
+  await builder.getByRole("tab", { name: "RPC Builder", exact: true }).click();
+  await expect(builder.locator(".rb-example")).toHaveCount(12);
+  await expect(builder.locator(".rb-json-key")).toHaveCount(0);
+
+  await builder.getByRole("button", { name: /^getLatestLedger/ }).click();
+  const requestEditor = builder.getByLabel("JSON-RPC request");
+  await expect(requestEditor).toHaveValue(/"method": "getLatestLedger"/);
+  await expect(builder.locator(".rb-json-key").first()).toBeVisible();
+  const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+  await requestEditor.fill(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger", params: { notes: Array.from({ length: 80 }, (_, index) => `line-${index}`) } }, null, 2));
+  expect(await requestEditor.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(pageHeight + 1);
+  await builder.getByRole("button", { name: /^Run/ }).click();
+
+  const response = builder.getByLabel("JSON-RPC response");
+  await expect(response).toContainText('"sequence": 61234568');
+  await expect(builder.locator(".rb-response-meta")).toContainText("Status 200");
+  expect(await response.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+
+  await requestEditor.fill('{"jsonrpc":"2.0","method":"getLatestLedger",}');
+  const problem = builder.getByRole("button", { name: /^View problem:/ });
+  await expect(problem).toBeVisible();
+  await expect(builder.locator(".rb-json-error")).toBeVisible();
+  await problem.hover();
+  await expect(problem.getByRole("tooltip")).toBeVisible();
+
+  await builder.getByRole("button", { name: "New Request", exact: true }).click();
+  await expect(builder.getByLabel("JSON-RPC request")).toHaveValue("");
+  await expect(builder.getByText("Start with a JSON-RPC request, then run it to see the response.")).toBeVisible();
+  await expect(builder.getByRole("button", { name: /^Run/ })).toBeDisabled();
 });
 
 test("public virtual explorer is anonymous, responsive, and contains only virtual-chain data", async ({ page }, testInfo) => {

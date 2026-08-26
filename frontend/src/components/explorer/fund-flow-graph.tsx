@@ -45,7 +45,7 @@ function nodeFor(address: string): Node {
       width: 260,
       height: 58,
       background: "#181818",
-      color: "#f5f5f5",
+      color: "#ffffff",
       border: `1px solid ${isContractAddress(address) ? "#40552f" : "#2b2b2b"}`,
       borderRadius: 6,
       fontSize: 11,

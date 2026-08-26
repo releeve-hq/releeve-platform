@@ -14,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
+import StorageKeyBuilder from "./storage-key-builder";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   type LucideIcon,
@@ -1158,6 +1159,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
           account={walletDetail}
           network={String(walletDetail.network ?? scope.network)}
           address={selectedAddress}
+          label={typeof selected.name === "string" ? selected.name : null}
           embedded
            onBack={() => {
              setSelected(null);
@@ -3532,7 +3534,7 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
         onDone={() => setToastError(null)}
       />
       <Header
-        title="Virtual environments"
+        title="Virtual networks"
         description="Create, inspect, synchronize, simulate, and integrate isolated Stellar environments."
       />
       {message && <Message>{message}</Message>}
@@ -3568,7 +3570,7 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
         </div>
         {!scope.project ? (
           <div className="pw-page-note">
-            Virtual environments are scoped to a project. Select a project to
+            Virtual networks are scoped to a project. Select a project to
             continue.
           </div>
         ) : visible.length ? (
@@ -3868,7 +3870,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     const increase = Number(increaseLedger || 0);
     if (stateMode === "latest" && increase > 0)
       throw new Error(
-        "A relative ledger override requires a historical ledger or virtual environment.",
+        "A relative ledger override requires a historical ledger or virtual network.",
       );
     if (increase > 0 || timestamp)
       built.push({
@@ -3926,7 +3928,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
 
   const buildAuthoritativeRequest = () => {
     if (stateMode === "environment" && !environmentId)
-      throw new Error("Choose a virtual environment.");
+      throw new Error("Choose a virtual network.");
     if (stateMode === "ledger") {
       const boundary = scope.network === "mainnet" ? 62447231 : 2070825;
       if (
@@ -4511,14 +4513,14 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
               <div className="pw-segmented" aria-label="State source">
                 <button data-active={stateMode === "latest"} onClick={() => setStateMode("latest")}>Latest</button>
                 <button data-active={stateMode === "ledger"} onClick={() => setStateMode("ledger")}>Historical ledger</button>
-                <button data-active={stateMode === "environment"} onClick={() => setStateMode("environment")}>Virtual environment</button>
+                <button data-active={stateMode === "environment"} onClick={() => setStateMode("environment")}>Virtual network</button>
               </div>
               {stateMode === "ledger" && <label className="pw-inline"><Database size={16} /><input
                 className="pw-field pw-mono" type="number" value={historicalLedger}
                 onChange={(event) => setHistoricalLedger(event.target.value)} placeholder="Ledger sequence" /></label>}
               {stateMode === "environment" && <label className="pw-inline"><Database size={16} /><select
                 className="pw-field" value={environmentId} onChange={(event) => setEnvironmentId(event.target.value)}
-                style={{ width: "auto", minWidth: 210 }}><option value="">Select virtual environment</option>
+                style={{ width: "auto", minWidth: 210 }}><option value="">Select virtual network</option>
                 {environments.map((environment) => <option key={environment.id} value={environment.id}>
                   {environment.name} / revision {environment.revision ?? 1}
                 </option>)}</select></label>}
@@ -4726,6 +4728,13 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   open={Boolean(openSections.state)}
                   onToggle={() => toggle("state")}
                 >
+                  <div className="pw-sim-storage-builder">
+                    <StorageKeyBuilder
+                      scope={scope}
+                      contractAddress={contractId && /^C/.test(contractId) ? contractId : undefined}
+                      onKey={(key) => setStorageKeyXdr(key.ledger_key_xdr)}
+                    />
+                  </div>
                   <label className="pw-label">
                     Search contract entries
                     <input
@@ -5596,7 +5605,21 @@ function AlertBuilderView({
                               <select className="pw-field" value={expression.type} onChange={(event) => updateExpression(index, { type: event.target.value })}>
                                 {expressionOptions.map(([option, label]) => <option key={option} value={option}>{label}</option>)}
                               </select>
-                              <textarea className="pw-field pw-mono" rows={3} value={expression.params} onChange={(event) => updateExpression(index, { params: event.target.value })} aria-label={`Params JSON for condition ${index + 1}`} />
+                              {expression.type === "state_change" ? (
+                                <div className="pw-storage-key-builder-wrap">
+                                  <StorageKeyBuilder
+                                    scope={scope}
+                                    contractAddress={targetType === "address" && /^[CG]/.test(targetValue) ? targetValue : undefined}
+                                    onParams={(params) => updateExpression(index, { params: JSON.stringify(params) })}
+                                  />
+                                  <details className="pw-alert-advanced">
+                                    <summary>Advanced params JSON</summary>
+                                    <textarea className="pw-field pw-mono" rows={3} value={expression.params} onChange={(event) => updateExpression(index, { params: event.target.value })} aria-label={`Params JSON for condition ${index + 1}`} />
+                                  </details>
+                                </div>
+                              ) : (
+                                <textarea className="pw-field pw-mono" rows={3} value={expression.params} onChange={(event) => updateExpression(index, { params: event.target.value })} aria-label={`Params JSON for condition ${index + 1}`} />
+                              )}
                               <Button iconOnly danger aria-label="Remove condition" disabled={expressions.length === 1} onClick={() => setExpressions((current) => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={14} /></Button>
                             </div>
                           ))}

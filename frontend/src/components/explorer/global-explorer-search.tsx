@@ -243,17 +243,17 @@ export function GlobalExplorerSearch({
           border: 1px solid var(--border, #2b2b2b);
           border-radius: 6px;
           background: var(--panel-2, #1e1e1e);
-          color: var(--text, #f5f5f5);
+          color: var(--text, #ffffff);
           transition: border-color .15s ease, box-shadow .15s ease;
         }
         .is-compact .global-explorer-search-input {
-          height: 38px;
-          padding: 0 14px;
+          height: 32px;
+          padding: 0 10px;
           background: var(--panel-2, #1e1e1e);
         }
         .global-explorer-search-input:focus-within {
           border-color: var(--text-faint, #707070);
-          box-shadow: 0 0 0 3px color-mix(in srgb, var(--text, #f5f5f5) 10%, transparent);
+          box-shadow: 0 0 0 3px color-mix(in srgb, var(--text, #ffffff) 10%, transparent);
         }
         .global-explorer-search-input :global(svg) {
           width: 16px;
@@ -316,7 +316,7 @@ export function GlobalExplorerSearch({
           border: 0;
           border-bottom: 1px solid var(--border, #2b2b2b);
           background: transparent;
-          color: var(--text, #f5f5f5);
+          color: var(--text, #ffffff);
           text-align: left;
           cursor: pointer;
         }

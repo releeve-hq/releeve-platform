@@ -1,9 +1,9 @@
 ---
-title: Virtual environments
+title: Virtual networks
 description: Keep a named scenario, its overrides, and its execution history together.
 ---
 
-A virtual environment is a project-scoped scenario built from a verified Stellar state. It gives a team a named place to keep controlled changes and run related simulations.
+A virtual network is a project-scoped scenario built from a verified Stellar state. It gives a team a named place to keep controlled changes and run related simulations.
 
 ## Use an environment when
 
@@ -24,8 +24,8 @@ Follow-latest environments can resolve against the authoritative latest state fo
 
 Linking a wallet does not create a keypair, take custody of a secret, or change the Stellar network. Releeve checks whether the address has an account entry on the environment's selected source network.
 
-- If the account exists, its balance is read from the virtual environment state. Frozen environments use their frozen snapshot; follow-latest environments use the latest verified state available to that environment.
-- If the account does not exist on the selected source network, the modal offers **Create account**. This creates an account only inside the virtual environment and applies the minimum initial XLM account reserve used by the environment. The creation and reserve funding appear as separate Activity and Fund history records.
+- If the account exists, its balance is read from the virtual network state. Frozen environments use their frozen snapshot; follow-latest environments use the latest verified state available to that environment.
+- If the account does not exist on the selected source network, the modal offers **Create account**. This creates an account only inside the virtual network and applies the minimum initial XLM account reserve used by the environment. The creation and reserve funding appear as separate Activity and Fund history records.
 - Existing linked wallets and funding history are never cleared when another wallet is linked or when a virtual account is created.
 
 ## Virtual balance semantics
@@ -42,4 +42,4 @@ Branch an environment when a scenario needs an independent line of experimentati
 
 ## Writes
 
-Virtual environment writes are implemented and remain isolated from Stellar consensus. They update the environment's cumulative state so later transactions and reads in that environment can depend on them. Use simulations for isolated, non-persistent experiments and environments when state must persist across operations.
+Virtual network writes are implemented and remain isolated from Stellar consensus. They update the environment's cumulative state so later transactions and reads in that environment can depend on them. Use simulations for isolated, non-persistent experiments and networks when state must persist across operations.

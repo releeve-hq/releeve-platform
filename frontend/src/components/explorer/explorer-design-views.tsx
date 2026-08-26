@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Bell, Check, ChevronLeft, Copy, Globe2, MoreHorizontal, Play, Search, Share2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bell, Check, ChevronLeft, CircleDollarSign, Copy, Eye, Globe2, MoreHorizontal, Play, Search, Send, Share2, X } from "lucide-react";
 import type {
   ExplorerAccountDetail,
   ExplorerAccountTransaction,
@@ -407,7 +407,7 @@ function ResourcePanel({ tx }: { tx: ExplorerTxDetail }) {
   return <div className="rx-card"><div className="rx-card-header-row"><span>Resource usage <span className="rx-dim">(measured against declared Soroban limits)</span></span></div><ResourceUsagePanel usage={tx.resource_usage} /></div>;
 }
 
-export function WalletExplorerDesign({ account, network, address, embedded = false, environmentScoped = false, onBack }: { account: ExplorerAccountDetail; network: string; address: string; embedded?: boolean; environmentScoped?: boolean; onBack?: () => void }) {
+export function WalletExplorerDesign({ account, network, address, label, environmentId, embedded = false, environmentScoped = false, onBack, onFund, onWatch, onSend }: { account: ExplorerAccountDetail; network: string; address: string; label?: string | null; environmentId?: string; embedded?: boolean; environmentScoped?: boolean; onBack?: () => void; onFund?: () => void; onWatch?: () => void; onSend?: () => void }) {
   const [tab, setTab] = useState("transactions");
   const [limit, setLimit] = useState(20);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -465,6 +465,7 @@ export function WalletExplorerDesign({ account, network, address, embedded = fal
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   };
+  const simulateHref = `/simulator?${environmentScoped && environmentId ? `environment=${encodeURIComponent(environmentId)}&` : ""}impersonate=${encodeURIComponent(address)}`;
 
   return (
     <ExplorerEntityShell
@@ -473,22 +474,21 @@ export function WalletExplorerDesign({ account, network, address, embedded = fal
       value={address}
       embedded={embedded}
     >
-      <section className="entity-subhead">
+      <section className="entity-subhead entity-wallet-subhead">
         {embedded && onBack && (
           <button
-            className="entity-embedded-back"
+            className="wallet-embedded-back"
             type="button"
             aria-label="Back to wallets"
             onClick={onBack}
           >
             <ChevronLeft />
-            <span>Back to wallets</span>
           </button>
         )}
         <div className="entity-title">
           <EntityIdenticon value={address} kind={isContractAddress(address) ? "contract" : "account"} size={26} />
           <div className="entity-identity">
-            <span>Wallet</span>
+            <span>{label?.trim() || "Wallet"}</span>
             <div className="entity-address-line">
               <h1 title={address}>{truncateEntity(address, 8, 6)}</h1>
               <button
@@ -504,55 +504,72 @@ export function WalletExplorerDesign({ account, network, address, embedded = fal
           </div>
         </div>
         <div className="entity-buttons">
-          {embedded && <button className="entity-button" type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>}
-          {embedded && <a className="entity-button" href={stellarExpertRoute(network, "account", address)} target="_blank" rel="noreferrer"><Globe2 /> Explorer</a>}
-          <button className="entity-button" type="button"><Bell /> Create alert</button>
-          <Link className="entity-button" href={`/simulator?impersonate=${encodeURIComponent(address)}`}>Impersonate</Link>
-          <Link className="entity-button primary" href={`/simulator?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
+          {environmentScoped ? <>
+            {embedded && <button className="entity-button" type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>}
+            <button className="entity-button" type="button" onClick={onWatch}><Eye /> Watch</button>
+            <button className="entity-button" type="button" onClick={onFund}><CircleDollarSign /> Fund</button>
+            <button className="entity-button" type="button" onClick={onSend}><Send /> Send</button>
+            <Link className="entity-button primary" href={simulateHref}><Play /> Simulate</Link>
+          </> : <>
+            {embedded && <button className="entity-button" type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>}
+            {embedded && <a className="entity-button" href={stellarExpertRoute(network, "account", address)} target="_blank" rel="noreferrer"><Globe2 /> Explorer</a>}
+            <button className="entity-button" type="button"><Bell /> Create alert</button>
+            <Link className="entity-button" href={`/simulator?impersonate=${encodeURIComponent(address)}`}>Impersonate</Link>
+            <Link className="entity-button primary" href={`/simulator?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
+          </>}
         </div>
       </section>
       <div className="entity-page">
-        <dl className="entity-grid">
+        <dl className={`entity-grid${environmentScoped ? " entity-grid-environment" : ""}`}>
           <div className="entity-field"><dt>Network</dt><dd><StellarNetworkLabel network={network} /></dd></div>
           <div className="entity-field"><dt>XLM balance</dt><dd>{account.xlm_balance ?? "Not indexed"}</dd></div>
           <div className="entity-field"><dt>USD value</dt><dd>{account.usd_value ?? "Not available"}</dd></div>
           <div className="entity-field"><dt>Token holdings</dt><dd>{account.token_holdings.length} assets</dd></div>
-          <div className="entity-field"><dt>Project tracking</dt><dd>{account.tracked ? "Tracked" : "Public lookup"}</dd></div>
+          {!environmentScoped && <div className="entity-field"><dt>Project tracking</dt><dd>{account.tracked ? "Tracked" : "Public lookup"}</dd></div>}
         </dl>
-        <div className="entity-tabs">
+        <div className={`entity-tabs${environmentScoped ? " entity-tabs-environment" : ""}`}>
           <button className={tab === "transactions" ? "active" : ""} onClick={() => setTab("transactions")}>Transactions</button>
-          <button className={tab === "simulations" ? "active" : ""} onClick={() => setTab("simulations")}>Simulations</button>
+          {!environmentScoped && <button className={tab === "simulations" ? "active" : ""} onClick={() => setTab("simulations")}>Simulations</button>}
           <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>Assets</button>
         </div>
         {tab === "transactions" ? (
           <>
-            <div className="entity-table-wrap">
-              <table className="entity-table contract-transactions-table">
-                <thead><tr><th>Transaction hash</th><th>Source</th><th>Target</th><th>Operation</th><th>Ledger</th><th>Status</th></tr></thead>
+            <div className={`entity-table-wrap${environmentScoped ? " entity-table-wrap-environment" : ""}`}>
+              <table className={`entity-table contract-transactions-table${environmentScoped ? " entity-transactions-table-environment" : ""}`}>
+                <thead><tr>{environmentScoped ? <><th>Transaction hash</th><th>Source</th><th>Target</th><th>Status</th><th>Operation</th><th>Function</th><th>Ledger</th><th>Resource Usage</th><th>When</th></> : <><th>Transaction hash</th><th>Source</th><th>Target</th><th>Operation</th><th>Ledger</th><th>Status</th></>}</tr></thead>
                 <tbody>
-                  {loading ? <tr><td colSpan={6}>Loading transactions...</td></tr> : error ? <tr><td colSpan={6}>{error}</td></tr> : rows.length ? rows.map((tx) => (
+                  {loading ? <tr><td colSpan={environmentScoped ? 9 : 6}>Loading transactions...</td></tr> : error ? <tr><td colSpan={environmentScoped ? 9 : 6}>{error}</td></tr> : rows.length ? rows.map((tx) => (
                     <tr key={tx.hash}>
                       <td><Link href={explorerRoutes.tx(network, tx.hash)}><code>{truncateEntity(tx.hash, 8, 6)}</code></Link></td>
                       <td>{tx.source_account ? <EntityAnchor network={network} value={tx.source_account} type="address" /> : "Not indexed"}</td>
                       <td>{tx.destination_account ? <EntityAnchor network={network} value={tx.destination_account} type="address" /> : "No transfer"}</td>
-                      <td>{tx.call_trace?.root_function ?? tx.operation_type}</td>
-                      <td>{tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</td>
-                      <td className={tx.status === "success" ? "status-ok" : ""}>{tx.status}</td>
+                      {environmentScoped ? <>
+                        <td className={tx.status === "success" ? "status-ok" : ""}>{tx.status}</td>
+                        <td>{tx.operation_type}</td>
+                        <td>{tx.call_trace?.root_function ?? "Not indexed"}</td>
+                        <td>{tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</td>
+                        <td>Not indexed</td>
+                        <td>{formatTimestamp(tx.timestamp)}</td>
+                      </> : <>
+                        <td>{tx.call_trace?.root_function ?? tx.operation_type}</td>
+                        <td>{tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</td>
+                        <td className={tx.status === "success" ? "status-ok" : ""}>{tx.status}</td>
+                      </>}
                     </tr>
-                  )) : <tr><td colSpan={6}>No transactions indexed for this wallet yet.</td></tr>}
+                  )) : <tr><td colSpan={environmentScoped ? 9 : 6}>No transactions indexed for this wallet yet.</td></tr>}
                 </tbody>
               </table>
             </div>
             <EntityPagination limit={limit} onLimitChange={changeLimit} canBack={canGoBack} canNext={canGoNext} loading={loading} pageNumber={history.length + 1} onBack={goBack} onNext={goNext} />
           </>
-        ) : tab === "simulations" ? (
+        ) : tab === "simulations" && !environmentScoped ? (
           <div className="entity-table-wrap"><div className="entity-table-head"><h2>Simulations</h2></div><div className="entity-empty">No simulations are linked to this public wallet view yet.</div></div>
         ) : (
-          <div className="entity-table-wrap">
-            <div className="entity-table-head"><h2>Assets</h2></div>
-            <table className="entity-table">
-              <thead><tr><th>Asset</th><th>Balance</th><th>USD value</th><th>Network</th></tr></thead>
-              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{displayAsset(holding.asset)}</td><td><code>{holding.balance ?? "Not indexed"}</code></td><td>{holding.usd_value ?? "Not available"}</td><td><StellarNetworkLabel network={network} /></td></tr>) : <tr><td colSpan={4}>No token holdings indexed for this wallet yet.</td></tr>}</tbody>
+          <div className={`entity-table-wrap${environmentScoped ? " entity-table-wrap-environment" : ""}`}>
+            {!environmentScoped && <div className="entity-table-head"><h2>Assets</h2></div>}
+            <table className={`entity-table${environmentScoped ? " contract-transactions-table entity-assets-table-environment" : ""}`}>
+              <thead><tr>{environmentScoped ? <><th>Name</th><th>Balance</th><th>Token Price</th><th>Value</th></> : <><th>Asset</th><th>Balance</th><th>USD value</th><th>Network</th></>}</tr></thead>
+              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{displayAsset(holding.asset)}</td><td><code>{holding.balance ?? "Not indexed"}</code></td><td>{environmentScoped ? "Not available" : holding.usd_value ?? "Not available"}</td>{environmentScoped ? <td>{holding.usd_value ?? "Not available"}</td> : <td><StellarNetworkLabel network={network} /></td>}</tr>) : <tr><td colSpan={4}>No token holdings indexed for this wallet yet.</td></tr>}</tbody>
             </table>
           </div>
         )}

@@ -369,7 +369,7 @@ impl ForkCoreClient {
         .await
     }
 
-    /// Auto-mines a transaction into a virtual environment (write path).
+    /// Auto-mines a transaction into a virtual network (write path).
     pub async fn send_environment_transaction(
         &self,
         actor: &ServiceActor,
@@ -387,7 +387,7 @@ impl ForkCoreClient {
         .await
     }
 
-    /// Deploys a contract into a virtual environment (write path).
+    /// Deploys a contract into a virtual network (write path).
     pub async fn deploy_environment_contract(
         &self,
         actor: &ServiceActor,
@@ -437,7 +437,7 @@ impl ForkCoreClient {
         .await
     }
 
-    /// Hosted JSON-RPC call scoped to a virtual environment.
+    /// Hosted JSON-RPC call scoped to a virtual network.
     pub async fn environment_rpc(
         &self,
         actor: &ServiceActor,

@@ -22,8 +22,8 @@ export type CreateEnvironmentInput = {
 };
 
 const veStyles = `
-  .ve-overlay { --bg: #121212; --panel: #181818; --panel-2: #1e1e1e; --border: #2b2b2b; --text: #f5f5f5; --text-dim: #a1a1a1; --text-faint: #707070; --green: #a3ff5f; position: fixed; inset: 0; background: rgba(0,0,0,.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 10000; padding: 1rem; isolation: isolate; overscroll-behavior: contain; animation: veFade .2s ease; }
-  body:has(.db-light) .ve-overlay { --bg: #f7f8f5; --panel: #ffffff; --panel-2: #eef1ec; --border: #cfd4ce; --text: #101310; --text-dim: #5e655e; --text-faint: #7e857e; --green: #70df35; }
+  .ve-overlay { --bg: #121212; --panel: #181818; --panel-2: #1e1e1e; --border: #383c39; --text: #ffffff; --text-dim: #a1a1a1; --text-faint: #707070; --green: #a3ff5f; position: fixed; inset: 0; background: rgba(0,0,0,.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 10000; padding: 1rem; isolation: isolate; overscroll-behavior: contain; animation: veFade .2s ease; }
+  body:has(.db-light) .ve-overlay { --bg: #f7f8f5; --panel: #ffffff; --panel-2: #eef1ec; --border: #c5cbc4; --text: #101310; --text-dim: #5e655e; --text-faint: #7e857e; --green: #70df35; }
   @keyframes veFade { from { opacity: 0; } to { opacity: 1; } }
   .ve-modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: 100%; max-width: 570px; max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.6); overflow: hidden; animation: veScale .2s ease; }
   @keyframes veScale { from { transform: scale(.96) translateY(8px); } to { transform: scale(1) translateY(0); } }
@@ -61,8 +61,8 @@ const veStyles = `
   .ve-dropdown-trigger:focus-visible { outline: none; border-color: var(--text-faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
   .ve-dropdown-chevron { width: 14px; height: 14px; color: var(--text-faint); flex-shrink: 0; transition: transform .18s ease, color .15s ease; }
   .ve-dropdown-chevron.open { transform: rotate(180deg); color: var(--green); }
-  .ve-dropdown-menu { --panel: #181818; --panel-2: #1e1e1e; --border: #2b2b2b; --text: #f5f5f5; --text-dim: #a1a1a1; --text-faint: #707070; --green: #a3ff5f; padding: .25rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 16px 36px rgba(0,0,0,.48); }
-  body:has(.db-light) .ve-dropdown-menu { --panel: #ffffff; --panel-2: #eef1ec; --border: #cfd4ce; --text: #101310; --text-dim: #5e655e; --text-faint: #7e857e; --green: #70df35; }
+  .ve-dropdown-menu { --panel: #181818; --panel-2: #1e1e1e; --border: #383c39; --text: #ffffff; --text-dim: #a1a1a1; --text-faint: #707070; --green: #a3ff5f; padding: .25rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 16px 36px rgba(0,0,0,.48); }
+  body:has(.db-light) .ve-dropdown-menu { --panel: #ffffff; --panel-2: #eef1ec; --border: #c5cbc4; --text: #101310; --text-dim: #5e655e; --text-faint: #7e857e; --green: #70df35; }
   .ve-dropdown-option { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: .625rem; padding: .5rem .625rem; border: 0; border-radius: 5px; background: transparent; color: var(--text-dim); font: inherit; font-size: .8125rem; cursor: pointer; text-align: left; transition: background .15s ease, color .15s ease; }
   .ve-dropdown-option:hover, .ve-dropdown-option.selected:hover { background: var(--panel-2); color: var(--text); }
   .ve-dropdown-option.selected { color: var(--text); }
@@ -320,7 +320,7 @@ export function CreateEnvironmentModal({
       <style>{veStyles}</style>
       <div className="ve-modal">
         <div className="ve-header">
-          <div className="ve-title">Create Virtual Environment</div>
+          <div className="ve-title">Create Virtual Network</div>
           <button className="ve-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </div>
 
@@ -399,7 +399,7 @@ export function CreateEnvironmentModal({
                   <div className="ve-togglerow">
                     <div className="ve-togglerow-info">
                       <div className="ve-label">Named RPC URL</div>
-                      <div className="ve-desc">Optional endpoint name for this Virtual Environment.</div>
+                      <div className="ve-desc">Optional endpoint name for this Virtual Network.</div>
                     </div>
                     <button type="button" className={`ve-toggle${namedRpc ? " active" : ""}`} onClick={() => setNamedRpc((v) => !v)}><span className="ve-toggle-slider" /></button>
                   </div>

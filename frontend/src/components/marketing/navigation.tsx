@@ -25,7 +25,7 @@ type MenuKey = "platform" | "developers";
 
 const platformLinks = [
   { href: "/#simulation", label: "Simulator", detail: "Replay Soroban calls on forked state", icon: Play },
-  { href: "/#environments", label: "Virtual environments", detail: "Persist snapshots and controlled overrides", icon: Blocks },
+  { href: "/#environments", label: "Virtual networks", detail: "Persist snapshots and controlled overrides", icon: Blocks },
   { href: "/#monitoring", label: "Monitoring", detail: "Watch calls, events, balances, and state", icon: BellRing },
   { href: "/explorer/testnet", label: "Explorer", detail: "Inspect decoded Stellar activity", icon: ScanSearch },
 ];

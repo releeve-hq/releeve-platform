@@ -352,7 +352,7 @@ async fn enrich_environment_wallet_balances(
         .environment_rpc(&actor(user_id, auth), environment_id, &request)
         .await;
     let Ok(response) = response else {
-        tracing::warn!(%environment_id, "virtual environment balance lookup failed");
+        tracing::warn!(%environment_id, "virtual network balance lookup failed");
         return;
     };
     let entries = response
@@ -1015,7 +1015,7 @@ pub async fn environment_simulate(
     ))
 }
 
-/// Auto-mines a transaction into a virtual environment (write path).
+/// Auto-mines a transaction into a virtual network (write path).
 pub async fn environment_transactions(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
@@ -1043,7 +1043,7 @@ pub async fn environment_transactions(
     Ok(Json(value))
 }
 
-/// Deploys a contract into a virtual environment (write path).
+/// Deploys a contract into a virtual network (write path).
 pub async fn environment_deploy(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
@@ -1099,7 +1099,7 @@ pub async fn environment_deploy(
     Ok(Json(value))
 }
 
-/// Hosted JSON-RPC call scoped to a virtual environment (getLatestLedger,
+/// Hosted JSON-RPC call scoped to a virtual network (getLatestLedger,
 /// getLedgerEntries, getTransaction, sendTransaction, simulateTransaction).
 ///
 /// Tenderly-style public URL: no bearer token required. `{env}` is either the

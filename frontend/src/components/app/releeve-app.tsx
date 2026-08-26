@@ -222,7 +222,7 @@ function getNavIcon(key: string) {
 const NAV: Array<{ key: PageKey; label: string }> = [
   { key: "home", label: "Home" },
   { key: "simulator", label: "Simulator" },
-  { key: "virtualenv", label: "Virtual Environment" },
+  { key: "virtualenv", label: "Virtual Network" },
   { key: "activity", label: "Activity" },
   { key: "alerts", label: "Alerts" },
   { key: "wallets", label: "Wallets" },
@@ -267,7 +267,7 @@ const CRUMBS: Record<PageKey, string> = {
   ledgers: "Explore / Ledgers",
   simulator: "Simulator",
   debugger: "Debugger",
-  virtualenv: "Virtual Environment",
+  virtualenv: "Virtual Network",
   activity: "Activity",
   alerts: "Alerts",
   docs: "Documentation",
@@ -1186,7 +1186,7 @@ function SimulatorPage() {
 function VirtualEnvPage() {
   return (
     <div>
-      <h1 style={{ fontSize: 18, fontWeight: 400, margin: "0 0 5px" }}>Virtual Environment</h1>
+      <h1 style={{ fontSize: 18, fontWeight: 400, margin: "0 0 5px" }}>Virtual Network</h1>
       <p style={{ color: "var(--text-dim)", fontSize: 12.5, lineHeight: 1.5, margin: "0 0 16px" }}>Isolated sandboxes that mirror production without touching real assets.</p>
       <Card header="Environments">
         <div>
@@ -1667,19 +1667,22 @@ export default function ReleeveApp() {
 
   const css = `
     :root {
-      --bg: #121212; --panel: #181818; --panel-2: #1e1e1e; --border: #2b2b2b;
-      --text: #f5f5f5; --text-dim: #a1a1a1; --text-faint: #707070;
+      --bg: #121212; --panel: #181818; --panel-2: #1e1e1e; --border: #383c39;
+      --text: #ffffff; --text-dim: #a1a1a1; --text-faint: #707070;
       --blue: #60a5fa; --green: #a3ff5f; --orange: #fbbf24; --red: #fb7185; --purple: #9a9a9a; --purple-hover: #b0b0b0;
       --free-badge-bg: rgba(163,255,95,.12); --free-badge-text: #a3ff5f; --icon-muted: #656b65;
     }
     .db-light {
-      --bg: #f7f8f5; --panel: #ffffff; --panel-2: #eef1ec; --border: #cfd4ce;
+      --bg: #f7f8f5; --panel: #ffffff; --panel-2: #eef1ec; --border: #c5cbc4;
       --text: #101310; --text-dim: #5e655e; --text-faint: #7e857e;
       --green: #70df35; --free-badge-bg: rgba(112,223,53,.14); --free-badge-text: #2f7d18; --icon-muted: #7e857e;
     }
     .db-root * { box-sizing: border-box; }
     .db-root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; font-size: 12.5px; background: var(--bg); color: var(--text); min-height: 100vh; }
-    .db-desktop-search { min-height: 0; padding: 9px 12px !important; border-radius: 6px !important; background: var(--panel-2) !important; border-color: var(--border) !important; transition: border-color .15s ease, box-shadow .15s ease; }
+    .db-desktop-brand { flex: 0 1 360px !important; max-width: 360px !important; }
+    .db-desktop-search { min-height: 32px; height: 32px; padding: 6px 10px !important; border-radius: 6px !important; background: var(--panel-2) !important; border-color: var(--border) !important; transition: border-color .15s ease, box-shadow .15s ease; }
+    .db-crumb-search { flex: 0 1 360px !important; max-width: 360px !important; min-width: 220px !important; }
+    .db-topbar, .db-crumbbar { border-color: var(--border) !important; }
     .db-desktop-search:hover, .db-desktop-search:focus-visible { border-color: var(--text-faint) !important; }
     .db-desktop-search:focus-visible { outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
     .db-search-modal-backdrop { background: rgba(0, 0, 0, .66) !important; }
@@ -1922,6 +1925,13 @@ export default function ReleeveApp() {
     .ex-page-btn svg { width: 13px; height: 13px; }
     .ex-page-btn[disabled] { opacity: 0.4; cursor: default; }
 
+    .db-root { --card-radius: 4px; }
+    .db-root .ex-card,
+    .db-root .ex-trace-bar,
+    .db-root .ex-trace-row,
+    .db-root .ex-contract-card,
+    .db-root .ex-table-wrap { border-radius: var(--card-radius) !important; }
+
     @media (max-width: 900px) {
       .ex-detail-grid { grid-template-columns: 1fr; gap: 0; }
       .ex-contract-grid { grid-template-columns: 1fr; }
@@ -1962,7 +1972,7 @@ export default function ReleeveApp() {
           </div>
 
           {/* Desktop left logo + search */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, maxWidth: 460 }}>
+          <div className="db-desktop-brand" style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, maxWidth: 460 }}>
             <ReleeveLogo size={24} />
 
             {/* Desktop search bar */}
@@ -2202,9 +2212,9 @@ export default function ReleeveApp() {
                   alignItems: "center",
                   justifyContent: effectiveCollapsed ? "center" : "flex-start",
                   gap: effectiveCollapsed ? 0 : 12,
-                  padding: effectiveCollapsed ? "10px 0" : "10px 14px",
-                  borderRadius: 8,
-                  margin: "1px 0",
+                  padding: effectiveCollapsed ? "9px 0" : "9px 12px",
+                  borderRadius: 4,
+                  margin: "2px 6px",
                   color: topNavKey === n.key ? "var(--text)" : "var(--text-dim)",
                   background: topNavKey === n.key ? "var(--panel)" : "transparent",
                   fontWeight: 700,

@@ -29,7 +29,7 @@ export const docGuides: DocGuide[] = [
         bullets: [
           "Quickstart — queue your first simulation and inspect the result",
           "Simulations — replay Soroban invocations against real snapshots with controlled state",
-          "Virtual environments — keep a named snapshot, its overrides, and its history together",
+          "Virtual networks — keep a named snapshot, its overrides, and its history together",
           "Monitoring — compose alert rules from a target, expressions, and delivery destinations",
           "Debugger — step through what actually happened in a transaction with state at every step",
           "Source verification — attach source to on-chain WASM so every tool decodes for humans",
@@ -94,7 +94,7 @@ export const docGuides: DocGuide[] = [
         heading: "Execution model",
         paragraphs: ["A Releeve simulation starts from a real Stellar ledger snapshot and executes through the Soroban host boundary — the same host the network uses. It is execution against hypothetical state, not a statistical estimate."],
         bullets: [
-          "Choose the base state explicitly: latest, a pinned historical ledger, or a virtual environment",
+          "Choose the base state explicitly: latest, a pinned historical ledger, or a virtual network",
           "Provide a contract ID, function name, and decoded arguments, or a prepared transaction envelope in XDR",
           "Keep the recorded base ledger visible when comparing results",
         ],
@@ -103,7 +103,7 @@ export const docGuides: DocGuide[] = [
         heading: "State overrides",
         paragraphs: ["Overrides are applied before execution and carry provenance into the result so a changed input cannot be mistaken for network state."],
         bullets: ["Account or asset balances", "Contract storage ledger entries", "Ledger sequence and close timestamp", "Entry TTL and explicit storage footprint"],
-        note: "Within a virtual environment, overrides are revisioned and tenant-scoped, so every result records exactly what was changed and when.",
+        note: "Within a virtual network, overrides are revisioned and tenant-scoped, so every result records exactly what was changed and when.",
       },
       {
         heading: "Account impersonation",
@@ -131,12 +131,12 @@ export const docGuides: DocGuide[] = [
   },
   {
     slug: "virtual-environments",
-    label: "Virtual environments",
+    label: "Virtual networks",
     description: "Keep a named ledger snapshot, its overrides, and its simulation history together.",
     sections: [
       {
         heading: "Create an environment",
-        paragraphs: ["Virtual environments are project-scoped. Select a network, protocol version, and base ledger, then choose whether untouched state should continue synchronizing."],
+        paragraphs: ["Virtual networks are project-scoped. Select a network, protocol version, and base ledger, then choose whether untouched state should continue synchronizing."],
         code: `POST /api/v1/{org}/{project}/environments
 
 {
@@ -268,7 +268,7 @@ export const docGuides: DocGuide[] = [
       },
       {
         heading: "Contract read and write",
-        paragraphs: ["Call read-only Soroban functions against current or pinned ledger state and see the decoded result. Mutating calls run against a virtual environment's state, never against mainnet."],
+        paragraphs: ["Call read-only Soroban functions against current or pinned ledger state and see the decoded result. Mutating calls run against a virtual network's state, never against mainnet."],
       },
     ],
   },
@@ -333,7 +333,7 @@ export const docGuides: DocGuide[] = [
       },
       {
         heading: "Network types",
-        paragraphs: ["Releeve supports the public Stellar networks — testnet, mainnet, and futurenet — plus virtual environments that branch from them."],
+        paragraphs: ["Releeve supports the public Stellar networks — testnet, mainnet, and futurenet — plus virtual networks that branch from them."],
         bullets: ["Testnet: the default for experiments; resets occasionally", "Mainnet: real production state; simulation overrides let you test what-if changes", "Futurenet: protocol-versioned testing network"],
       },
       {
@@ -412,7 +412,7 @@ export const docGuides: DocGuide[] = [
       },
       {
         heading: "Auto-mine in environments",
-        paragraphs: ["Within a virtual environment, sendTransaction accepts a transaction, applies it to the environment's state, fabricates deterministic close metadata, and returns a hash and receipt without consensus or broadcast. There is no mempool and nothing touches the real network — a network you control for integration testing. Determinism is enforced: two sequential executions of the same transaction against the same state produce identical results."],
+        paragraphs: ["Within a virtual network, sendTransaction accepts a transaction, applies it to the environment's state, fabricates deterministic close metadata, and returns a hash and receipt without consensus or broadcast. There is no mempool and nothing touches the real network — a network you control for integration testing. Determinism is enforced: two sequential executions of the same transaction against the same state produce identical results."],
       },
       {
         heading: "Batching and subscriptions",
@@ -427,7 +427,7 @@ export const docGuides: DocGuide[] = [
     sections: [
       {
         heading: "Deploy into an environment",
-        paragraphs: ["Deploy a Soroban contract into a virtual environment — not mainnet — using the environment's snapshot and overlay as the substrate. Deployed contracts are recorded in the environment's revision history."],
+        paragraphs: ["Deploy a Soroban contract into a virtual network — not mainnet — using the environment's snapshot and overlay as the substrate. Deployed contracts are recorded in the environment's revision history."],
       },
       {
         heading: "Interact with state",
@@ -576,7 +576,7 @@ export const docTabs: DocTab[] = [
     sections: [
       {
         heading: "August 2026",
-        paragraphs: ["Virtual environments now support write-through overlays with deterministic replay verification, and source verification is available for contract packages."],
+        paragraphs: ["Virtual networks now support write-through overlays with deterministic replay verification, and source verification is available for contract packages."],
       },
       {
         heading: "July 2026",
@@ -605,7 +605,7 @@ export const docsTree: DocsTreeItem[] = [
   { type: "page", slug: "quickstart", label: "Quickstart" },
   { type: "label", label: "Simulation" },
   { type: "page", slug: "simulations", label: "Simulations" },
-  { type: "page", slug: "virtual-environments", label: "Virtual environments" },
+  { type: "page", slug: "virtual-environments", label: "Virtual networks" },
   { type: "page", slug: "correctness-and-trust", label: "Correctness and trust" },
   { type: "label", label: "Monitoring" },
   { type: "page", slug: "monitoring", label: "Monitoring" },

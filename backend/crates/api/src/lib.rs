@@ -495,7 +495,7 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
         (
             "/api/v1/public/virtual-explorer/{org}/{project}/{environment_id}",
             Get,
-            "Read public virtual environment explorer data",
+            "Read public virtual network explorer data",
         ),
     ] {
         add_phase3_path(openapi, path, method, summary);
@@ -1055,6 +1055,26 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/{org}/{project}/contracts/{address}/verifications",
             get(verification_history),
+        )
+        .route(
+            "/api/v1/{org}/{project}/verifications/{verification_id}/storage-schema",
+            get(verification_storage_schema),
+        )
+        .route(
+            "/api/v1/{org}/{project}/verifications/{verification_id}/storage-keys/encode",
+            post(verification_storage_encode),
+        )
+        .route(
+            "/api/v1/{org}/{project}/verifications/{verification_id}/storage-keys/decode",
+            post(verification_storage_decode),
+        )
+        .route(
+            "/api/v1/{org}/{project}/verifications/{verification_id}/storage-keys/decode-value",
+            post(verification_storage_decode_value),
+        )
+        .route(
+            "/api/v1/{org}/{project}/verifications/{verification_id}/storage-keys/edit-value",
+            post(verification_storage_edit_value),
         )
         .route(
             "/api/v1/{org}/{project}/contracts/{address}/call",
