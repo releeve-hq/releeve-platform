@@ -949,4 +949,37 @@ mod tests {
         );
         assert_eq!(decoded.calls[0].args, json!("LINK"));
     }
+
+    /// Golden labels locking the ingest storage-key format to SourceLens's
+    /// `source-lens-keys` `human_scval_label`. The alert engine matches a
+    /// `storage_key` param against `state_changes[].key`, which is
+    /// `"{contract}:{scval_label}"` produced here. SourceLens mirrors this
+    /// function; if either side drifts, its own golden test fails.
+    #[test]
+    fn storage_key_labels_match_source_lens_format() {
+        let alice = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+        let symbol = ScVal::Symbol(stellar_xdr::ScSymbol::try_from(b"balance".to_vec()).unwrap());
+        assert_eq!(scval_label(&symbol), "balance");
+
+        let balance_key = ScVal::Vec(Some(stellar_xdr::ScVec(
+            stellar_xdr::VecM::try_from(vec![
+                ScVal::Symbol(stellar_xdr::ScSymbol::try_from(b"Balance".to_vec()).unwrap()),
+                ScVal::Address(ScAddress::Account(stellar_xdr::AccountId(
+                    stellar_xdr::PublicKey::PublicKeyTypeEd25519(stellar_xdr::Uint256([0u8; 32])),
+                ))),
+            ])
+            .unwrap(),
+        )));
+        assert_eq!(
+            scval_label(&balance_key),
+            format!("[\"Balance\",\"{alice}\"]")
+        );
+
+        assert_eq!(
+            scval_label(&ScVal::I128(stellar_xdr::Int128Parts { hi: 0, lo: 1500 })),
+            "1500"
+        );
+        assert_eq!(scval_label(&ScVal::U32(7)), "7");
+        assert_eq!(scval_label(&ScVal::Bool(true)), "true");
+    }
 }

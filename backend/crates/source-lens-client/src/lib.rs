@@ -472,6 +472,24 @@ impl SourceLensClient {
         .await
     }
 
+    /// Builds a fresh `LedgerEntryData::ContractData` XDR from contract, key
+    /// and value (the override builder's value editor).
+    pub async fn build_storage_value(
+        &self,
+        actor: &ServiceActor,
+        verification_id: Uuid,
+        body: &Value,
+    ) -> Result<Value> {
+        self.json(
+            actor,
+            Method::POST,
+            &format!("/v1/verifications/{verification_id}/storage-keys/build-value"),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
     async fn json(
         &self,
         actor: &ServiceActor,

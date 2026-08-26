@@ -49,7 +49,6 @@ import {
   Search,
   Settings2,
   ShieldCheck,
-  SlidersHorizontal,
   Tag,
   Trash2,
   UserRound,
@@ -3668,6 +3667,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
   >("summary");
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [runs, setRuns] = useState<Simulation[]>([]);
+  const [runQuery, setRunQuery] = useState("");
   const [environmentId, setEnvironmentId] = useState(
     embeddedEnvironmentId ?? search.get("environment") ?? "",
   );
@@ -4347,6 +4347,13 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       "budget_limited",
       "cancelling",
     ].includes(simulationStatus);
+  const normalizedRunQuery = runQuery.trim().toLowerCase();
+  const visibleRuns = runs.filter((run) =>
+    !normalizedRunQuery ||
+    `${run.function_name} ${run.status} ${run.id} ${run.base_ledger_sequence}`
+      .toLowerCase()
+      .includes(normalizedRunQuery),
+  );
 
   if (!editor)
     return (
@@ -4358,7 +4365,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
         />
         <div className="pw-simulator-hero">
           <div>
-            <span className="pw-empty-icon">
+            <span className="pw-empty-icon" aria-hidden="true">
               <Play size={23} />
             </span>
             <h1>Simulator</h1>
@@ -4367,60 +4374,65 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
               inspect exact state and authorization effects, and test controlled
               what-if scenarios without signing or submitting.
             </p>
-            <Button primary onClick={() => setEditor(true)}>
-              <Play size={15} /> Simulate transaction
-            </Button>
           </div>
         </div>
-        <div className="pw-capabilities">
-          <div className="pw-capability">
-            <ShieldCheck size={18} />
-            <h3>Impersonate scoped accounts</h3>
-            <p>
-              Exercise Soroban authorization paths as approved Stellar accounts
-              without possessing their secret keys.
-            </p>
-          </div>
-          <div className="pw-capability">
-            <SlidersHorizontal size={18} />
-            <h3>Override ledger state</h3>
-            <p>
-              Change balances, contract storage, TTL, ledger sequence,
-              timestamp, and explicit footprints in an isolated snapshot.
-            </p>
-          </div>
-          <div className="pw-capability">
-            <Activity size={18} />
-            <h3>Inspect execution evidence</h3>
-            <p>
-              Review calls, events, state changes, host resources, normalized
-              output, and structured failures.
-            </p>
-          </div>
-        </div>
-        {runs.length > 0 && (
-          <div style={{ marginTop: 22 }}>
-            <Header
-              title="Recent simulations"
-              description="Persisted runs from this project."
+        <div className="pw-simulator-catalog-toolbar">
+          <label className="pw-search pw-simulator-search">
+            <Search size={16} />
+            <input
+              className="pw-field"
+              value={runQuery}
+              onChange={(event) => setRunQuery(event.target.value)}
+              placeholder="Search for a simulation"
+              aria-label="Search for a simulation"
             />
-            <div className="pw-surface pw-table">
-              {runs.slice(0, 8).map((run) => (
-                <button
-                  className="pw-row"
-                  style={{
-                    gridTemplateColumns: "minmax(180px, 1fr) 120px 140px 140px",
-                  }}
-                  key={run.id}
-                  onClick={() => void openRun(run)}
-                >
-                  <span className="pw-mono">{run.function_name}</span>
-                  <StatusBadge status={run.status} />
-                  <span>{run.base_ledger_sequence.toLocaleString()}</span>
-                  <span>{timeLabel(run.created_at)}</span>
-                </button>
-              ))}
+          </label>
+          <Button
+            primary
+            className="pw-catalog-create-button"
+            onClick={() => setEditor(true)}
+          >
+            <Plus size={17} /> New simulation
+          </Button>
+        </div>
+        {visibleRuns.length ? (
+          <div className="pw-simulator-table">
+            <div className="pw-simulator-table-row pw-simulator-table-head">
+              <span>Simulation</span>
+              <span>Status</span>
+              <span>Ledger</span>
+              <span>Created</span>
+              <span />
             </div>
+            {visibleRuns.map((run) => (
+              <button
+                className="pw-simulator-table-row"
+                type="button"
+                key={run.id}
+                onClick={() => void openRun(run)}
+              >
+                <span className="pw-simulator-name">
+                  <strong>{run.function_name || "Contract invocation"}</strong>
+                  <small>{truncateEntity(run.id, 10, 6)}</small>
+                </span>
+                <StatusBadge status={run.status} />
+                <span>{run.base_ledger_sequence.toLocaleString()}</span>
+                <span>{timeLabel(run.created_at)}</span>
+                <span className="pw-simulator-row-arrow">
+                  <ChevronRight size={15} />
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="pw-simulator-empty">
+            <Play size={34} />
+            <h2>{runQuery ? "No simulations found" : "Create a simulation"}</h2>
+            <p>
+              {runQuery
+                ? "Try another function, status, ledger, or simulation ID."
+                : "Preview a Soroban transaction against Stellar ledger state."}
+            </p>
           </div>
         )}
       </div>
@@ -4733,6 +4745,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                       scope={scope}
                       contractAddress={contractId && /^C/.test(contractId) ? contractId : undefined}
                       onKey={(key) => setStorageKeyXdr(key.ledger_key_xdr)}
+                      onValue={(valueXdr) => setStorageValueXdr(valueXdr)}
                     />
                   </div>
                   <label className="pw-label">

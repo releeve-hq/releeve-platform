@@ -1077,6 +1077,10 @@ pub fn app(state: AppState) -> Router {
             post(verification_storage_edit_value),
         )
         .route(
+            "/api/v1/{org}/{project}/verifications/{verification_id}/storage-keys/build-value",
+            post(verification_storage_build_value),
+        )
+        .route(
             "/api/v1/{org}/{project}/contracts/{address}/call",
             post(contract_call),
         )

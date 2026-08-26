@@ -45,6 +45,7 @@ interface StorageKeyBuilderProps {
   verificationId?: string;
   onKey?: (key: BuiltStorageKey) => void;
   onParams?: (params: Record<string, unknown>) => void;
+  onValue?: (valueXdr: string) => void;
   defaultOperator?: string;
 }
 
@@ -58,6 +59,7 @@ export default function StorageKeyBuilder({
   verificationId: verificationIdProp,
   onKey,
   onParams,
+  onValue,
   defaultOperator = "any_change",
 }: StorageKeyBuilderProps) {
   const [verificationId, setVerificationId] = useState<string | null>(
@@ -72,6 +74,8 @@ export default function StorageKeyBuilder({
   const [operator, setOperator] = useState<string>(defaultOperator);
   const [threshold, setThreshold] = useState<string>("");
   const [built, setBuilt] = useState<BuiltStorageKey | null>(null);
+  const [valueJson, setValueJson] = useState<string>("");
+  const [valueError, setValueError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const basePath = useMemo(
@@ -82,9 +86,11 @@ export default function StorageKeyBuilder({
   // parent re-renders (which would loop: encode -> setParams -> re-render).
   const onKeyRef = useRef(onKey);
   const onParamsRef = useRef(onParams);
+  const onValueRef = useRef(onValue);
   useEffect(() => {
     onKeyRef.current = onKey;
     onParamsRef.current = onParams;
+    onValueRef.current = onValue;
   });
 
   // Resolve the platform verification id when only the contract address is given.
@@ -259,6 +265,41 @@ export default function StorageKeyBuilder({
     threshold,
   ]);
 
+  // Build a full LedgerEntryData value XDR when the key is built and a value is
+  // entered (the override value editor — fork-core needs the full entry).
+  useEffect(() => {
+    if (!verificationId || !built || !onValueRef.current || !valueJson.trim()) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(valueJson);
+    } catch {
+      setValueError("Value must be valid canonical ScVal JSON.");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await api.post<{ value_xdr: string }>(
+          `${basePath}/verifications/${verificationId}/storage-keys/build-value`,
+          {
+            contract: built.contract,
+            key: built.key,
+            durability: built.durability === "temporary" ? "temporary" : "persistent",
+            value: parsed,
+          },
+        );
+        if (cancelled) return;
+        setValueError(null);
+        onValueRef.current?.(result.value_xdr);
+      } catch (err: any) {
+        if (!cancelled) setValueError(err?.message ?? "Could not build the value XDR.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [verificationId, basePath, built, valueJson]);
+
   if (verificationError) {
     return <p className="pw-hint pw-error">{verificationError}</p>;
   }
@@ -375,6 +416,19 @@ export default function StorageKeyBuilder({
       {canCompare ? null : (
         <p className="pw-hint">This key stores a non-numeric value — comparison is limited to equality.</p>
       )}
+      {onValue && built && (
+        <label className="pw-label">
+          Override value (canonical ScVal JSON)
+          <textarea
+            className="pw-field pw-mono"
+            rows={2}
+            value={valueJson}
+            onChange={(event) => setValueJson(event.target.value)}
+            placeholder='{"i128":"2000"}'
+          />
+        </label>
+      )}
+      {valueError && <p className="pw-error">{valueError}</p>}
       {error && <p className="pw-error">{error}</p>}
       {built && (
         <p className="pw-hint pw-mono">

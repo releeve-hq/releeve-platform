@@ -259,6 +259,15 @@ pub struct EditStorageValueBody {
     pub value: Value,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BuildStorageValueBody {
+    pub contract: String,
+    pub key: Value,
+    #[serde(default)]
+    pub durability: Option<String>,
+    pub value: Value,
+}
+
 /// The parsed `contracttype` storage-key schema for a verified contract.
 pub async fn verification_storage_schema(
     State(state): State<AppState>,
@@ -347,6 +356,34 @@ pub async fn verification_storage_decode_value(
     Ok(Json(result))
 }
 
+/// Builds a fresh `LedgerEntryData::ContractData` XDR from a contract, key and
+/// value (the override builder's value editor).
+pub async fn verification_storage_build_value(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, verification_id)): Path<(String, String, Uuid)>,
+    Json(body): Json<BuildStorageValueBody>,
+) -> Result<Json<Value>, Error> {
+    let auth = resolve_project(&state, user_id, &org, &project).await?;
+    auth.require_verified()?;
+    let lens_id =
+        resolve_source_lens_verification(&state, auth.project_id, verification_id).await?;
+    let payload = json!({
+        "contract": body.contract,
+        "key": body.key,
+        "durability": body.durability,
+        "value": body.value,
+    });
+    let result = source_lens(&state)?
+        .build_storage_value(
+            &source_lens_actor(user_id, &auth, Uuid::new_v4()),
+            lens_id,
+            &payload,
+        )
+        .await
+        .map_err(map_source_lens)?;
+    Ok(Json(result))
+}
 /// Re-encodes a `LedgerEntryData::ContractData` XDR with a new stored value.
 pub async fn verification_storage_edit_value(
     State(state): State<AppState>,
