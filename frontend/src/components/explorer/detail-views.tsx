@@ -25,6 +25,7 @@ import { ContractExplorerDesign, LedgerExplorerDesign } from "@/components/explo
 
 type DetailProps = {
   network: string;
+  embedded?: boolean;
 };
 
 const pageStyle: CSSProperties = {
@@ -271,15 +272,15 @@ function ResourceProfiler({ tx }: { tx: ExplorerTxDetail }) {
   );
 }
 
-export async function LedgerDetailView({ network, sequence }: DetailProps & { sequence: string }) {
+export async function LedgerDetailView({ network, sequence, embedded = false }: DetailProps & { sequence: string }) {
   const fetched = await getLedgerDetail(network, sequence);
   const ledger: ExplorerLedgerDetail | null = fetched.data;
   if (!ledger) return <ExplorerUnavailable title={`Ledger ${sequence}`} network={network} message={fetched.error || "This ledger has not been indexed yet."} />;
 
-  return <LedgerExplorerDesign ledger={ledger} network={network} />;
+  return <LedgerExplorerDesign ledger={ledger} network={network} embedded={embedded} />;
 }
 
-export async function TransactionDetailView({ network, hash }: DetailProps & { hash: string }) {
+export async function TransactionDetailView({ network, hash, embedded = false }: DetailProps & { hash: string }) {
   const fetched = await getTransactionDetail(network, hash);
   const tx = fetched.data;
   if (!tx) return <ExplorerUnavailable title={truncateEntity(hash)} network={network} message={fetched.error || "This transaction has not been indexed yet."} />;
@@ -288,7 +289,7 @@ export async function TransactionDetailView({ network, hash }: DetailProps & { h
   const contracts = uniqueContracts(tx);
   const firstFlow = tx.fund_flow[0];
 
-  return <TransactionExplorerDesign tx={tx} network={network} />;
+  return <TransactionExplorerDesign tx={tx} network={network} embedded={embedded} />;
   /*
   return (
     <ExplorerFrame eyebrow={`${network} transaction`} title={<TxHashLink hash={tx.hash} network={network} />}>
@@ -405,12 +406,12 @@ export async function TransactionDetailView({ network, hash }: DetailProps & { h
   */
 }
 
-export async function AccountDetailView({ network, address }: DetailProps & { address: string }) {
+export async function AccountDetailView({ network, address, embedded = false }: DetailProps & { address: string }) {
   const fetched = await getAccountDetail(network, address);
   const account: ExplorerAccountDetail | null = fetched.data;
   if (!account) return <ExplorerUnavailable title={truncateEntity(address)} network={network} message={fetched.error || "This account has not been indexed yet."} />;
 
-  return <WalletExplorerDesign account={account} network={network} address={address} />;
+  return <WalletExplorerDesign account={account} network={network} address={address} embedded={embedded} />;
   /*
   return (
     <ExplorerFrame eyebrow={`${network} account`} title={<AddressLink address={address} network={network} />}>
@@ -431,10 +432,10 @@ export async function AccountDetailView({ network, address }: DetailProps & { ad
   */
 }
 
-export async function ContractDetailView({ network, address }: DetailProps & { address: string }) {
+export async function ContractDetailView({ network, address, embedded = false }: DetailProps & { address: string }) {
   const fetched = await getContractDetail(network, address);
   const contract: ExplorerContractDetail | null = fetched.data;
   if (!contract) return <ExplorerUnavailable title={truncateEntity(address)} network={network} message={fetched.error || "This contract has not been indexed yet."} />;
 
-  return <ContractExplorerDesign contract={contract} network={network} address={address} />;
+  return <ContractExplorerDesign contract={contract} network={network} address={address} embedded={embedded} />;
 }

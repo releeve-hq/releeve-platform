@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -10,12 +11,21 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Database,
   FileCode2,
   Globe2,
   Play,
   Share2,
+  X,
 } from "lucide-react";
 import { EntityIdenticon } from "@/components/explorer/entity-identicon";
+import {
+  AddressLink,
+  ContractLink,
+  LedgerLink,
+  TxHashLink,
+} from "@/components/explorer/entity-links";
+import { EntityCopyButton } from "@/components/explorer/entity-copy-button";
 import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
 import {
   getContractEvents,
@@ -39,6 +49,60 @@ function formatTime(value?: string | null) {
   if (!value) return "Not indexed";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function formatStroopsAsXlm(value?: string | null) {
+  if (!value) return "Not reported";
+  try {
+    const stroops = BigInt(value);
+    const stroopsPerXlm = BigInt(10000000);
+    const whole = stroops / stroopsPerXlm;
+    const fraction = (stroops % stroopsPerXlm).toString().padStart(7, "0").replace(/0+$/, "");
+    return `${whole}${fraction ? `.${fraction}` : ""} XLM`;
+  } catch {
+    return "Not reported";
+  }
+}
+
+function TransactionAddress({
+  address,
+  network,
+}: {
+  address: string;
+  network: string;
+}) {
+  const kind = isContractAddress(address) ? "contract" : "account";
+  return (
+    <span className="entity-address-cell">
+      <EntityIdenticon value={address} kind={kind} size={16} />
+      <AddressLink
+        address={address}
+        network={network}
+        className="contract-table-entity-link"
+      />
+    </span>
+  );
+}
+
+function TransactionStatus({ status }: { status: string }) {
+  const normalized = status.toLowerCase();
+  if (normalized === "success") {
+    return (
+      <span className="tx-status tx-status-success">
+        <Check aria-hidden="true" />
+        Success
+      </span>
+    );
+  }
+  if (normalized === "failed") {
+    return (
+      <span className="tx-status tx-status-failed">
+        <X aria-hidden="true" />
+        Failure
+      </span>
+    );
+  }
+  return <span className="tx-status">{status}</span>;
 }
 
 export function ExplorerEntityShell({
@@ -93,7 +157,7 @@ export function EntityStyles() {
     <>
     <style>{`
     .entity-root{--bg:#1d1918;--panel:#262221;--border:#4a423c;--text:#f2efec;--dim:#9b9490;--faint:#716a66;--green:#2fa84f;--signal:#a3ff5f;min-height:100dvh;background:var(--bg);color:var(--text);font-family:var(--font-inter),system-ui,sans-serif;font-size:13px}.entity-root *{box-sizing:border-box}.entity-root a{color:inherit;text-decoration:none}.entity-top{height:65px;display:flex;align-items:center;gap:18px;padding:0 28px;border-bottom:1px solid var(--border)}.entity-top>a{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}.entity-top svg{width:14px;height:14px}.entity-search{width:min(520px,100%);margin:auto}.entity-actions{display:flex;align-items:center;gap:13px}.entity-actions button,.entity-actions a{display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--dim);font:inherit;font-size:12px;cursor:pointer}.entity-subhead{min-height:65px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 28px;border-bottom:1px solid var(--border)}.entity-title{display:flex;align-items:center;gap:9px;min-width:0}.entity-title>span:first-child{color:var(--dim);font-size:15px}.entity-title h1{margin:0;font:600 13px var(--font-mono),monospace;overflow:hidden;text-overflow:ellipsis}.entity-identity{display:flex;flex-direction:column;gap:4px;min-width:0}.entity-identity>span{color:var(--dim);font-size:15px}.entity-address-line{display:flex;align-items:center;gap:7px;min-width:0}.entity-address-line h1{min-width:0;white-space:nowrap}.entity-copy-inline{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:0 0 16px;padding:0;border:0;background:transparent;color:var(--dim);cursor:pointer}.entity-copy-inline:hover{color:var(--text)}.entity-copy-inline svg{width:14px;height:14px}.entity-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.entity-button{height:34px;display:inline-flex;align-items:center;gap:6px;padding:0 11px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);font:600 11px inherit;cursor:pointer}.entity-button.primary{background:#2fa84f;border-color:#2fa84f;color:#fff}.entity-button svg{width:13px}.entity-page{max-width:1400px;margin:auto;padding:25px 28px 60px}.entity-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 58px}.entity-field{display:grid;grid-template-columns:145px minmax(0,1fr);gap:15px;align-items:baseline;padding:7px 0}.entity-field dt{color:var(--faint);font-size:12px}.entity-field dd{min-width:0;margin:0;overflow-wrap:anywhere}.entity-field code{font:11px var(--font-mono),monospace}.entity-field a{text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:3px}.entity-tabs{display:flex;gap:5px;margin-top:25px;padding-top:18px;border-bottom:1px solid var(--border)}.entity-tabs button{height:38px;padding:0 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;background:transparent;color:var(--dim);font:inherit;font-size:11.5px;cursor:pointer}.entity-tabs button.active{border-color:var(--border);background:var(--bg);color:var(--text);font-weight:700;margin-bottom:-1px}.entity-table-wrap{margin-top:18px;border:1px solid var(--border);border-radius:7px;overflow:auto}.entity-table-head{min-height:47px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--border)}.entity-table-head h2{margin:0;font-size:12.5px}.entity-table-head input,.entity-table-head select{height:30px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);padding:0 8px;font:inherit;font-size:10.5px}.entity-table{width:100%;min-width:850px;border-collapse:collapse}.entity-table th,.entity-table td{text-align:left;padding:11px 13px;border-bottom:1px solid var(--border);font-size:11px}.entity-table th{color:var(--faint);font-size:9.5px}.entity-table td{color:var(--dim)}.entity-table tr:last-child td{border-bottom:0}.entity-table code{font:10.5px var(--font-mono),monospace}.entity-table a{text-decoration:underline;text-decoration-color:var(--border)}.status-ok{color:var(--green)}.entity-empty{padding:28px 14px;color:var(--faint);font-size:11.5px}.entity-pagination{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px}.entity-pagination button,.entity-pagination select{height:30px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--text);font:inherit;font-size:10px;padding:0 8px}.entity-pagination button:disabled{opacity:.4}.verify-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;padding:12px 14px;border:1px solid #536c48;border-radius:6px;background:#22291f}.verify-banner>div{display:flex;align-items:center;gap:10px}.verify-banner svg{width:17px;color:var(--signal)}.verify-banner strong,.verify-banner span{display:block}.verify-banner strong{font-size:11.5px}.verify-banner span{margin-top:3px;color:var(--dim);font-size:10px}.json-cell{max-width:460px;max-height:170px;overflow:auto;white-space:pre-wrap;font:10px/1.5 var(--font-mono),monospace}@media(max-width:760px){.entity-top{height:auto;min-height:65px;align-items:flex-start;flex-wrap:wrap;padding:14px}.entity-search{order:3;flex-basis:100%}.entity-actions{margin-left:auto}.entity-subhead{align-items:flex-start;flex-direction:column;padding:14px}.entity-page{padding:20px 14px 45px}.entity-grid{grid-template-columns:1fr}.entity-field{grid-template-columns:112px minmax(0,1fr)}.entity-tabs{overflow-x:auto}.verify-banner{align-items:flex-start;flex-direction:column}.entity-address-line h1{max-width:calc(100vw - 110px);overflow:hidden;text-overflow:ellipsis}}
-    .verify-banner{border-color:var(--border);background:var(--bg)}.verify-banner svg{color:var(--dim)}.entity-identity{gap:3px}.entity-identity>span{font-size:14px}.entity-address-line h1{font:600 13px var(--font-mono),monospace;overflow:hidden;text-overflow:ellipsis}.entity-address-cell{display:inline-flex;align-items:center;gap:6px}.entity-address-cell svg{flex:0 0 auto}.contract-transactions-table thead th{background:var(--panel);font-size:12.5px;color:var(--text);font-weight:700}.contract-transactions-table tbody td{font-size:12.5px;color:var(--dim)}.contract-transactions-table tbody td code{font-size:12px;color:var(--text)}.entity-root-embedded{position:relative;top:-12px;min-height:0;margin:0 -36px;background:transparent}.entity-root-embedded .entity-page{max-width:none;padding:0 36px 32px}.entity-root-embedded .entity-subhead{padding:0 36px 16px;min-height:48px;border-bottom:1px solid var(--border)}.entity-root-embedded .entity-embedded-back{width:44px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer}.entity-root-embedded .entity-embedded-back svg{width:14px;height:14px}.entity-root-embedded .entity-embedded-back span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.entity-root-embedded .entity-subhead{gap:14px}.entity-root-embedded .entity-title{flex:1}.entity-root-embedded .entity-buttons{justify-content:flex-end}.entity-root-embedded .entity-button{height:34px}
+    .verify-banner{border-color:var(--border);background:var(--bg)}.verify-banner svg{color:var(--dim)}.entity-identity{gap:3px}.entity-identity>span{font-size:14px}.entity-address-line h1{font:600 13px var(--font-mono),monospace;overflow:hidden;text-overflow:ellipsis}.entity-address-cell{display:inline-flex;align-items:center;gap:6px}.entity-address-cell svg{flex:0 0 auto}.contract-transactions-table thead th,.contract-events-table thead th{background:var(--panel);font-size:12.5px;color:var(--text);font-weight:700}.contract-transactions-table tbody td{font-size:12.5px;color:var(--dim)}.contract-transactions-table tbody td code{font-size:12px;color:var(--text)}.contract-transactions-table .contract-table-entity-link{color:var(--text)!important}.contract-transactions-table .contract-table-entity-link:hover{color:#fff!important}.contract-transactions-table .tx-status{display:inline-flex;align-items:center;gap:6px;font-weight:650;white-space:nowrap}.contract-transactions-table .tx-status svg{width:14px;height:14px;stroke-width:3}.contract-transactions-table .tx-status-success{color:var(--green)}.contract-transactions-table .tx-status-failed{color:#f06a73}.entity-root-embedded{position:relative;top:-12px;min-height:0;margin:0 -36px;background:transparent}.entity-root-embedded .entity-page{max-width:none;padding:0 36px 32px}.entity-root-embedded .entity-subhead{padding:0 36px 16px;min-height:48px;border-bottom:1px solid var(--border)}.entity-root-embedded .entity-embedded-back{width:44px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer}.entity-root-embedded .entity-embedded-back svg{width:14px;height:14px}.entity-root-embedded .entity-embedded-back span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.entity-root-embedded .entity-subhead{gap:14px}.entity-root-embedded .entity-title{flex:1}.entity-root-embedded .entity-buttons{justify-content:flex-end}.entity-root-embedded .entity-button{height:34px}
   `}</style>
     <style>{`.entity-root-embedded{top:-14px}.verify-banner{margin-top:18px}`}</style>
     <style>{`@media(max-width:899px){.entity-root-embedded{top:-3px;margin:0 -3px}.entity-root-embedded .entity-page{padding-inline:3px}.entity-root-embedded .entity-subhead{padding-inline:3px}}`}</style>
@@ -102,6 +166,14 @@ export function EntityStyles() {
     <style>{`.entity-root-embedded .entity-grid-environment{grid-template-columns:1fr;gap:0}.entity-root-embedded .entity-grid-environment .entity-field{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:10px 0}.entity-root-embedded .entity-grid-environment .entity-field dt{font-size:11px;font-weight:650;color:var(--dim)}.entity-root-embedded .entity-grid-environment .entity-field dd{font-size:14px;font-weight:600;color:var(--text)}.entity-root-embedded .entity-tabs-environment{gap:18px;margin-top:25px;padding-top:18px;border-bottom:2px solid var(--border)}.entity-root-embedded .entity-tabs-environment button{height:44px;padding:0 4px;border:0;border-bottom:3px solid transparent;border-radius:0;color:var(--dim);font-size:14px;font-weight:650}.entity-root-embedded .entity-tabs-environment button.active{border-color:var(--signal);background:transparent;color:var(--text);font-weight:800;margin-bottom:-2px}`}</style>
     <style>{`@media(min-width:761px){.entity-root-embedded .entity-grid-environment{grid-template-columns:repeat(5,minmax(0,1fr));gap:0 24px}}@media(max-width:760px){.entity-root-embedded .entity-grid-environment{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}}@media(max-width:480px){.entity-root-embedded .entity-grid-environment{grid-template-columns:1fr}}`}</style>
     <style>{`@media(min-width:761px){.entity-root-embedded .entity-grid-environment{grid-template-columns:repeat(5,max-content);column-gap:32px}}.entity-root-embedded .entity-grid-environment .entity-field{padding-block:8px}.entity-root-embedded .entity-wallet-subhead .entity-address-line h1{font-size:12px}.entity-root-embedded .wallet-embedded-back{width:18px;height:22px;min-width:18px;min-height:22px;flex:0 0 18px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid transparent;border-radius:4px;background:var(--bg);color:var(--dim);cursor:pointer;transition:border-color .15s,background .15s,color .15s}.entity-root-embedded .wallet-embedded-back:hover{border-color:var(--faint);background:var(--bg);color:var(--text)}.entity-root-embedded .wallet-embedded-back svg{width:18px;height:18px}.entity-root-embedded .entity-table-wrap-environment{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scrollbar-color:var(--faint) transparent}.entity-root-embedded .entity-table-wrap-environment::-webkit-scrollbar{width:6px;height:6px}.entity-root-embedded .entity-table-wrap-environment::-webkit-scrollbar-track{background:transparent}.entity-root-embedded .entity-table-wrap-environment::-webkit-scrollbar-thumb{background:var(--faint);border-radius:999px}.entity-root-embedded .entity-transactions-table-environment{min-width:1180px}.entity-root-embedded .entity-assets-table-environment{min-width:620px}`}</style>
+    <style>{`.entity-card-identity .entity-card-entity-name{display:block;color:var(--text);font-size:13px;font-weight:650;line-height:1.2}.entity-card-identity .entity-card-entity-address{color:var(--faint);font-size:10.5px;font-weight:500;line-height:1.2;transition:color .15s ease,text-decoration-color .15s ease}.entity-card-identity .entity-address-line:hover .entity-card-entity-address{color:var(--text);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--text) 42%,transparent);text-underline-offset:3px}`}</style>
+    <style>{`.contract-metadata-grid{column-gap:34px}.contract-metadata-grid .entity-field{gap:10px;padding-block:5px}.contract-metadata-grid .entity-field dt{color:var(--dim);font-size:12px}.contract-metadata-grid .entity-field dd,.contract-metadata-grid .entity-field dd code,.contract-metadata-grid .entity-field dd a{color:var(--text)!important;font-size:14px;font-weight:550}.contract-metadata-grid .entity-field dd code{font-size:12px}`}</style>
+    <style>{`.entity-ledger-page .entity-ledger-grid{grid-template-columns:minmax(0,350px) minmax(0,720px);column-gap:0;justify-content:start}.entity-ledger-page .entity-ledger-column{min-width:0}.entity-ledger-page .entity-ledger-column .entity-field{grid-template-columns:120px minmax(0,1fr);gap:12px}.entity-ledger-page .entity-field dt{color:var(--dim);font-size:12.5px}.entity-ledger-page .entity-field dd{font-size:13px;white-space:nowrap}.entity-ledger-page .entity-field code{font-size:13px;line-height:1.5;white-space:nowrap;overflow-wrap:normal;word-break:normal}.entity-ledger-page .entity-field .explorer-entity-link{align-items:center;gap:8px;white-space:nowrap}.entity-ledger-page .entity-title-label{display:flex!important;flex-direction:row;align-items:center;gap:7px;white-space:nowrap}.entity-ledger-page .entity-title-label svg{display:block;width:15px;height:15px;flex:0 0 15px}.entity-ledger-page .entity-transaction-row{cursor:pointer;transition:background .14s ease}.entity-ledger-page .entity-transaction-row:hover{background:#202020}.entity-ledger-page .entity-transaction-row:focus-visible{outline:2px solid var(--signal);outline-offset:-2px}@media(min-width:761px) and (max-width:1100px){.entity-ledger-page .entity-ledger-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}@media(max-width:760px){.entity-ledger-page .entity-ledger-grid{grid-template-columns:1fr}.entity-ledger-page .entity-ledger-column .entity-field{grid-template-columns:112px minmax(0,1fr);gap:12px}}`}</style>
+    <style>{`.entity-root-embedded .wallet-metadata-grid{margin-top:10px}.wallet-metadata-grid{grid-template-columns:1fr;gap:0}.wallet-metadata-grid .entity-field{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding-block:8px}.wallet-metadata-grid .entity-field dt,.entity-root-embedded .wallet-metadata-grid .entity-field dt{color:var(--dim);font-size:13px;font-weight:650}.wallet-metadata-grid .entity-field dd,.entity-root-embedded .wallet-metadata-grid .entity-field dd{color:var(--text);font-size:15px;font-weight:600}`}</style>
+    <style>{`@media(min-width:761px){.wallet-metadata-grid{grid-template-columns:repeat(5,max-content);column-gap:32px}}@media(max-width:760px){.wallet-metadata-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}}@media(max-width:480px){.wallet-metadata-grid{grid-template-columns:1fr}}`}</style>
+    <style>{`.wallet-tabs button{font-size:13px;font-weight:650}.wallet-tabs button.active{font-weight:800}.wallet-tx-status{display:inline-flex;align-items:center;gap:6px;font-weight:650;white-space:nowrap}.wallet-tx-status svg{width:14px;height:14px;stroke-width:3}.wallet-tx-status-success{color:var(--green)}.wallet-tx-status-failed{color:#f06a73}.wallet-transaction-entity{display:inline-flex!important;align-items:center;gap:6px;white-space:nowrap}`}</style>
+    <style>{`.contract-transactions-table .explorer-entity-link>a{color:var(--text)!important}.contract-transactions-table .explorer-entity-copy{color:var(--text)!important}.contract-transactions-table .wallet-transaction-hash,.contract-transactions-table .transaction-hash-link{color:var(--text)!important;text-decoration:none!important;text-underline-offset:3px}.contract-transactions-table .wallet-transaction-hash:hover,.contract-transactions-table .transaction-hash-link:hover{text-decoration:underline!important;text-decoration-color:color-mix(in srgb,var(--text) 42%,transparent)!important}`}</style>
+    <style>{`.wallet-tabs-row{display:flex;align-items:flex-end;gap:16px;margin-top:25px;border-bottom:1px solid var(--border)}.wallet-tabs-row .entity-tabs{flex:1;min-width:0;margin-top:0;padding-top:0;border-bottom:0}.wallet-tabs-tools{display:flex;align-items:center;gap:7px;flex-shrink:0;padding-bottom:8px}.wallet-tool-button{height:30px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 9px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--dim);font:600 10px inherit;cursor:pointer;white-space:nowrap}.wallet-tool-button:hover,.wallet-tool-button[aria-expanded=true]{border-color:var(--faint);color:var(--text);background:var(--bg)}.wallet-tool-button svg{width:13px;height:13px}.wallet-tool-button svg:last-child{width:11px;height:11px}.wallet-refresh-control{position:relative}.wallet-refresh-menu{position:absolute;z-index:30;right:0;top:calc(100% + 5px);min-width:86px;padding:4px;border:1px solid var(--border);border-radius:6px;background:var(--panel);box-shadow:0 14px 32px rgba(0,0,0,.4)}.wallet-refresh-menu button{display:flex;width:100%;height:29px;align-items:center;justify-content:space-between;gap:12px;padding:0 8px;border:0;border-radius:4px;background:transparent;color:var(--dim);font:inherit;font-size:10px;cursor:pointer}.wallet-refresh-menu button:hover,.wallet-refresh-menu button[aria-selected=true]{background:var(--bg);color:var(--text)}.wallet-refresh-menu button svg{width:12px;height:12px;color:var(--text)}.wallet-columns-backdrop{position:fixed;z-index:100;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.58)}.wallet-columns-modal{width:min(360px,100%);border:1px solid var(--border);border-radius:8px;background:var(--panel);box-shadow:0 24px 70px rgba(0,0,0,.5)}.wallet-columns-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px;border-bottom:1px solid var(--border)}.wallet-columns-header h2{margin:0;color:var(--text);font-size:14px}.wallet-columns-header p{margin:4px 0 0;color:var(--faint);font-size:10.5px}.wallet-columns-header>button{display:inline-flex;width:26px;height:26px;align-items:center;justify-content:center;padding:0;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--dim);cursor:pointer}.wallet-columns-header>button:hover{border-color:var(--border);color:var(--text);background:var(--bg)}.wallet-columns-header>button svg{width:15px;height:15px}.wallet-columns-list{display:grid;padding:7px}.wallet-columns-list>button{display:flex;min-height:38px;align-items:center;justify-content:space-between;gap:16px;padding:0 9px;border:0;border-radius:5px;background:transparent;color:var(--text);font:inherit;font-size:11px;text-align:left;cursor:pointer}.wallet-columns-list>button:hover{background:var(--bg)}.wallet-column-toggle{position:relative;width:30px;height:18px;flex:0 0 30px;border-radius:999px;background:var(--border);transition:background .15s ease}.wallet-column-toggle>span{position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:var(--faint);transition:transform .15s ease,background .15s ease}.wallet-column-toggle[data-on=true]{background:var(--green)}.wallet-column-toggle[data-on=true]>span{transform:translateX(12px);background:#fff}@media(max-width:760px){.wallet-tabs-row{align-items:stretch;flex-wrap:wrap;gap:0}.wallet-tabs-row .entity-tabs{flex-basis:100%;overflow-x:auto}.wallet-tabs-tools{width:100%;justify-content:flex-end;padding:8px 0}.wallet-tool-button{height:29px}}`}</style>
     </>
   );
 }
@@ -115,6 +187,10 @@ function TransactionTable({
   network: string;
   loading: boolean;
 }) {
+  const router = useRouter();
+
+  const openTransaction = (hash: string) => router.push(explorerRoutes.tx(network, hash));
+
   return (
     <table className="entity-table contract-transactions-table">
       <thead>
@@ -124,54 +200,60 @@ function TransactionTable({
           <th>Target</th>
           <th>Operation</th>
           <th>Ledger</th>
+          <th>Fee charged</th>
+          <th>Max fee</th>
           <th>Status</th>
           <th>Closed</th>
         </tr>
       </thead>
       <tbody>
-        {loading ? (
+        {loading && !rows.length ? (
           <tr>
-            <td colSpan={7}>Loading transactions...</td>
+            <td colSpan={9}>Loading transactions...</td>
           </tr>
         ) : rows.length ? (
           rows.map((tx) => (
-            <tr key={tx.hash}>
+            <tr
+              key={tx.hash}
+              className="entity-transaction-row"
+              role="link"
+              tabIndex={0}
+              aria-label={`Open transaction ${tx.hash}`}
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest("a,button")) return;
+                openTransaction(tx.hash);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openTransaction(tx.hash);
+                }
+              }}
+            >
               <td>
-                <Link href={explorerRoutes.tx(network, tx.hash)}>
-                  <code>{truncateEntity(tx.hash, 8, 6)}</code>
-                </Link>
+                <TxHashLink className="transaction-hash-link" hash={tx.hash} network={network} />
               </td>
-              <td>
-                <Link href={addressRoute(network, tx.source_account)}>
-                  <span className="entity-address-cell">
-                    <EntityIdenticon value={tx.source_account} kind="account" size={16} />
-                    <code>{truncateEntity(tx.source_account, 6, 5)}</code>
-                  </span>
-                </Link>
-              </td>
-              <td>
-                {tx.destination_account ? (
-                  <Link href={addressRoute(network, tx.destination_account)}>
-                    <span className="entity-address-cell">
-                      <EntityIdenticon value={tx.destination_account} kind={isContractAddress(tx.destination_account) ? "contract" : "account"} size={16} />
-                      <code>{truncateEntity(tx.destination_account, 6, 5)}</code>
-                    </span>
-                  </Link>
-                ) : (
-                  "No transfer"
-                )}
-              </td>
-              <td>{tx.call_trace?.root_function ?? tx.operation_type}</td>
-              <td>{tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</td>
-              <td className={tx.status === "success" ? "status-ok" : ""}>
-                {tx.status}
-              </td>
+      <td>
+        <TransactionAddress address={tx.source_account} network={network} />
+      </td>
+      <td>
+        {tx.destination_account ? (
+          <TransactionAddress address={tx.destination_account} network={network} />
+        ) : (
+          "No transfer"
+        )}
+      </td>
+      <td>{tx.call_trace?.root_function ?? tx.operation_type}</td>
+      <td>{tx.ledger_sequence != null || tx.ledger != null ? <LedgerLink className="contract-table-entity-link" sequence={tx.ledger_sequence ?? tx.ledger ?? ""} network={network} /> : "Not indexed"}</td>
+      <td>{formatStroopsAsXlm(tx.fee_charged)}</td>
+      <td>{formatStroopsAsXlm(tx.max_fee)}</td>
+      <td><TransactionStatus status={tx.status} /></td>
               <td>{formatTime(tx.timestamp)}</td>
             </tr>
           ))
         ) : (
           <tr>
-            <td colSpan={7}>No transactions are indexed for this entity.</td>
+            <td colSpan={9}>No transactions are indexed for this entity.</td>
           </tr>
         )}
       </tbody>
@@ -185,7 +267,7 @@ function usePagedTransactions(
     cursor: string | null,
   ) => ReturnType<typeof getLedgerTransactions>,
 ) {
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(10);
   const [cursor, setCursor] = useState<string | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [page, setPage] =
@@ -219,8 +301,6 @@ function usePagedTransactions(
     });
   const changeLimit = (value: number) => {
     setLimit(value);
-    setCursor(null);
-    setHistory([]);
   };
   return {
     limit,
@@ -238,11 +318,12 @@ function usePagedTransactions(
 export function LedgerExplorerDesign({
   ledger,
   network,
+  embedded = false,
 }: {
   ledger: ExplorerLedgerDetail;
   network: string;
+  embedded?: boolean;
 }) {
-  const [tab, setTab] = useState<"transactions" | "overview">("transactions");
   const loader = useState(
     () => (limit: number, cursor: string | null) =>
       getLedgerTransactions(network, ledger.sequence, limit, cursor),
@@ -253,10 +334,17 @@ export function LedgerExplorerDesign({
       network={network}
       kind="ledger"
       value={ledger.sequence}
+      embedded={embedded}
     >
       <section className="entity-subhead">
         <div className="entity-title">
-          <span>Ledger</span>
+          <div
+            className="entity-title-label"
+            style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 7, whiteSpace: "nowrap" }}
+          >
+            <Database size={15} aria-hidden="true" style={{ display: "block", flex: "0 0 15px" }} />
+            <span style={{ display: "inline-block" }}>Ledger</span>
+          </div>
           <h1>#{ledger.sequence.toLocaleString()}</h1>
         </div>
         <div className="entity-buttons">
@@ -274,95 +362,70 @@ export function LedgerExplorerDesign({
           </Link>
           <Link
             className="entity-button primary"
-            href={`/simulator?ledger=${ledger.sequence}&network=${encodeURIComponent(network)}`}
+              href={`/simulation/new?ledger=${ledger.sequence}&network=${encodeURIComponent(network)}`}
           >
             <Play /> Simulate from ledger
           </Link>
         </div>
       </section>
-      <div className="entity-page">
-        <dl className="entity-grid">
-          <EntityField label="Ledger hash">
-            <code>{ledger.hash}</code>
-          </EntityField>
-          <EntityField label="Previous hash">
-            {ledger.parent_hash ? (
-              <code>{ledger.parent_hash}</code>
-            ) : (
-              "Not reported"
-            )}
-          </EntityField>
-          <EntityField label="Closed at">
-            {formatTime(ledger.timestamp)}
-          </EntityField>
-          <EntityField label="Transactions">
-            {ledger.transaction_count ?? "Not indexed"}
-          </EntityField>
-          <EntityField label="Ledger size">
-            {ledger.size_bytes
-              ? `${ledger.size_bytes.toLocaleString()} bytes`
-              : "Not reported"}
-          </EntityField>
-          <EntityField label="Base operation fee">
-            {ledger.base_operation_fee
-              ? `${ledger.base_operation_fee} stroops`
-              : "Not reported"}
-          </EntityField>
-          <EntityField label="Base reserve">
-            {ledger.base_reserve
-              ? `${ledger.base_reserve} XLM`
-              : "Not reported"}
-          </EntityField>
-          <EntityField label="CPU usage">
-            {ledger.aggregate_resource_usage.total_cpu_instructions?.toLocaleString() ??
-              "Not reported"}
-          </EntityField>
+      <div className="entity-page entity-ledger-page">
+        <dl className="entity-grid entity-ledger-grid">
+          <div className="entity-ledger-column">
+            <EntityField label="Transactions">
+              {ledger.transaction_count != null ? `${ledger.transaction_count.toLocaleString()} tnxs` : "Not indexed"}
+            </EntityField>
+            <EntityField label="Operations">
+              {ledger.operation_count ?? "Not reported"}
+            </EntityField>
+            <EntityField label="Protocol version">
+              {ledger.protocol_version ?? "Not reported"}
+            </EntityField>
+            <EntityField label="Max Tx Set">
+              {ledger.max_tx_set_size ?? "Not reported"}
+            </EntityField>
+            <EntityField label="Tx Set Ops">
+              {ledger.tx_set_operation_count ?? "Not reported"}
+            </EntityField>
+          </div>
+          <div className="entity-ledger-column">
+            <EntityField label="Ledger hash">
+              <span className="explorer-entity-link"><code>{ledger.hash}</code><EntityCopyButton value={ledger.hash} label="ledger hash" /></span>
+            </EntityField>
+            <EntityField label="Previous hash">
+              {ledger.parent_hash ? (
+                <span className="explorer-entity-link"><code>{ledger.parent_hash}</code><EntityCopyButton value={ledger.parent_hash} label="previous ledger hash" /></span>
+              ) : (
+                "Not reported"
+              )}
+            </EntityField>
+            <EntityField label="Base fee">
+              {formatStroopsAsXlm(ledger.base_operation_fee)}
+            </EntityField>
+            <EntityField label="Reserve">
+              {formatStroopsAsXlm(ledger.base_reserve)}
+            </EntityField>
+            <EntityField label="Closed at">
+              {formatTime(ledger.timestamp)}
+            </EntityField>
+          </div>
         </dl>
         <div className="entity-tabs">
-          <button
-            className={tab === "transactions" ? "active" : ""}
-            onClick={() => setTab("transactions")}
-          >
+          <button className="active" type="button">
             Transactions
           </button>
-          <button
-            className={tab === "overview" ? "active" : ""}
-            onClick={() => setTab("overview")}
-          >
-            Overview
-          </button>
         </div>
-        {tab === "transactions" ? (
-          <>
-            <div className="entity-table-wrap">
-              <div className="entity-table-head">
-                <h2>Transactions in ledger</h2>
-              </div>
-              {paging.error ? (
-                <div className="entity-empty">{paging.error}</div>
-              ) : (
-                <TransactionTable
-                  rows={paging.page?.data ?? []}
-                  network={network}
-                  loading={paging.loading}
-                />
-              )}
-            </div>
-            <Paging paging={paging} />
-          </>
-        ) : (
-          <div className="entity-table-wrap">
-            <div className="entity-table-head">
-              <h2>Aggregate resource data</h2>
-            </div>
-            <pre
-              className="json-cell"
-              style={{ maxWidth: "none", padding: 16 }}
-            >
-              {JSON.stringify(ledger.aggregate_resource_usage, null, 2)}
-            </pre>
-          </div>
-        )}
+        <div className="entity-table-wrap">
+          {paging.error ? (
+            <div className="entity-empty">{paging.error}</div>
+          ) : (
+            <TransactionTable
+              rows={paging.page?.data ?? []}
+              network={network}
+              loading={paging.loading}
+            />
+          )}
+        </div>
+        <Paging paging={paging} />
       </div>
     </ExplorerEntityShell>
   );
@@ -394,7 +457,7 @@ function EntityPageSizeSelect({
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const options = [20, 50, 100];
+  const options = [10, 20, 50, 100];
 
   useEffect(() => {
     if (!open) return;
@@ -515,8 +578,19 @@ export function ContractExplorerDesign({
   );
   const [copied, setCopied] = useState(false);
   const txLoader = useState(
-    () => (limit: number, cursor: string | null) =>
-      getContractTransactions(network, address, limit, cursor),
+    () => async (limit: number, cursor: string | null) => {
+      const startedAt = performance.now();
+      const result = await getContractTransactions(network, address, limit, cursor);
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[contract-load] transactions", {
+          address,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          rows: result.data?.data.length ?? 0,
+          error: result.error,
+        });
+      }
+      return result;
+    },
   )[0];
   const paging = usePagedTransactions(txLoader);
   const [events, setEvents] = useState<ExplorerContractEvent[]>([]);
@@ -524,10 +598,19 @@ export function ContractExplorerDesign({
   useEffect(() => {
     if (tab !== "events") return;
     let active = true;
+    const startedAt = performance.now();
     void getContractEvents(network, address, 20).then((result) => {
       if (!active) return;
       setEvents(result.data?.data ?? []);
       setEventsError(result.error);
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[contract-load] events", {
+          address,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          rows: result.data?.data.length ?? 0,
+          error: result.error,
+        });
+      }
     });
     return () => {
       active = false;
@@ -541,15 +624,16 @@ export function ContractExplorerDesign({
   return (
     <ExplorerEntityShell network={network} kind="contract" value={address} embedded={embedded}>
       <section className="entity-subhead">
-        {embedded && onBack && <button className="entity-embedded-back" type="button" aria-label="Back to contracts" onClick={onBack}><ChevronLeft /><span>Back to contracts</span></button>}
+        {embedded && onBack && <button className="wallet-embedded-back" type="button" aria-label="Back to contracts" onClick={onBack}><ChevronLeft /></button>}
         <div className="entity-title">
           <EntityIdenticon value={address} kind="contract" size={26} />
-          <div className="entity-identity">
-            <span>{contract.name || "Contract"}</span>
+          <div className="entity-identity entity-card-identity">
+            <span className="entity-card-entity-name">{contract.name || "Contract"}</span>
             <div className="entity-address-line">
-              <h1 title={address}>{truncateEntity(address, 8, 6)}</h1>
+              <h1 className="entity-card-entity-address" title={address}>{truncateEntity(address, 8, 6)}</h1>
               <button
                 className="entity-copy-inline"
+                data-copied={copied ? "true" : "false"}
                 type="button"
                 aria-label="Copy contract address"
                 title={copied ? "Copied" : "Copy contract address"}
@@ -571,7 +655,7 @@ export function ContractExplorerDesign({
           </Link>
           <Link
             className="entity-button primary"
-            href={`/simulator?contract=${encodeURIComponent(address)}`}
+            href={`/simulation/new?contract=${encodeURIComponent(address)}`}
           >
             <Play /> Simulate
           </Link>
@@ -607,9 +691,9 @@ export function ContractExplorerDesign({
             </Link>
           )}
         </div>
-        <dl className="entity-grid">
+        <dl className="entity-grid contract-metadata-grid">
           <EntityField label="Contract address">
-            <code>{address}</code>
+            <ContractLink address={address} network={network} />
           </EntityField>
           <EntityField label="Network">{network}</EntityField>
           <EntityField label="Type">{contract.type}</EntityField>
@@ -678,13 +762,10 @@ export function ContractExplorerDesign({
           </>
         ) : tab === "events" ? (
           <div className="entity-table-wrap">
-            <div className="entity-table-head">
-              <h2>Decoded events</h2>
-            </div>
             {eventsError ? (
               <div className="entity-empty">{eventsError}</div>
             ) : (
-              <table className="entity-table">
+              <table className="entity-table contract-events-table">
                 <thead>
                   <tr>
                     <th>Ledger</th>
@@ -698,13 +779,9 @@ export function ContractExplorerDesign({
                   {events.length ? (
                     events.map((event) => (
                       <tr key={event.id}>
-                        <td>{event.ledger}</td>
+                        <td><LedgerLink sequence={event.ledger} network={network} /></td>
                         <td>
-                          <Link
-                            href={explorerRoutes.tx(network, event.tx_hash)}
-                          >
-                            <code>{truncateEntity(event.tx_hash)}</code>
-                          </Link>
+                          <TxHashLink hash={event.tx_hash} network={network} />
                         </td>
                         <td>{event.event_type}</td>
                         <td>

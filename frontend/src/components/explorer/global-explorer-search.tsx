@@ -6,10 +6,10 @@ import {
   Landmark,
   LoaderCircle,
   Search,
-  UserRound,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import {
   lookupExplorer,
   type ExplorerLookupSuggestion,
@@ -39,10 +39,14 @@ function suggestionRoute(
   }
 }
 
-function SuggestionIcon({ kind }: { kind: ExplorerLookupSuggestion["kind"] }) {
+function SuggestionIcon({ suggestion }: { suggestion: ExplorerLookupSuggestion }) {
+  if (suggestion.kind === "account" || suggestion.kind === "contract") {
+    return <EntityIdenticon value={suggestion.value} kind={suggestion.kind} size={28} />;
+  }
+  const { kind } = suggestion;
   if (kind === "transaction") return <FileKey2 />;
   if (kind === "ledger") return <Landmark />;
-  return <UserRound />;
+  return <FileKey2 />;
 }
 
 export function GlobalExplorerSearch({
@@ -207,7 +211,7 @@ export function GlobalExplorerSearch({
                 onClick={() => select(suggestion)}
               >
                 <span className="global-search-icon">
-                  <SuggestionIcon kind={suggestion.kind} />
+                  <SuggestionIcon suggestion={suggestion} />
                 </span>
                 <span>
                   <strong>{suggestion.label}</strong>
@@ -235,7 +239,7 @@ export function GlobalExplorerSearch({
           z-index: 40;
         }
         .global-explorer-search-input {
-          height: 48px;
+          height: 40px;
           display: flex;
           align-items: center;
           gap: 11px;

@@ -22,6 +22,9 @@ pub enum Error {
     #[error("bad request: {0}")]
     BadRequest(String),
 
+    #[error("unprocessable: {0}")]
+    Unprocessable(String),
+
     #[error("unauthorized")]
     Unauthorized,
 
@@ -70,6 +73,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum ErrorKind {
     NotFound,
     BadRequest,
+    Unprocessable,
     Unauthorized,
     Forbidden,
     EmailUnverified,
@@ -86,6 +90,7 @@ impl Error {
         match self {
             Error::NotFound => ErrorKind::NotFound,
             Error::BadRequest(_) => ErrorKind::BadRequest,
+            Error::Unprocessable(_) => ErrorKind::Unprocessable,
             Error::Unauthorized => ErrorKind::Unauthorized,
             Error::Forbidden => ErrorKind::Forbidden,
             Error::EmailUnverified => ErrorKind::EmailUnverified,
@@ -106,6 +111,7 @@ impl Error {
         match self.kind() {
             ErrorKind::NotFound => 404,
             ErrorKind::BadRequest => 400,
+            ErrorKind::Unprocessable => 422,
             ErrorKind::Unauthorized => 401,
             ErrorKind::Forbidden => 403,
             ErrorKind::EmailUnverified => 403,
@@ -125,6 +131,7 @@ impl Error {
         match self.kind() {
             ErrorKind::NotFound => "not_found",
             ErrorKind::BadRequest => "bad_request",
+            ErrorKind::Unprocessable => "unprocessable_entity",
             ErrorKind::Unauthorized => "unauthorized",
             ErrorKind::Forbidden => "forbidden",
             ErrorKind::EmailUnverified => "email_unverified",
@@ -194,6 +201,7 @@ mod tests {
     fn status_mapping() {
         assert_eq!(Error::NotFound.status(), 404);
         assert_eq!(Error::BadRequest("x".into()).status(), 400);
+        assert_eq!(Error::Unprocessable("x".into()).status(), 422);
         assert_eq!(Error::Unauthorized.status(), 401);
         assert_eq!(Error::Forbidden.status(), 403);
         assert_eq!(Error::Conflict.status(), 409);
@@ -206,6 +214,10 @@ mod tests {
     #[test]
     fn code_mapping() {
         assert_eq!(Error::NotFound.code(), "not_found");
+        assert_eq!(
+            Error::Unprocessable("x".into()).code(),
+            "unprocessable_entity"
+        );
         assert_eq!(Error::SignerNotConfigured.code(), "signer_not_configured");
         assert_eq!(Error::Internal(None).code(), "internal");
         assert_eq!(

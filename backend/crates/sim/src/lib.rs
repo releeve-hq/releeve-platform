@@ -156,6 +156,7 @@ pub struct ForkCoreClient {
     endpoint: String,
     http: reqwest::Client,
     signer: ServiceAssertionSigner,
+    history_preview_token: Option<String>,
 }
 
 impl ForkCoreClient {
@@ -171,7 +172,19 @@ impl ForkCoreClient {
             endpoint,
             http,
             signer,
+            history_preview_token: None,
         })
+    }
+
+    pub fn with_history_preview_token(mut self, token: impl Into<String>) -> Result<Self> {
+        let token = token.into();
+        if !token.is_empty() && token.as_bytes().len() < 32 {
+            return Err(Error::Configuration(
+                "history preview token must be empty or at least 32 bytes".into(),
+            ));
+        }
+        self.history_preview_token = (!token.is_empty()).then_some(token);
+        Ok(self)
     }
 
     pub async fn create_simulation(
@@ -332,7 +345,7 @@ impl ForkCoreClient {
     ) -> Result<Value> {
         if !matches!(
             action,
-            "simulate" | "sync/start" | "sync/stop" | "sync/status" | "overrides"
+            "simulate" | "sync/start" | "sync/step" | "sync/stop" | "sync/status" | "overrides"
         ) {
             return Err(Error::Configuration(
                 "unsupported environment action".into(),
@@ -531,6 +544,183 @@ impl ForkCoreClient {
         .await
     }
 
+    pub async fn history_coverage(&self, actor: &ServiceActor, network: &str) -> Result<Value> {
+        if !matches!(network, "mainnet" | "testnet") {
+            return Err(Error::Configuration("unsupported history network".into()));
+        }
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/history/coverage?network={network}"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn historical_transaction(
+        &self,
+        actor: &ServiceActor,
+        network: &str,
+        hash: &str,
+    ) -> Result<Value> {
+        if !matches!(network, "mainnet" | "testnet")
+            || hash.len() != 64
+            || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Configuration(
+                "invalid historical transaction locator".into(),
+            ));
+        }
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/history/transactions/{hash}?network={network}"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn history_targets(
+        &self,
+        actor: &ServiceActor,
+        network: &str,
+        start_time: i64,
+        end_time: i64,
+        query: &str,
+        limit: i64,
+    ) -> Result<Value> {
+        if network != "mainnet"
+            || start_time > end_time
+            || query.len() > 56
+            || !query.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        {
+            return Err(Error::Configuration(
+                "invalid historical target query".into(),
+            ));
+        }
+        self.request(
+            actor,
+            Method::GET,
+            &format!(
+                "/v1/history/targets?network={network}&start_time={start_time}&end_time={end_time}&query={query}&limit={}",
+                limit.clamp(1, 100)
+            ),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn create_history_timeline(
+        &self,
+        actor: &ServiceActor,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            "/v1/history/timelines",
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn get_history_timeline(
+        &self,
+        actor: &ServiceActor,
+        timeline_id: Uuid,
+        after: i32,
+        limit: i64,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!(
+                "/v1/history/timelines/{timeline_id}?after={after}&limit={}",
+                limit.clamp(1, 500)
+            ),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn fork_history_timeline(
+        &self,
+        actor: &ServiceActor,
+        timeline_id: Uuid,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/history/timelines/{timeline_id}/fork"),
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn create_replay(
+        &self,
+        actor: &ServiceActor,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            "/v1/replays",
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn get_replay(&self, actor: &ServiceActor, replay_id: Uuid) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/replays/{replay_id}"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn cancel_replay(&self, actor: &ServiceActor, replay_id: Uuid) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/replays/{replay_id}/cancel"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn promote_replay(
+        &self,
+        actor: &ServiceActor,
+        replay_id: Uuid,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/replays/{replay_id}/promote"),
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
     async fn request(
         &self,
         actor: &ServiceActor,
@@ -549,6 +739,11 @@ impl ForkCoreClient {
         }
         if let Some(key) = idempotency_key {
             request = request.header("idempotency-key", key);
+        }
+        if path.starts_with("/v1/history")
+            && let Some(token) = &self.history_preview_token
+        {
+            request = request.header("x-fork-core-history-preview-token", token);
         }
         let response = request
             .send()

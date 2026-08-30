@@ -88,6 +88,8 @@ export type ExplorerTxDetail = {
   operation_target_kind?: string | null;
   operation_details: JsonValue;
   fee_charged?: string | null;
+  max_fee?: string | null;
+  transaction_size?: number | null;
   sequence_number?: string | null;
   application_order?: number | null;
   resource_usage: ResourceUsage;
@@ -104,10 +106,13 @@ export type ExplorerLedgerDetail = {
   hash: string;
   parent_hash?: string | null;
   transaction_count?: number | null;
-  size_bytes?: number | null;
+  operation_count?: number | null;
   timestamp: string;
   base_operation_fee?: string | null;
   base_reserve?: string | null;
+  protocol_version?: number | null;
+  max_tx_set_size?: number | null;
+  tx_set_operation_count?: number | null;
   aggregate_resource_usage: {
     total_cpu_instructions?: number | null;
     resource_limit?: number | null;
@@ -175,6 +180,7 @@ export type ExplorerFeedTransaction = {
   operation_type: string;
   timestamp: string;
   fee_charged?: string | null;
+  max_fee?: string | null;
   amount?: string | null;
   asset?: string | null;
   call_trace?: {
@@ -205,6 +211,8 @@ export type ExplorerFeedLedger = {
   timestamp: string;
   total_cpu_instructions?: number | null;
   resource_limit?: number | null;
+  successful_transaction_count?: number | null;
+  failed_transaction_count?: number | null;
 };
 
 export type ExplorerTokenTransfer = {

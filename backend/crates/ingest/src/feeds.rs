@@ -291,6 +291,18 @@ pub async fn latest_ledgers(
         SELECT jsonb_build_object(
             'sequence', sequence, 'hash', hash, 'parent_hash', parent_hash,
             'transaction_count', transaction_count, 'timestamp', timestamp,
+            'successful_transaction_count', (
+                SELECT COUNT(*) FROM transactions t
+                WHERE t.network = ledgers.network
+                  AND t.ledger_sequence = ledgers.sequence
+                  AND t.status = 'success'
+            ),
+            'failed_transaction_count', (
+                SELECT COUNT(*) FROM transactions t
+                WHERE t.network = ledgers.network
+                  AND t.ledger_sequence = ledgers.sequence
+                  AND t.status = 'failed'
+            ),
             '_sort', sequence, '_tie', hash
         ) AS json
         FROM ledgers

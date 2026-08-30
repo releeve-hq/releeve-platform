@@ -2,7 +2,6 @@
 
 import {
   type FormEvent,
-  type MouseEvent,
   type ReactNode,
   type Dispatch,
   type SetStateAction,
@@ -15,7 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import StorageKeyBuilder from "./storage-key-builder";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   type LucideIcon,
   Activity,
@@ -36,6 +35,7 @@ import {
   Copy,
   Database,
   FileCode2,
+  Filter,
   Globe,
   History,
   Layers3,
@@ -60,6 +60,7 @@ import {
 
 import { ApiError, api } from "@/lib/api";
 import { EntityIdenticon } from "@/components/explorer/entity-identicon";
+import { EntityCopyButton } from "@/components/explorer/entity-copy-button";
 import { ContractExplorerDesign } from "@/components/explorer/entity-design-views";
 import { WalletExplorerDesign } from "@/components/explorer/explorer-design-views";
 import { getRecentLedgers, lookupExplorer } from "@/lib/explorer-api";
@@ -84,6 +85,7 @@ export type ProjectScope = {
 
 const contractNetworks = ["mainnet", "testnet", "futurenet"] as const;
 type ContractNetwork = (typeof contractNetworks)[number];
+const simulationNetworks = ["mainnet", "testnet"] as const;
 
 type PaginationState = {
   next_cursor?: string | null;
@@ -138,6 +140,7 @@ type Environment = {
   id: string;
   name: string;
   network: string;
+  created_at: string;
   protocol: number;
   base_ledger_sequence: number;
   sync_status: string;
@@ -163,6 +166,8 @@ type Environment = {
 type Simulation = {
   id: string;
   status: string;
+  source?: string | null;
+  target?: string | null;
   function_name: string;
   base_ledger_sequence: number;
   created_at: string;
@@ -185,6 +190,99 @@ type SimulationLedgerEntry = {
   durability: string;
   ttl?: number | null;
 };
+
+// ---- Contract spec (auto-loaded from /simulations/contract-spec) ----
+
+type ContractSpecType =
+  | { kind: "val" }
+  | { kind: "bool" }
+  | { kind: "void" }
+  | { kind: "error" }
+  | { kind: "u32" }
+  | { kind: "i32" }
+  | { kind: "u64" }
+  | { kind: "i64" }
+  | { kind: "timepoint" }
+  | { kind: "duration" }
+  | { kind: "u128" }
+  | { kind: "i128" }
+  | { kind: "u256" }
+  | { kind: "i256" }
+  | { kind: "bytes" }
+  | { kind: "string" }
+  | { kind: "symbol" }
+  | { kind: "address" }
+  | { kind: "muxed_address" }
+  | { kind: "bytes_n"; n: number }
+  | { kind: "option"; inner: ContractSpecType }
+  | { kind: "result"; ok: ContractSpecType; err: ContractSpecType }
+  | { kind: "vec"; elem: ContractSpecType }
+  | { kind: "map"; key: ContractSpecType; value: ContractSpecType }
+  | { kind: "tuple"; elems: ContractSpecType[] }
+  | { kind: "udt"; name: string };
+
+type ContractSpecFunction = {
+  name: string;
+  inputs: Array<{ name: string; type: ContractSpecType }>;
+  outputs: Array<{ type: ContractSpecType }>;
+};
+
+type ContractTypeDescriptor =
+  | { kind: "struct"; fields: Array<{ name: string; type: ContractSpecType }> }
+  | {
+      kind: "enum";
+      variants: Array<{ name: string; type: ContractSpecType | null }>;
+    }
+  | {
+      kind: "union";
+      variants: Array<{ name: string; type: ContractSpecType | null }>;
+    }
+  | {
+      kind: "error_enum";
+      variants: Array<{ name: string; type: ContractSpecType | null }>;
+    };
+
+type ContractTypes = Record<string, ContractTypeDescriptor>;
+
+type ContractSpecResponse = {
+  contract_id: string;
+  network: string;
+  capability: string;
+  functions: ContractSpecFunction[];
+  contract_types: ContractTypes;
+};
+
+type FunctionOption = {
+  name: string;
+  inputs: Array<{ name: string; type: ContractSpecType }>;
+  fromSpec: boolean;
+};
+
+type TargetSuggestion = {
+  kind: "account" | "contract";
+  value: string;
+  label: string;
+  description: string;
+};
+
+/// Recursive editor value model. Scalar inputs stay as free text so users can
+/// type freely; everything else is structured and validated as they type.
+type EditorValue =
+  | { kind: "scalar"; text: string }
+  | { kind: "bool"; value: boolean }
+  | { kind: "list"; items: EditorValue[] }
+  | {
+      kind: "map";
+      rows: Array<{ key: EditorValue; value: EditorValue }>;
+    }
+  | { kind: "option"; some: boolean; value: EditorValue | null }
+  | { kind: "result"; ok: boolean; value: EditorValue | null }
+  | {
+      kind: "udt";
+      name: string;
+      variant: string;
+      fields: Record<string, EditorValue>;
+    };
 
 type ProjectTransaction = {
   hash?: string;
@@ -308,7 +406,7 @@ const alertTargetDetails: Array<{
   {
     type: "address",
     label: "Address",
-    description: "Receive alerts for one wallet or contract address.",
+    description: "Receive alerts for one account or contract address.",
     icon: UserRound,
   },
   {
@@ -393,6 +491,408 @@ function isValidStellarContractId(value: string) {
   return crc16Xmodem(payload) === checksum;
 }
 
+function isValidStellarAddress(value: string) {
+  const clean = value.trim().toUpperCase();
+  if (!/^[CG][A-Z2-7]{55}$/.test(clean)) return false;
+  const decoded = decodeStellarBase32(clean);
+  if (!decoded || decoded.length !== 35) return false;
+  const version = clean[0] === "C" ? 0x10 : 0x06;
+  if (decoded[0] !== version) return false;
+  const payload = decoded.slice(0, 33);
+  const checksum = decoded[33] | (decoded[34] << 8);
+  return crc16Xmodem(payload) === checksum;
+}
+
+const integerBounds: Record<string, { min: bigint; max: bigint }> = {
+  u32: { min: BigInt(0), max: BigInt("4294967295") },
+  i32: { min: BigInt("-2147483648"), max: BigInt("2147483647") },
+  u64: { min: BigInt(0), max: BigInt("18446744073709551615") },
+  i64: { min: BigInt("-9223372036854775808"), max: BigInt("9223372036854775807") },
+  u128: { min: BigInt(0), max: BigInt("340282366920938463463374607431768211455") },
+  i128: {
+    min: BigInt("-170141183460469231731687303715884105728"),
+    max: BigInt("170141183460469231731687303715884105727"),
+  },
+  u256: {
+    min: BigInt(0),
+    max: BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935"),
+  },
+  i256: {
+    min: BigInt("-57896044618658097711785492504343953926634992332820282019728792003956564819968"),
+    max: BigInt("57896044618658097711785492504343953926634992332820282019728792003956564819967"),
+  },
+};
+
+function scalarKind(type: ContractSpecType): string {
+  if (type.kind === "timepoint" || type.kind === "duration") return "u64";
+  return type.kind;
+}
+
+function scalarPlaceholder(type: ContractSpecType): string {
+  switch (type.kind) {
+    case "address":
+    case "muxed_address":
+      return "C… or G…";
+    case "u32":
+      return "0 to 4294967295";
+    case "i32":
+      return "-2147483648 to 2147483647";
+    case "u64":
+    case "timepoint":
+    case "duration":
+      return "0 to 18446744073709551615";
+    case "i64":
+      return "-9223372036854775808 to 9223372036854775807";
+    case "u128":
+      return "0 to 340282366920938463463374607431768211455";
+    case "i128":
+      return "-170141183460469231731687303715884105728 to 170141183460469231731687303715884105727";
+    case "u256":
+      return "0 to 2^256-1";
+    case "i256":
+      return "-2^255 to 2^255-1";
+    case "string":
+      return "text";
+    case "symbol":
+      return "symbol (≤ 32 bytes)";
+    case "bytes":
+      return "hex, even length";
+    case "bytes_n":
+      return `hex, exactly ${type.n} bytes`;
+    default:
+      return "";
+  }
+}
+
+function typeLabel(type: ContractSpecType): string {
+  switch (type.kind) {
+    case "u32":
+      return "uint32";
+    case "i32":
+      return "int32";
+    case "u64":
+      return "uint64";
+    case "i64":
+      return "int64";
+    case "u128":
+      return "uint128";
+    case "i128":
+      return "int128";
+    case "u256":
+      return "uint256";
+    case "i256":
+      return "int256";
+    case "timepoint":
+      return "timepoint";
+    case "duration":
+      return "duration";
+    case "bytes_n":
+      return `bytesN(${type.n})`;
+    case "option":
+      return `option<${typeLabel(type.inner)}>`;
+    case "result":
+      return `result<${typeLabel(type.ok)}, ${typeLabel(type.err)}>`;
+    case "vec":
+      return `vec<${typeLabel(type.elem)}>`;
+    case "map":
+      return `map<${typeLabel(type.key)}, ${typeLabel(type.value)}>`;
+    case "tuple":
+      return `(${type.elems.map(typeLabel).join(", ")})`;
+    case "udt":
+      return type.name;
+    default:
+      return type.kind;
+  }
+}
+
+function defaultUdtEditorValue(name: string, types: ContractTypes): EditorValue {
+  const descriptor = types[name];
+  if (!descriptor) return { kind: "udt", name, variant: "", fields: {} };
+  if (descriptor.kind === "enum" || descriptor.kind === "error_enum") {
+    return { kind: "udt", name, variant: descriptor.variants[0]?.name ?? "", fields: {} };
+  }
+  if (descriptor.kind === "union") {
+    const first = descriptor.variants[0];
+    const fields: Record<string, EditorValue> = {};
+    if (first?.type) fields[first.name] = defaultEditorValue(first.type, types);
+    return { kind: "udt", name, variant: first?.name ?? "", fields };
+  }
+  const fields: Record<string, EditorValue> = {};
+  for (const field of descriptor.fields) fields[field.name] = defaultEditorValue(field.type, types);
+  return { kind: "udt", name, variant: "", fields };
+}
+
+function defaultEditorValue(type: ContractSpecType, types: ContractTypes): EditorValue {
+  switch (type.kind) {
+    case "bool":
+      return { kind: "bool", value: false };
+    case "option":
+      return { kind: "option", some: false, value: null };
+    case "result":
+      return { kind: "result", ok: true, value: null };
+    case "vec":
+      return { kind: "list", items: [] };
+    case "tuple":
+      return {
+        kind: "list",
+        items: type.elems.map((element) => defaultEditorValue(element, types)),
+      };
+    case "map":
+      return { kind: "map", rows: [] };
+    case "udt":
+      return defaultUdtEditorValue(type.name, types);
+    default:
+      return { kind: "scalar", text: "" };
+  }
+}
+
+function validateEditorValue(
+  type: ContractSpecType,
+  value: EditorValue,
+  types: ContractTypes,
+): string | null {
+  switch (type.kind) {
+    case "address":
+    case "muxed_address": {
+      const text = value.kind === "scalar" ? value.text.trim() : "";
+      if (!text) return "Required";
+      return isValidStellarAddress(text) ? null : "Enter a valid C… or G… Stellar address";
+    }
+    case "u32":
+    case "i32":
+    case "u64":
+    case "i64":
+    case "u128":
+    case "i128":
+    case "u256":
+    case "i256":
+    case "timepoint":
+    case "duration": {
+      const text = value.kind === "scalar" ? value.text.trim() : "";
+      if (!text) return "Required";
+      if (!/^-?\d+$/.test(text)) return "Enter a whole number";
+      try {
+        const number = BigInt(text);
+        const bounds = integerBounds[scalarKind(type)];
+        if (number < bounds.min || number > bounds.max) return "Number is out of range";
+      } catch {
+        return "Enter a whole number";
+      }
+      return null;
+    }
+    case "string": {
+      const text = value.kind === "scalar" ? value.text : "";
+      return text ? null : "Required";
+    }
+    case "symbol": {
+      const text = value.kind === "scalar" ? value.text : "";
+      if (!text) return "Required";
+      return new TextEncoder().encode(text).length > 32 ? "Symbol must be ≤ 32 bytes" : null;
+    }
+    case "bytes": {
+      const text = value.kind === "scalar" ? value.text.trim() : "";
+      if (!text) return "Required";
+      if (!/^[0-9a-fA-F]*$/.test(text)) return "Hex only";
+      return text.length % 2 === 0 ? null : "Hex must have an even number of digits";
+    }
+    case "bytes_n": {
+      const text = value.kind === "scalar" ? value.text.trim() : "";
+      if (!text) return "Required";
+      if (!/^[0-9a-fA-F]*$/.test(text)) return "Hex only";
+      if (text.length % 2 !== 0) return "Hex must have an even number of digits";
+      return text.length / 2 === type.n ? null : `Expected exactly ${type.n} bytes`;
+    }
+    case "bool":
+      return value.kind === "bool" ? null : "Required";
+    case "option": {
+      if (value.kind !== "option") return "Required";
+      if (!value.some) return null;
+      return value.value ? validateEditorValue(type.inner, value.value, types) : "Required";
+    }
+    case "result": {
+      if (value.kind !== "result") return "Required";
+      if (!value.value) return "Required";
+      return validateEditorValue(value.ok ? type.ok : type.err, value.value, types);
+    }
+    case "vec": {
+      if (value.kind !== "list") return "Required";
+      for (const item of value.items) {
+        const error = validateEditorValue(type.elem, item, types);
+        if (error) return error;
+      }
+      return null;
+    }
+    case "tuple": {
+      if (value.kind !== "list") return "Required";
+      for (let index = 0; index < type.elems.length; index += 1) {
+        const error = validateEditorValue(type.elems[index], value.items[index], types);
+        if (error) return error;
+      }
+      return null;
+    }
+    case "map": {
+      if (value.kind !== "map") return "Required";
+      for (const row of value.rows) {
+        const keyError = validateEditorValue(type.key, row.key, types);
+        if (keyError) return `Key: ${keyError}`;
+        const valueError = validateEditorValue(type.value, row.value, types);
+        if (valueError) return `Value: ${valueError}`;
+      }
+      return null;
+    }
+    case "udt": {
+      if (value.kind !== "udt") return "Required";
+      const descriptor = types[type.name];
+      if (!descriptor) return `Unknown type ${type.name}`;
+      if (descriptor.kind === "enum" || descriptor.kind === "error_enum") {
+        return descriptor.variants.some((variant) => variant.name === value.variant)
+          ? null
+          : "Pick a variant";
+      }
+      if (descriptor.kind === "union") {
+        const variant = descriptor.variants.find((candidate) => candidate.name === value.variant);
+        if (!variant) return "Pick a variant";
+        if (!variant.type) return null;
+        return value.fields[variant.name]
+          ? validateEditorValue(variant.type, value.fields[variant.name], types)
+          : "Required";
+      }
+      for (const field of descriptor.fields) {
+        const error = validateEditorValue(field.type, value.fields[field.name], types);
+        if (error) return `${field.name}: ${error}`;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+function editorValueToCanonical(
+  type: ContractSpecType,
+  value: EditorValue,
+  types: ContractTypes,
+): unknown {
+  switch (type.kind) {
+    case "address":
+    case "muxed_address":
+      return { address: value.kind === "scalar" ? value.text.trim() : "" };
+    case "u32":
+    case "i32":
+      return { [type.kind]: Number(value.kind === "scalar" ? value.text.trim() : "") };
+    case "u64":
+    case "i64":
+    case "u128":
+    case "i128":
+    case "u256":
+    case "i256":
+    case "timepoint":
+    case "duration":
+      return { [type.kind]: value.kind === "scalar" ? value.text.trim() : "" };
+    case "string":
+    case "symbol":
+      return { [type.kind]: value.kind === "scalar" ? value.text : "" };
+    case "bytes":
+    case "bytes_n":
+      return { bytes: value.kind === "scalar" ? value.text.trim() : "" };
+    case "bool":
+      return { bool: value.kind === "bool" ? value.value : false };
+    case "void":
+      return { void: null };
+    case "option": {
+      const option = value.kind === "option" ? value : { some: false, value: null };
+      if (!option.some || !option.value) return { vec: [] };
+      return editorValueToCanonical(type.inner, option.value, types);
+    }
+    case "result": {
+      const result = value.kind === "result" ? value : { ok: true, value: null };
+      const side = result.ok ? "Ok" : "Err";
+      const payload = result.value
+        ? editorValueToCanonical(result.ok ? type.ok : type.err, result.value, types)
+        : null;
+      return { vec: [{ symbol: side }, payload] };
+    }
+    case "vec": {
+      const list = value.kind === "list" ? value : { items: [] as EditorValue[] };
+      return {
+        vec: list.items.map((item) => editorValueToCanonical(type.elem, item, types)),
+      };
+    }
+    case "tuple": {
+      const list = value.kind === "list" ? value : { items: [] as EditorValue[] };
+      return {
+        vec: type.elems.map((element, index) =>
+          editorValueToCanonical(element, list.items[index], types),
+        ),
+      };
+    }
+    case "map": {
+      const map =
+        value.kind === "map" ? value : { rows: [] as Array<{ key: EditorValue; value: EditorValue }> };
+      return {
+        map: map.rows.map((row) => ({
+          key: editorValueToCanonical(type.key, row.key, types),
+          val: editorValueToCanonical(type.value, row.value, types),
+        })),
+      };
+    }
+    case "udt": {
+      const udt = value.kind === "udt" ? value : { variant: "", fields: {} as Record<string, EditorValue> };
+      const descriptor = types[type.name];
+      if (descriptor?.kind === "struct") {
+        return {
+          vec: [
+            { symbol: type.name },
+            ...descriptor.fields.map((field) =>
+              editorValueToCanonical(field.type, udt.fields[field.name], types),
+            ),
+          ],
+        };
+      }
+      if (descriptor?.kind === "union") {
+        const variant = descriptor.variants.find((candidate) => candidate.name === udt.variant);
+        if (!variant?.type) return { symbol: udt.variant };
+        return {
+          vec: [
+            { symbol: udt.variant },
+            editorValueToCanonical(variant.type, udt.fields[udt.variant], types),
+          ],
+        };
+      }
+      return { symbol: udt.variant };
+    }
+    default:
+      return null;
+  }
+}
+
+function buildArgsFromParams(
+  spec: ContractSpecResponse,
+  functionName: string,
+  values: Record<string, EditorValue>,
+): unknown[] {
+  const selected = spec.functions.find((fn) => fn.name === functionName);
+  if (!selected) return [];
+  return selected.inputs.map((input) => {
+    const value = values[input.name];
+    return value
+      ? editorValueToCanonical(input.type, value, spec.contract_types)
+      : null;
+  });
+}
+
+function defaultValuesForFunction(
+  fn: ContractSpecFunction | undefined,
+  types: ContractTypes,
+): Record<string, EditorValue> {
+  if (!fn) return {};
+  const values: Record<string, EditorValue> = {};
+  for (const input of fn.inputs) {
+    values[input.name] = defaultEditorValue(input.type, types);
+  }
+  return values;
+}
+
 function cursorValue<T>(page: CursorPage<T>, direction: "next" | "prev") {
   return (
     page.pagination?.[`${direction}_cursor`] ??
@@ -415,6 +915,16 @@ function timeLabel(value?: string | null) {
   return `${Math.floor(minutes / 1_440)} days ago`;
 }
 
+function createdAtLabel(value?: string | null) {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not available";
+  return date.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 function errorMessage(cause: unknown, fallback: string) {
   if (cause instanceof ApiError) return cause.message || fallback;
   if (cause instanceof Error) {
@@ -428,7 +938,11 @@ function headerIcon(title: string) {
   const key = title.toLowerCase();
   if (key.includes("wallet")) return <Wallet size={38} strokeWidth={1.35} />;
   if (key.includes("contract")) return <Box size={38} strokeWidth={1.35} />;
-  if (key.includes("environment"))
+  if (
+    key.includes("environment") ||
+    key.includes("virtual network") ||
+    key.includes("virtual networks")
+  )
     return <Blocks size={38} strokeWidth={1.35} />;
   if (key.includes("simulator") || key.includes("simulation"))
     return <Play size={38} strokeWidth={1.35} />;
@@ -552,6 +1066,27 @@ function StellarLogo({ size = 13 }: { size?: number }) {
   );
 }
 
+function SimulatorIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      stroke="currentColor"
+      strokeWidth="1.6"
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5 4v16M12 4v16M19 4v16" />
+      <circle cx="5" cy="9" r="2" />
+      <circle cx="12" cy="16" r="2" />
+      <circle cx="19" cy="6" r="2" />
+    </svg>
+  );
+}
+
 function NetworkLabel({ network }: { network: string }) {
   return (
     <span className="pw-network-label">
@@ -566,11 +1101,13 @@ function Modal({
   children,
   onClose,
   footer,
+  className,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   footer: ReactNode;
+  className?: string;
 }) {
   if (typeof document === "undefined") return null;
 
@@ -581,7 +1118,7 @@ function Modal({
       onMouseDown={onClose}
     >
       <div
-        className="pw-modal"
+        className={`pw-modal${className ? ` ${className}` : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -728,8 +1265,12 @@ function TxRows({
 
 export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const requestedAddress = searchParams.get("address");
+  const pathAddress = pathname.startsWith("/accounts/")
+    ? decodeURIComponent(pathname.slice("/accounts/".length).split("/")[0] ?? "")
+    : null;
+  const requestedAddress = pathAddress || searchParams.get("address");
   const requestedNetwork = searchParams.get("network") ?? scope.network;
   const openedQueryAddress = useRef<string | null>(null);
   const [page, setPage] = useState<CursorPage<TrackedEntity>>({ data: [] });
@@ -745,7 +1286,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const [query, setQuery] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [address, setAddress] = useState("");
-  const [walletName, setWalletName] = useState("Wallet");
+  const [walletName, setWalletName] = useState("Account");
   const [walletVerified, setWalletVerified] = useState(false);
   const [verifyingWallet, setVerifyingWallet] = useState(false);
   const [walletVerifyError, setWalletVerifyError] = useState<string | null>(
@@ -775,7 +1316,6 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const [menuWallet, setMenuWallet] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<TrackedEntity | null>(null);
   const [renameName, setRenameName] = useState("");
-  const [copiedWallet, setCopiedWallet] = useState<string | null>(null);
   const selectAllRef = useRef<HTMLInputElement | null>(null);
   const walletNameRef = useRef<HTMLInputElement | null>(null);
 
@@ -791,7 +1331,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
         setError(null);
         setToastError(null);
       } catch (cause) {
-        setToastError(errorMessage(cause, "Could not load wallets."));
+        setToastError(errorMessage(cause, "Could not load accounts."));
       }
     },
     [scope],
@@ -834,11 +1374,11 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
       await api.post(path, {
         address: address.trim(),
         network: walletNetwork,
-        name: walletName.trim() || "Wallet",
+        name: walletName.trim() || "Account",
         tags: [],
       });
       setAddress("");
-      setWalletName("Wallet");
+      setWalletName("Account");
       setWalletVerified(false);
       setWalletNetwork(null);
       setShowAdd(false);
@@ -846,7 +1386,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
       setWalletSaveError(null);
       await load();
     } catch (cause) {
-      const message = errorMessage(cause, "Could not add this wallet.");
+      const message = errorMessage(cause, "Could not add this account.");
       setWalletSaveError(message);
       setError(message);
     } finally {
@@ -920,24 +1460,32 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const openWallet = useCallback(async (value: string, network: string = scope.network) => {
     const base = scopePath(scope, `/accounts/${encodeURIComponent(value)}`);
     if (!base) return;
+    const detailPath = `/accounts/${encodeURIComponent(value)}`;
+    openedQueryAddress.current = value;
+    if (pathname !== detailPath) router.push(detailPath);
     setLoading(true);
+    const startedAt = performance.now();
     try {
-      const [summary, txPage] = await Promise.all([
-        api.get<Record<string, unknown>>(base),
-        api.get<CursorPage<ProjectTransaction>>(
-          `${base}/transactions?limit=20&network=${encodeURIComponent(network)}`,
-        ),
-      ]);
-      setSelected({ ...summary, network });
-      setTransactions(txPage);
+      const summary = await api.get<Record<string, unknown>>(base);
+      const summaryNetwork =
+        typeof summary.network === "string" && summary.network.trim()
+          ? summary.network
+          : network;
+      setSelected({ ...summary, network: summaryNetwork });
       setTab("overview");
       setError(null);
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[wallet-load] summary", {
+          address: value,
+          elapsedMs: Math.round(performance.now() - startedAt),
+        });
+      }
     } catch (cause) {
-      setError(errorMessage(cause, "Could not open this wallet."));
+      setError(errorMessage(cause, "Could not open this account."));
     } finally {
       setLoading(false);
     }
-  }, [scope]);
+  }, [pathname, router, scope]);
 
   useEffect(() => {
     if (!requestedAddress) {
@@ -962,7 +1510,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
     return page.data.filter((entity) =>
       [
         entity.address,
-        entity.name ?? "Wallet",
+        entity.name ?? "Account",
         entity.network,
         ...walletTagNames(entity),
       ].some((value) => value.toLowerCase().includes(needle)),
@@ -996,24 +1544,10 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
       return next;
     });
   };
-  const copyWalletAddress = async (event: MouseEvent, value: string) => {
-    event.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedWallet(value);
-      window.setTimeout(
-        () =>
-          setCopiedWallet((current) => (current === value ? null : current)),
-        1200,
-      );
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not copy this wallet address."));
-    }
-  };
   const openRenameWallet = (entity: TrackedEntity) => {
     setMenuWallet(null);
     setRenameTarget(entity);
-    setRenameName(entity.name?.trim() || "Wallet");
+    setRenameName(entity.name?.trim() || "Account");
   };
   const renameWallet = async (event: FormEvent) => {
     event.preventDefault();
@@ -1038,10 +1572,10 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
       setRenameName("");
       setError(null);
     } catch (cause) {
-      const detail = errorMessage(cause, "Could not rename this wallet.");
+      const detail = errorMessage(cause, "Could not rename this account.");
       setError(
-        detail === "Could not rename this wallet."
-          ? `${detail} Make sure the backend has been restarted after the wallet rename route was added.`
+        detail === "Could not rename this account."
+          ? `${detail} Make sure the backend has been restarted after the account rename route was added.`
           : detail,
       );
     } finally {
@@ -1062,7 +1596,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
       .filter(Boolean) as string[];
     const path = scopePath(scope, "/tags");
     if (!path || entityIds.length !== targets.length) {
-      setError("Reload this wallet list before adding a tag.");
+      setError("Reload this account list before adding a tag.");
       return;
     }
     setLoading(true);
@@ -1137,7 +1671,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
     } catch (cause) {
       const detail =
         cause instanceof Error && cause.message ? ` ${cause.message}` : "";
-      setError(`Could not delete the selected wallets.${detail}`);
+      setError(`Could not delete the selected accounts.${detail}`);
     } finally {
       setLoading(false);
     }
@@ -1162,9 +1696,20 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
           embedded
            onBack={() => {
              setSelected(null);
-             router.replace("/wallets");
+             openedQueryAddress.current = selectedAddress;
+             router.replace("/accounts");
            }}
         />
+      </div>
+    );
+  }
+
+  if (requestedAddress && !selected) {
+    return (
+      <div className="pw-page pw-wallets-page">
+        <div className="pw-entity-loading" role="status" aria-live="polite">
+          {error ? <Message error>{error}</Message> : <><LoaderCircle className="pw-spin" size={18} /> Loading account...</>}
+        </div>
       </div>
     );
   }
@@ -1180,8 +1725,8 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
         onDone={() => setToastError(null)}
       />
       <Header
-        title="Wallets"
-        description="Manage project wallets, treasuries, signers, issuers, and test identities in one shared catalog."
+        title="Accounts"
+        description="Manage project accounts, treasuries, signers, issuers, and test identities in one shared catalog."
       />
       <div className="pw-surface">
         <div className="pw-toolbar">
@@ -1191,14 +1736,14 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
               className="pw-field"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search wallets"
+              placeholder="Search accounts"
             />
           </div>
           <div className="pw-toolbar-actions">
             <Button
               iconOnly
-              aria-label="Refresh wallets"
-              title="Refresh wallets"
+              aria-label="Refresh accounts"
+              title="Refresh accounts"
               disabled={loading || refreshing}
               onClick={() => void refreshList()}
             >
@@ -1206,8 +1751,8 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
             </Button>
             <Button
               iconOnly
-              aria-label="Tag selected wallets"
-              title="Tag selected wallets"
+              aria-label="Tag selected accounts"
+              title="Tag selected accounts"
               disabled={!selectedVisible.length}
               onClick={() => {
                 setBulkTagging(true);
@@ -1220,8 +1765,8 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
             <Button
               iconOnly
               danger
-              aria-label="Delete selected wallets"
-              title="Delete selected wallets"
+              aria-label="Delete selected accounts"
+              title="Delete selected accounts"
               disabled={!selectedVisible.length || loading}
               onClick={() => {
                 setDeleteTargets(null);
@@ -1234,14 +1779,14 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
               className="pw-catalog-create-button"
               onClick={() => {
                 setAddress("");
-                setWalletName("Wallet");
+                setWalletName("Account");
                 setWalletVerified(false);
                 setWalletNetwork(null);
                 setWalletVerifyError(null);
                 setShowAdd(true);
               }}
             >
-              <Plus size={17} /> Add wallet
+              <Plus size={17} /> Add account
             </Button>
           </div>
         </div>
@@ -1257,12 +1802,12 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                 <input
                   ref={selectAllRef}
                   type="checkbox"
-                  aria-label="Select all wallets"
+                  aria-label="Select all accounts"
                   checked={allVisibleSelected}
                   onChange={toggleAllWallets}
                 />
               </span>
-              <span>Wallet</span>
+              <span>Account</span>
               <span>Network</span>
               <span>Tags</span>
               <span>Type</span>
@@ -1270,7 +1815,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
             </div>
             {visible.map((entity) => {
               const tags = walletTagNames(entity);
-              const label = entity.name?.trim() || "Wallet";
+              const label = entity.name?.trim() || "Account";
               return (
                 <div
                   className="pw-row pw-wallet-row pw-clickable-row"
@@ -1312,26 +1857,13 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                       size={28}
                     />
                     <span className="pw-wallet-copy-wrap">
-                      <small>{label}</small>
-                      <strong className="pw-mono pw-wallet-address">
-                        {truncateEntity(entity.address, 15, 11)}
-                        <button
-                          type="button"
-                          className="pw-copy-inline"
-                          aria-label={`Copy ${entity.address}`}
-                          onClick={(event) =>
-                            void copyWalletAddress(event, entity.address)
-                          }
-                        >
-                          <Copy size={12} />
-                        </button>
-                        <span
-                          className="pw-copy-tooltip"
-                          data-visible={copiedWallet === entity.address}
-                        >
-                          Copied
+                      <strong className="pw-card-entity-name">{label}</strong>
+                      <span className="pw-wallet-address pw-card-entity-address explorer-entity-link">
+                        <span className="pw-card-entity-address-text pw-mono">
+                          {truncateEntity(entity.address, 15, 11)}
                         </span>
-                      </strong>
+                        <EntityCopyButton value={entity.address} label="account address" />
+                      </span>
                     </span>
                   </div>
                   <NetworkLabel network={entity.network || scope.network} />
@@ -1366,7 +1898,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                       </button>
                     )}
                   </span>
-                  <span className="pw-type-label">Wallet</span>
+                  <span className="pw-type-label">Account</span>
                   <span
                     className="pw-row-menu-cell"
                     onPointerDown={(event) => event.stopPropagation()}
@@ -1374,7 +1906,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                   >
                     <Button
                       iconOnly
-                      aria-label={`Wallet actions for ${entity.address}`}
+                      aria-label={`Account actions for ${entity.address}`}
                       aria-expanded={menuWallet === entity.address}
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={(event) => {
@@ -1440,7 +1972,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
 
       {showAdd && (
         <Modal
-          title="Add wallet"
+          title="Add account"
           onClose={() => setShowAdd(false)}
           footer={
             <>
@@ -1458,7 +1990,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                 }
               >
                 {(loading || verifyingWallet) && <LoaderCircle size={14} />} Add
-                wallet
+                account
               </Button>
             </>
           }
@@ -1481,7 +2013,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                 )) && (
                 <div
                   className="pw-wallet-network-panel"
-                  aria-label="Wallet network availability"
+                  aria-label="Account network availability"
                 >
                   {walletCheckNetworks
                     .filter(
@@ -1535,7 +2067,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
                 className="pw-field"
                 value={walletName}
                 onChange={(event) => setWalletName(event.target.value)}
-                placeholder="Wallet"
+                placeholder="Account"
               />
             </label>
           </form>
@@ -1547,7 +2079,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
             foundWalletNetworks.length > 0 &&
             walletNetwork && (
               <Message>
-                This wallet will be added on {walletNetwork}, independently of
+                This account will be added on {walletNetwork}, independently of
                 the project network.
               </Message>
             )}
@@ -1562,7 +2094,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
 
       {(tagTarget || bulkTagging) && (
         <Modal
-          title={bulkTagging ? "Tag selected wallets" : "Add wallet tag"}
+          title={bulkTagging ? "Tag selected accounts" : "Add account tag"}
           onClose={() => {
             setTagTarget(null);
             setBulkTagging(false);
@@ -1607,7 +2139,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
             </label>
             <p className="pw-modal-note pw-mono">
               {bulkTagging
-                ? `${selectedVisible.length} selected wallets`
+                ? `${selectedVisible.length} selected accounts`
                 : tagTarget
                   ? truncateEntity(tagTarget.address, 18, 12)
                   : ""}
@@ -1618,7 +2150,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
 
       {renameTarget && (
         <Modal
-          title="Rename wallet"
+          title="Rename account"
           onClose={() => {
             setRenameTarget(null);
             setRenameName("");
@@ -1652,13 +2184,13 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
         >
           <form id="wallet-rename-form" onSubmit={renameWallet}>
             <label className="pw-label">
-              Wallet name
+              Account name
               <input
                 autoFocus
                 className="pw-field"
                 value={renameName}
                 onChange={(event) => setRenameName(event.target.value)}
-                placeholder="Wallet"
+                placeholder="Account"
               />
             </label>
             <p className="pw-modal-note pw-mono">
@@ -1672,8 +2204,8 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
         <Modal
           title={
             deleteTargets?.length === 1
-              ? "Delete wallet"
-              : "Delete selected wallets"
+              ? "Delete account"
+              : "Delete selected accounts"
           }
           onClose={() => {
             setDeleteConfirm(false);
@@ -1701,7 +2233,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
           }
         >
           <p className="pw-modal-note">
-            Remove {(deleteTargets ?? selectedVisible).length} wallet
+              Remove {(deleteTargets ?? selectedVisible).length} account
             {(deleteTargets ?? selectedVisible).length === 1 ? "" : "s"} from
             this project. This does not affect the Stellar account or its
             on-chain data.
@@ -1718,6 +2250,11 @@ function hasContractDetail(value: unknown): boolean {
 
 export function ContractsPage({ scope }: { scope: ProjectScope }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const requestedAddress = pathname.startsWith("/contracts/")
+    ? decodeURIComponent(pathname.slice("/contracts/".length).split("/")[0] ?? "")
+    : null;
+  const openedQueryAddress = useRef<string | null>(null);
   const [page, setPage] = useState<CursorPage<TrackedEntity>>({ data: [] });
   const [selected, setSelected] = useState<Record<string, unknown> | null>(
     null,
@@ -1770,6 +2307,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
   const [error, setError] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
   const contractSelectAllRef = useRef<HTMLInputElement | null>(null);
+  const networkMenuRef = useRef<HTMLSpanElement | null>(null);
   const contractAddressValid = isValidStellarContractId(address);
 
   const load = useCallback(
@@ -1817,6 +2355,15 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
   }, [menuContract]);
+  useEffect(() => {
+    if (!networkMenuOpen) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Node && networkMenuRef.current?.contains(event.target)) return;
+      setNetworkMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", close, true);
+    return () => document.removeEventListener("pointerdown", close, true);
+  }, [networkMenuOpen]);
 
   const track = async (event: FormEvent) => {
     event.preventDefault();
@@ -1852,40 +2399,39 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
   ) => {
     const base = scopePath(scope, `/contracts/${encodeURIComponent(value)}`);
     if (!base) return;
+    const detailPath = `/contracts/${encodeURIComponent(value)}`;
+    openedQueryAddress.current = value;
+    if (pathname !== detailPath) router.push(detailPath);
     setLoading(true);
+    const startedAt = performance.now();
     try {
-      const [summary, txResult, eventResult, sourceResult, verificationResult] =
-        await Promise.all([
-          api.get<Record<string, unknown>>(base),
-          api
-            .get<CursorPage<ProjectTransaction>>(
-              `${base}/transactions?limit=20`,
-            )
-            .catch(() => ({ data: [] })),
-          api
-            .get<CursorPage<ContractEvent>>(`${base}/events?limit=20`)
-            .catch(() => ({ data: [] })),
-          api.get<Record<string, unknown>>(`${base}/source`).catch(() => null),
-          api
-            .get<CursorPage<Record<string, any>>>(
-              `${base}/verifications?limit=20`,
-            )
-            .catch(() => ({ data: [] })),
-        ]);
+      const summary = await api.get<Record<string, unknown>>(base);
       setSelectedNetwork(network);
       setSelected(summary);
-      setTransactions(txResult);
-      setEvents(eventResult);
-      setSource(sourceResult);
-      setVerifications(verificationResult);
       setTab("overview");
       setError(null);
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[contract-load] summary", {
+          address: value,
+          elapsedMs: Math.round(performance.now() - startedAt),
+        });
+      }
     } catch (cause) {
       setError(errorMessage(cause, "Could not open this contract."));
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!requestedAddress) {
+      openedQueryAddress.current = null;
+      return;
+    }
+    if (openedQueryAddress.current === requestedAddress) return;
+    openedQueryAddress.current = requestedAddress;
+    void openContract(requestedAddress, scope.network);
+  }, [openContract, requestedAddress, scope.network]);
 
   const contractTagNames = useCallback(
     (entity: TrackedEntity) =>
@@ -2190,8 +2736,22 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
           network={selectedNetwork}
           address={selectedAddress}
           embedded
-          onBack={() => setSelected(null)}
+          onBack={() => {
+            setSelected(null);
+            openedQueryAddress.current = selectedAddress;
+            router.replace("/contracts");
+          }}
         />
+      </div>
+    );
+  }
+
+  if (requestedAddress && !selected) {
+    return (
+      <div className="pw-page pw-contracts-page">
+        <div className="pw-entity-loading" role="status" aria-live="polite">
+          {error ? <Message error>{error}</Message> : <><LoaderCircle className="pw-spin" size={18} /> Loading contract...</>}
+        </div>
       </div>
     );
   }
@@ -2239,7 +2799,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
               primary
               onClick={() =>
                 router.push(
-                  `/simulator?contract=${encodeURIComponent(selectedAddress)}`,
+                  `/simulation/new?contract=${encodeURIComponent(selectedAddress)}`,
                 )
               }
             >
@@ -2553,10 +3113,13 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
                       color={entity.appearance_color}
                     />
                     <span>
-                      <strong>{label}</strong>
-                      <small className="pw-mono">
-                        {truncateEntity(entity.address, 15, 11)}
-                      </small>
+                      <strong className="pw-card-entity-name">{label}</strong>
+                      <span className="pw-card-entity-address explorer-entity-link">
+                        <small className="pw-card-entity-address-text pw-mono">
+                          {truncateEntity(entity.address, 15, 11)}
+                        </small>
+                        <EntityCopyButton value={entity.address} label="contract address" />
+                      </span>
                     </span>
                   </span>
                   <NetworkLabel network={entity.network || scope.network} />
@@ -2726,9 +3289,10 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
             </label>
             <label className="pw-label">
               Network
-              <span
-                className="pw-select-shell"
-                onPointerDown={(event) => event.stopPropagation()}
+                <span
+                  className="pw-select-shell"
+                  ref={networkMenuRef}
+                  onPointerDown={(event) => event.stopPropagation()}
               >
                 <button
                   type="button"
@@ -2755,6 +3319,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
                         }}
                       >
                         <NetworkLabel network={network} />
+                        {contractNetwork === network && <span className="pw-filter-option-check" aria-hidden="true"><Check size={10} /></span>}
                       </button>
                     ))}
                   </span>
@@ -3074,7 +3639,7 @@ function ContractDetailView(props: ContractDetailProps) {
           <Button
             primary
             onClick={() =>
-              router.push(`/simulator?contract=${encodeURIComponent(address)}`)
+              router.push(`/simulation/new?contract=${encodeURIComponent(address)}`)
             }
           >
             <Play size={14} /> Simulate
@@ -3403,7 +3968,7 @@ function EnvironmentRow({
       className="pw-row pw-clickable-row pw-environment-row"
       role="button"
       tabIndex={0}
-      style={{ gridTemplateColumns: "minmax(260px, 1fr) 128px 140px 140px 110px" }}
+      style={{ gridTemplateColumns: "minmax(260px, 1fr) 128px 140px 140px 110px 135px" }}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -3413,7 +3978,6 @@ function EnvironmentRow({
       }}
     >
       <span className="pw-entity-cell">
-        <span className="pw-environment-icon"><Blocks size={16} /></span>
         <span>
           <strong>{environment.name}</strong>
           <small className="pw-mono">Revision {environment.revision ?? 1}</small>
@@ -3425,14 +3989,21 @@ function EnvironmentRow({
       </span>
       <span className="pw-mono">{stateLedger?.toLocaleString() ?? "Preparing"}</span>
       <StatusBadge status={environment.initialization_status === "preparing" ? "preparing" : environment.sync_status} />
+      <span title={environment.created_at}>{createdAtLabel(environment.created_at)}</span>
     </div>
   );
 }
 
-export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
+export function VirtualEnvPage({ scope, environmentId }: { scope: ProjectScope; environmentId?: string }) {
+  const router = useRouter();
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [selected, setSelected] = useState<Environment | null>(null);
   const [query, setQuery] = useState("");
+  const [environmentFilter, setEnvironmentFilter] = useState<
+    "all" | "mainnet" | "testnet" | "follow_latest" | "frozen" | "preparing" | "ready" | "failed"
+  >("all");
+  const [environmentFilterOpen, setEnvironmentFilterOpen] = useState(false);
+  const environmentFilterRef = useRef<HTMLDivElement | null>(null);
   const [createWizard, setCreateWizard] = useState(false);
   const [runs, setRuns] = useState<Simulation[]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -3453,10 +4024,11 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
       setEnvironments(response.environments ?? []);
       setRuns(simulationResponse.simulations ?? []);
       setSelected((current) =>
-        current
-          ? (response.environments?.find((item) => item.id === current.id) ??
-            current)
-          : null,
+        environmentId
+          ? (response.environments?.find((item) => item.id === environmentId) ?? null)
+          : current
+            ? (response.environments?.find((item) => item.id === current.id) ?? current)
+            : null,
       );
       setError(null);
       setToastError(null);
@@ -3465,12 +4037,22 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
         errorMessage(cause, "Fork Core environments are unavailable."),
       );
     }
-  }, [path, simulationPath]);
+  }, [environmentId, path, simulationPath]);
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (!environmentFilterOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && environmentFilterRef.current?.contains(event.target)) return;
+      setEnvironmentFilterOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [environmentFilterOpen]);
   const openEnvironment = (environment: Environment) => {
     setSelected(environment);
+    router.push(`/vnet/${encodeURIComponent(environment.id)}/overview`);
   };
 
   const createEnvironment = async (input: CreateEnvironmentInput) => {
@@ -3486,7 +4068,7 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
         : "Environment ready.");
       setError(null);
       await load();
-      openEnvironment(created);
+        openEnvironment(created);
     } catch (cause) {
       const message = errorMessage(cause, "Could not create the environment.");
       setError(message);
@@ -3502,21 +4084,37 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
         environment={selected}
         basePath={path.slice(0, -"/environments".length)}
         scope={scope}
-        onBack={() => setSelected(null)}
+        onBack={() => {
+          setSelected(null);
+          router.push("/vnet");
+        }}
         onDeleted={() => {
           setSelected(null);
+          router.push("/vnet");
           void load();
         }}
         onRefresh={load}
       />
     );
-  const visible = environments.filter(
-    (environment) =>
-      !query.trim() ||
-      environment.name.toLowerCase().includes(query.trim().toLowerCase()) ||
-      environment.network.toLowerCase().includes(query.trim().toLowerCase()) ||
-      String(environment.state_ledger ?? environment.base_ledger_sequence).includes(query.trim()),
-  );
+  const visible = environments.filter((environment) => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const status = environment.initialization_status === "preparing"
+      ? "preparing"
+      : environment.initialization_status === "failed"
+        ? "failed"
+        : "ready";
+    const matchesQuery =
+      !normalizedQuery ||
+      environment.name.toLowerCase().includes(normalizedQuery) ||
+      environment.network.toLowerCase().includes(normalizedQuery) ||
+      String(environment.state_ledger ?? environment.base_ledger_sequence).includes(normalizedQuery);
+    const matchesFilter =
+      environmentFilter === "all" ||
+      environmentFilter === environment.network ||
+      environmentFilter === (environment.mode ?? "frozen") ||
+      environmentFilter === status;
+    return matchesQuery && matchesFilter;
+  });
   const refreshList = async () => {
     setRefreshing(true);
     try {
@@ -3549,6 +4147,46 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
               placeholder="Search environments"
             />
           </div>
+          <div className="pw-environment-filter-control" ref={environmentFilterRef}>
+            <Button
+              aria-label="Filter virtual networks"
+              title="Filter virtual networks"
+              aria-expanded={environmentFilterOpen}
+              data-active={environmentFilter !== "all"}
+              onClick={() => setEnvironmentFilterOpen((open) => !open)}
+            >
+              <Filter size={15} /> Filter
+            </Button>
+            {environmentFilterOpen && (
+              <div className="pw-simulator-filter-menu" role="menu" aria-label="Virtual network filters">
+                {([
+                  ["all", "All networks"],
+                  ["mainnet", "Mainnet"],
+                  ["testnet", "Testnet"],
+                  ["follow_latest", "Network sync"],
+                  ["frozen", "Frozen"],
+                  ["ready", "Ready"],
+                  ["preparing", "Preparing"],
+                  ["failed", "Failed"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={environmentFilter === value}
+                    data-active={environmentFilter === value}
+                    onClick={() => {
+                      setEnvironmentFilter(value);
+                      setEnvironmentFilterOpen(false);
+                    }}
+                  >
+                    <span>{label}</span>
+                    {environmentFilter === value && <span className="pw-filter-option-check" aria-hidden="true"><Check size={10} /></span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="pw-toolbar-actions">
             <Button
               iconOnly
@@ -3576,13 +4214,14 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
           <div className="pw-table pw-environment-table">
             <div
               className="pw-row pw-row-header pw-environment-row"
-              style={{ gridTemplateColumns: "minmax(260px, 1fr) 128px 140px 140px 110px" }}
+              style={{ gridTemplateColumns: "minmax(260px, 1fr) 128px 140px 140px 110px 135px" }}
             >
               <span>Environment</span>
               <span>Network</span>
               <span>Mode</span>
               <span>State ledger</span>
               <span>Status</span>
+              <span>Created At</span>
             </div>
             {visible.map((environment) => (
               <EnvironmentRow
@@ -3592,7 +4231,7 @@ export function VirtualEnvPage({ scope }: { scope: ProjectScope }) {
               />
             ))}
           </div>
-        ) : query.trim() ? (
+        ) : query.trim() || environmentFilter !== "all" ? (
           <div className="pw-catalog-empty">
             <Blocks size={20} />
             <strong>No matching environments</strong>
@@ -3626,26 +4265,484 @@ function Accordion({
   open,
   onToggle,
   children,
+  sectionId,
+  selectionMode = false,
+  active = false,
+  onSelect,
 }: {
   icon: ReactNode;
   title: string;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
+  sectionId?: string;
+  selectionMode?: boolean;
+  active?: boolean;
+  onSelect?: () => void;
 }) {
+  const showing = selectionMode ? active : open;
   return (
-    <div className="pw-accordion">
-      <button type="button" onClick={onToggle}>
+    <div
+      className="pw-accordion"
+      data-input-section={sectionId}
+      data-active={selectionMode && active ? "true" : undefined}
+    >
+      {selectionMode && (
+        <div className="pw-input-section-heading">
+          {icon}
+          <span>{title}</span>
+        </div>
+      )}
+      <button type="button" onClick={selectionMode ? onSelect : onToggle}>
         {icon}
-        {title}
-        <ChevronDown className={`pw-dropdown-chevron${open ? " open" : ""}`} size={15} />
+        <span>{title}</span>
+        {selectionMode ? (
+          active && <span className="pw-input-section-check" aria-hidden="true"><Check size={13} /></span>
+        ) : (
+          <ChevronDown className={`pw-dropdown-chevron${open ? " open" : ""}`} size={15} />
+        )}
       </button>
-      {open && <div className="pw-accordion-body">{children}</div>}
+      {showing && <div className="pw-accordion-body">{children}</div>}
     </div>
   );
 }
 
-export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: ProjectScope; embeddedEnvironmentId?: string }) {
+function ParamField({
+  name,
+  type,
+  value,
+  error,
+  types,
+  onChange,
+  depth = 0,
+}: {
+  name: string;
+  type: ContractSpecType;
+  value: EditorValue;
+  error?: string | null;
+  types: ContractTypes;
+  onChange: (value: EditorValue) => void;
+  depth?: number;
+}) {
+  return (
+    <div className="pw-param-field" data-depth={Math.min(depth, 4)}>
+      <span className="pw-param-head">
+        <span className="pw-param-name">{name}</span>
+        <span className="pw-param-type">{typeLabel(type)}</span>
+      </span>
+      <TypeEditor type={type} value={value} types={types} onChange={onChange} depth={depth} />
+      {error ? <span className="pw-param-error">{error}</span> : null}
+    </div>
+  );
+}
+
+function TypeEditor({
+  type,
+  value,
+  types,
+  onChange,
+  depth,
+}: {
+  type: ContractSpecType;
+  value: EditorValue;
+  types: ContractTypes;
+  onChange: (value: EditorValue) => void;
+  depth: number;
+}) {
+  switch (type.kind) {
+    case "address":
+    case "muxed_address":
+    case "u32":
+    case "i32":
+    case "u64":
+    case "i64":
+    case "u128":
+    case "i128":
+    case "u256":
+    case "i256":
+    case "timepoint":
+    case "duration":
+    case "string":
+    case "symbol":
+    case "bytes":
+    case "bytes_n": {
+      const text = value.kind === "scalar" ? value.text : "";
+      return (
+        <input
+          className="pw-field pw-mono"
+          value={text}
+          onChange={(event) => onChange({ kind: "scalar", text: event.target.value })}
+          placeholder={scalarPlaceholder(type)}
+        />
+      );
+    }
+    case "bool": {
+      const bool = value.kind === "bool" ? value.value : false;
+      return (
+        <select
+          className="pw-field"
+          value={bool ? "true" : "false"}
+          onChange={(event) =>
+            onChange({ kind: "bool", value: event.target.value === "true" })
+          }
+        >
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      );
+    }
+    case "vec": {
+      const isComplex =
+        type.elem.kind === "udt" ||
+        type.elem.kind === "map" ||
+        type.elem.kind === "tuple" ||
+        type.elem.kind === "option" ||
+        type.elem.kind === "result" ||
+        type.elem.kind === "vec";
+      const list = value.kind === "list" ? value : { items: [] as EditorValue[] };
+      if (isComplex) {
+        return (
+          <div className="pw-params-list">
+            {list.items.map((item, index) => (
+              <div className="pw-params-list-row" key={index}>
+                <div className="pw-params-list-body">
+                  <TypeEditor
+                    type={type.elem}
+                    value={item}
+                    types={types}
+                    depth={depth + 1}
+                    onChange={(next) =>
+                      onChange({
+                        kind: "list",
+                        items: list.items.map((existing, i) => (i === index ? next : existing)),
+                      })
+                    }
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="pw-param-remove"
+                  aria-label="Remove element"
+                  title="Remove element"
+                  onClick={() =>
+                    onChange({ kind: "list", items: list.items.filter((_, i) => i !== index) })
+                  }
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="pw-param-add"
+              onClick={() =>
+                onChange({
+                  kind: "list",
+                  items: [...list.items, defaultEditorValue(type.elem, types)],
+                })
+              }
+            >
+              <Plus size={12} /> Add element
+            </button>
+          </div>
+        );
+      }
+      const text = list.items.map((item) => (item.kind === "scalar" ? item.text : "")).join("\n");
+      return (
+        <textarea
+          className="pw-field pw-mono pw-params-textarea"
+          rows={Math.min(5, Math.max(1, list.items.length + 1))}
+          value={text}
+          onChange={(event) =>
+            onChange({
+              kind: "list",
+              items: event.target.value
+                .split(/[\s,]+/)
+                .filter(Boolean)
+                .map((part) => ({ kind: "scalar", text: part })),
+            })
+          }
+          placeholder={type.elem.kind === "address" ? "One address per line — paste any chunk" : "One value per line"}
+        />
+      );
+    }
+    case "tuple": {
+      const list = value.kind === "list" ? value : { items: [] as EditorValue[] };
+      return (
+        <div className="pw-params-tuple">
+          {type.elems.map((element, index) => (
+            <TypeEditor
+              key={index}
+              type={element}
+              value={list.items[index] ?? defaultEditorValue(element, types)}
+              types={types}
+              depth={depth + 1}
+              onChange={(next) =>
+                onChange({
+                  kind: "list",
+                  items: list.items.map((existing, i) => (i === index ? next : existing)),
+                })
+              }
+            />
+          ))}
+        </div>
+      );
+    }
+    case "map": {
+      const map =
+        value.kind === "map"
+          ? value
+          : { rows: [] as Array<{ key: EditorValue; value: EditorValue }> };
+      return (
+        <div className="pw-params-map">
+          {map.rows.map((row, index) => (
+            <div className="pw-params-map-row" key={index}>
+              <div className="pw-params-map-key">
+                <span className="pw-param-type">key</span>
+                <TypeEditor
+                  type={type.key}
+                  value={row.key}
+                  types={types}
+                  depth={depth + 1}
+                  onChange={(key) =>
+                    onChange({
+                      kind: "map",
+                      rows: map.rows.map((existing, i) => (i === index ? { ...existing, key } : existing)),
+                    })
+                  }
+                />
+              </div>
+              <div className="pw-params-map-value">
+                <span className="pw-param-type">value</span>
+                <TypeEditor
+                  type={type.value}
+                  value={row.value}
+                  types={types}
+                  depth={depth + 1}
+                  onChange={(val) =>
+                    onChange({
+                      kind: "map",
+                      rows: map.rows.map((existing, i) => (i === index ? { ...existing, value: val } : existing)),
+                    })
+                  }
+                />
+              </div>
+              <button
+                type="button"
+                className="pw-param-remove"
+                aria-label="Remove map entry"
+                title="Remove map entry"
+                onClick={() =>
+                  onChange({
+                    kind: "map",
+                    rows: map.rows.filter((_, i) => i !== index),
+                  })
+                }
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="pw-param-add"
+            onClick={() =>
+              onChange({
+                kind: "map",
+                rows: [
+                  ...map.rows,
+                  {
+                    key: defaultEditorValue(type.key, types),
+                    value: defaultEditorValue(type.value, types),
+                  },
+                ],
+              })
+            }
+          >
+            <Plus size={12} /> Add entry
+          </button>
+        </div>
+      );
+    }
+    case "option": {
+      const option =
+        value.kind === "option"
+          ? value
+          : { some: false, value: null as EditorValue | null };
+      return (
+        <div className="pw-params-branch">
+          <select
+            className="pw-field pw-params-branch-select"
+            value={option.some ? "some" : "none"}
+            onChange={(event) => {
+              const some = event.target.value === "some";
+              onChange({
+                kind: "option",
+                some,
+                value: some ? option.value ?? defaultEditorValue(type.inner, types) : null,
+              });
+            }}
+          >
+            <option value="none">None</option>
+            <option value="some">Some</option>
+          </select>
+          {option.some && option.value && (
+            <TypeEditor
+              type={type.inner}
+              value={option.value}
+              types={types}
+              depth={depth + 1}
+              onChange={(next) => onChange({ kind: "option", some: true, value: next })}
+            />
+          )}
+        </div>
+      );
+    }
+    case "result": {
+      const result =
+        value.kind === "result"
+          ? value
+          : { ok: true, value: null as EditorValue | null };
+      return (
+        <div className="pw-params-branch">
+          <select
+            className="pw-field pw-params-branch-select"
+            value={result.ok ? "ok" : "err"}
+            onChange={(event) => {
+              const ok = event.target.value === "ok";
+              onChange({
+                kind: "result",
+                ok,
+                value: result.value ?? defaultEditorValue(ok ? type.ok : type.err, types),
+              });
+            }}
+          >
+            <option value="ok">Ok</option>
+            <option value="err">Err</option>
+          </select>
+          {result.value && (
+            <TypeEditor
+              type={result.ok ? type.ok : type.err}
+              value={result.value}
+              types={types}
+              depth={depth + 1}
+              onChange={(next) => onChange({ kind: "result", ok: result.ok, value: next })}
+            />
+          )}
+        </div>
+      );
+    }
+    case "udt": {
+      const descriptor = types[type.name];
+      const udt =
+        value.kind === "udt"
+          ? value
+          : (defaultEditorValue(type, types) as {
+              kind: "udt";
+              name: string;
+              variant: string;
+              fields: Record<string, EditorValue>;
+            });
+      if (descriptor?.kind === "struct") {
+        return (
+          <div className="pw-params-udt">
+            {descriptor.fields.map((field) => (
+              <ParamField
+                key={field.name}
+                name={field.name}
+                type={field.type}
+                value={udt.fields[field.name] ?? defaultEditorValue(field.type, types)}
+                types={types}
+                depth={depth + 1}
+                onChange={(next) =>
+                  onChange({
+                    kind: "udt",
+                    name: type.name,
+                    variant: "",
+                    fields: { ...udt.fields, [field.name]: next },
+                  })
+                }
+              />
+            ))}
+          </div>
+        );
+      }
+      if (descriptor?.kind === "union") {
+        const variant =
+          descriptor.variants.find((candidate) => candidate.name === udt.variant) ??
+          descriptor.variants[0];
+        return (
+          <div className="pw-params-udt">
+            <select
+              className="pw-field"
+              value={udt.variant || variant?.name || ""}
+              onChange={(event) => {
+                const chosen = descriptor.variants.find((candidate) => candidate.name === event.target.value);
+                const fields: Record<string, EditorValue> = {};
+                if (chosen?.type) fields[chosen.name] = defaultEditorValue(chosen.type, types);
+                onChange({ kind: "udt", name: type.name, variant: chosen?.name ?? "", fields });
+              }}
+            >
+              {descriptor.variants.map((candidate) => (
+                <option key={candidate.name} value={candidate.name}>
+                  {candidate.name}
+                </option>
+              ))}
+            </select>
+            {variant?.type && (
+              <TypeEditor
+                type={variant.type}
+                value={udt.fields[variant.name] ?? defaultEditorValue(variant.type, types)}
+                types={types}
+                depth={depth + 1}
+                onChange={(next) =>
+                  onChange({
+                    kind: "udt",
+                    name: type.name,
+                    variant: variant.name,
+                    fields: { ...udt.fields, [variant.name]: next },
+                  })
+                }
+              />
+            )}
+          </div>
+        );
+      }
+      const variants = descriptor?.variants ?? [];
+      return (
+        <div className="pw-params-udt">
+          <select
+            className="pw-field"
+            value={udt.variant || variants[0]?.name || ""}
+            onChange={(event) =>
+              onChange({ kind: "udt", name: type.name, variant: event.target.value, fields: {} })
+            }
+          >
+            {variants.map((candidate) => (
+              <option key={candidate.name} value={candidate.name}>
+                {candidate.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    default:
+      return <span className="pw-param-type">{type.kind}</span>;
+  }
+}
+
+export function SimulatorPage({
+  scope,
+  embeddedEnvironmentId,
+  embeddedEnvironmentNetwork,
+  newSimulation = false,
+}: {
+  scope: ProjectScope;
+  embeddedEnvironmentId?: string;
+  embeddedEnvironmentNetwork?: string;
+  newSimulation?: boolean;
+}) {
   const router = useRouter();
   const search = useSearchParams();
   const requestedLedger = search.get("ledger");
@@ -3654,32 +4751,48 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     Boolean(
       embeddedEnvironmentId ||
       search.get("contract") ||
-      search.get("impersonate") ||
       search.get("environment") ||
       search.get("run") ||
       requestedLedger ||
-      sourceTransaction,
+      sourceTransaction ||
+      newSimulation,
     ),
   );
   const [view, setView] = useState<"input" | "split" | "output">("split");
+  const [activeInputSection, setActiveInputSection] = useState("parameters");
   const [resultTab, setResultTab] = useState<
     "summary" | "calls" | "auth" | "events" | "state" | "resources" | "raw"
   >("summary");
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [runs, setRuns] = useState<Simulation[]>([]);
   const [runQuery, setRunQuery] = useState("");
+  const [runFilter, setRunFilter] = useState<"all" | "active" | "success" | "failed" | "cancelled">("all");
+  const [runFilterOpen, setRunFilterOpen] = useState(false);
+  const runFilterRef = useRef<HTMLDivElement | null>(null);
   const [environmentId, setEnvironmentId] = useState(
     embeddedEnvironmentId ?? search.get("environment") ?? "",
   );
   const [stateMode, setStateMode] = useState<
     "latest" | "ledger" | "environment"
   >(
-    embeddedEnvironmentId || search.get("environment")
+    embeddedEnvironmentId || (!newSimulation && search.get("environment"))
       ? "environment"
       : requestedLedger
         ? "ledger"
         : "latest",
   );
+  const requestedSimulationNetwork = search.get("network");
+  const [simulationNetwork, setSimulationNetwork] = useState<
+    "mainnet" | "testnet"
+  >(
+    requestedSimulationNetwork === "mainnet" || requestedSimulationNetwork === "testnet"
+      ? requestedSimulationNetwork
+      : scope.network === "testnet"
+        ? "testnet"
+        : "mainnet",
+  );
+  const [simulationNetworkMenuOpen, setSimulationNetworkMenuOpen] = useState(false);
+  const simulationNetworkMenuRef = useRef<HTMLSpanElement | null>(null);
   const [historicalLedger, setHistoricalLedger] = useState(
     requestedLedger ?? "",
   );
@@ -3689,13 +4802,16 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
   );
   const [argsMode, setArgsMode] = useState<"decoded" | "raw">("decoded");
   const [args, setArgs] = useState(search.get("args") ?? "[]");
+  const [contractSpec, setContractSpec] = useState<ContractSpecResponse | null>(null);
+  const [contractSpecLoading, setContractSpecLoading] = useState(false);
+  const [contractSpecError, setContractSpecError] = useState<string | null>(null);
+  const [contractSpecRetry, setContractSpecRetry] = useState(0);
+  const [paramValues, setParamValues] = useState<Record<string, EditorValue>>({});
+  const specCacheRef = useRef(new Map<string, ContractSpecResponse>());
   const [sourceAccountXdr, setSourceAccountXdr] = useState("");
   const [sequenceNumber, setSequenceNumber] = useState<number | null>(null);
   const [sequenceLoading, setSequenceLoading] = useState(false);
   const [transactionEnvelopeXdr, setTransactionEnvelopeXdr] = useState("");
-  const [impersonate, setImpersonate] = useState(
-    search.get("impersonate") ?? "",
-  );
   const [increaseLedger, setIncreaseLedger] = useState("0");
   const [timestamp, setTimestamp] = useState("");
   const [balanceTarget, setBalanceTarget] = useState("");
@@ -3715,20 +4831,35 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     unknown
   > | null>(null);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
-  const [message, setMessage] = useState<string | null>(() => {
-    if (sourceTransaction)
-      return "Transaction context was prefilled from the explorer. Re-simulation runs the decoded invocation against the selected private environment; it never resubmits the original transaction.";
-    if (requestedLedger)
-      return `Ledger ${requestedLedger} is the requested snapshot context. Select or create an environment based on that ledger before running an invocation.`;
-    if (search.get("impersonate") && !search.get("contract"))
-      return "The wallet is prefilled as an impersonated signer. A wallet is not simulated by itself; choose the contract function it should authorize.";
-    if (search.get("contract"))
-      return "The contract target is prefilled. Choose a function and arguments to simulate an invocation against an isolated environment.";
-    return null;
-  });
+  const [functionMenuOpen, setFunctionMenuOpen] = useState(false);
+  const [functionQuery, setFunctionQuery] = useState("");
+  const functionMenuRef = useRef<HTMLSpanElement | null>(null);
+  const [targetSuggestions, setTargetSuggestions] = useState<TargetSuggestion[]>([]);
+  const [targetLookupOpen, setTargetLookupOpen] = useState(false);
+  const [targetLookupLoading, setTargetLookupLoading] = useState(false);
+  const [targetLookupError, setTargetLookupError] = useState<string | null>(null);
+  const [sourceAccountError, setSourceAccountError] = useState<string | null>(null);
+  const [targetActiveIndex, setTargetActiveIndex] = useState(0);
+  const [sourceAccountSuggestions, setSourceAccountSuggestions] = useState<TargetSuggestion[]>([]);
+  const [sourceAccountLookupOpen, setSourceAccountLookupOpen] = useState(false);
+  const [sourceAccountLookupLoading, setSourceAccountLookupLoading] = useState(false);
+  const [sourceAccountLookupError, setSourceAccountLookupError] = useState<string | null>(null);
+  const [sourceAccountActiveIndex, setSourceAccountActiveIndex] = useState(0);
+  const targetLookupRef = useRef<HTMLDivElement | null>(null);
+  const sourceAccountLookupRef = useRef<HTMLDivElement | null>(null);
+  const [functionAction, setFunctionAction] = useState<"source" | "spec" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (newSimulation) {
+      setEditor(true);
+    } else if (!embeddedEnvironmentId) {
+      setEditor(false);
+    }
+  }, [embeddedEnvironmentId, newSimulation]);
   const [resourceJobStatusPath, setResourceJobStatusPath] = useState<
     string | null
   >(null);
@@ -3739,11 +4870,75 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
   const selectedEnvironment = environments.find(
     (environment) => environment.id === environmentId,
   );
+  const requestNetwork = embeddedEnvironmentNetwork ?? (
+    stateMode === "environment"
+      ? selectedEnvironment?.network ?? simulationNetwork
+      : simulationNetwork
+  );
   const visibleContractEntries = contractEntries.filter((entry) =>
     `${entry.decoded_key} ${entry.decoded_value} ${entry.key}`
       .toLowerCase()
       .includes(contractEntrySearch.trim().toLowerCase()),
   );
+  const confirmedContractTarget = targetSuggestions.some(
+    (suggestion) =>
+      suggestion.kind === "contract" && suggestion.value === contractId.trim(),
+  );
+  const functionOptions = useMemo<FunctionOption[]>(() => {
+    const target = contractId.trim();
+    if (!confirmedContractTarget) return [];
+    const merged = new Map<string, FunctionOption>();
+    for (const fn of contractSpec?.functions ?? []) {
+      merged.set(fn.name, { name: fn.name, inputs: fn.inputs, fromSpec: true });
+    }
+    for (const name of Array.from(
+      new Set(
+        runs
+          .filter((run) => target && run.target?.trim() === target)
+          .map((run) => run.function_name.trim())
+          .filter(Boolean),
+      ),
+    )) {
+      if (!merged.has(name)) merged.set(name, { name, inputs: [], fromSpec: false });
+    }
+    if (functionName.trim() && !merged.has(functionName.trim())) {
+      merged.set(functionName.trim(), {
+        name: functionName.trim(),
+        inputs: [],
+        fromSpec: false,
+      });
+    }
+    return Array.from(merged.values()).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+  }, [confirmedContractTarget, contractId, contractSpec, functionName, runs]);
+  const visibleFunctionOptions = useMemo(() => {
+    const query = functionQuery.trim().toLowerCase();
+    return functionOptions.filter(
+      (option) =>
+        option.name.toLowerCase().includes(query) ||
+        option.inputs.some(
+          (input) =>
+            input.name.toLowerCase().includes(query) ||
+            typeLabel(input.type).toLowerCase().includes(query),
+        ),
+    );
+  }, [functionOptions, functionQuery]);
+  const selectedFunction =
+    contractSpec?.functions.find((fn) => fn.name === functionName) ?? null;
+  const paramErrors = useMemo(() => {
+    if (!selectedFunction || !contractSpec) return {};
+    const errors: Record<string, string | null> = {};
+    for (const input of selectedFunction.inputs) {
+      errors[input.name] = validateEditorValue(
+        input.type,
+        paramValues[input.name] ?? defaultEditorValue(input.type, contractSpec.contract_types),
+        contractSpec.contract_types,
+      );
+    }
+    return errors;
+  }, [contractSpec, paramValues, selectedFunction]);
+  const hasParamErrors = Object.values(paramErrors).some(Boolean);
   const load = useCallback(async () => {
     if (!environmentPath || !simulationPath) return;
     try {
@@ -3774,6 +4969,120 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     void load();
   }, [load]);
   useEffect(() => {
+    if (!runFilterOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && runFilterRef.current?.contains(event.target)) return;
+      setRunFilterOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [runFilterOpen]);
+  useEffect(() => {
+    if (!functionMenuOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && functionMenuRef.current?.contains(event.target)) return;
+      setFunctionMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [functionMenuOpen]);
+  useEffect(() => {
+    if (!targetLookupOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && targetLookupRef.current?.contains(event.target)) return;
+      setTargetLookupOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [targetLookupOpen]);
+  useEffect(() => {
+    if (!sourceAccountLookupOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && sourceAccountLookupRef.current?.contains(event.target)) return;
+      setSourceAccountLookupOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [sourceAccountLookupOpen]);
+  useEffect(() => {
+    const normalized = contractId.trim();
+    setTargetSuggestions([]);
+    setTargetActiveIndex(0);
+    if (!normalized) {
+      setTargetSuggestions([]);
+      setTargetLookupLoading(false);
+      setTargetLookupError(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setTargetLookupLoading(true);
+      setTargetLookupError(null);
+      const result = await lookupExplorer(requestNetwork, normalized, controller.signal);
+      if (controller.signal.aborted) return;
+      setTargetSuggestions(
+        (result.data?.suggestions ?? []).filter(
+          (suggestion): suggestion is TargetSuggestion =>
+            suggestion.kind === "account" || suggestion.kind === "contract",
+        ),
+      );
+      setTargetActiveIndex(0);
+      setTargetLookupError(result.error);
+      setTargetLookupLoading(false);
+      setTargetLookupOpen(true);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [contractId, requestNetwork]);
+  useEffect(() => {
+    const normalized = sourceAccountXdr.trim();
+    setSourceAccountSuggestions([]);
+    setSourceAccountActiveIndex(0);
+    if (!normalized) {
+      setSourceAccountLookupLoading(false);
+      setSourceAccountLookupError(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSourceAccountLookupLoading(true);
+      setSourceAccountLookupError(null);
+      const result = await lookupExplorer(requestNetwork, normalized, controller.signal);
+      if (controller.signal.aborted) return;
+      setSourceAccountSuggestions(
+        (result.data?.suggestions ?? []).filter(
+          (suggestion): suggestion is TargetSuggestion => suggestion.kind === "account",
+        ),
+      );
+      setSourceAccountActiveIndex(0);
+      setSourceAccountLookupError(
+        result.error && /unsupported simulation network:/i.test(result.error)
+          ? `No matching account found on ${requestNetwork}.`
+          : result.error,
+      );
+      setSourceAccountLookupLoading(false);
+      setSourceAccountLookupOpen(true);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [requestNetwork, sourceAccountXdr]);
+  useEffect(() => {
+    if (!simulationNetworkMenuOpen) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        simulationNetworkMenuRef.current?.contains(event.target)
+      ) return;
+      setSimulationNetworkMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick, true);
+  }, [simulationNetworkMenuOpen]);
+  useEffect(() => {
     if (
       argsMode === "raw" ||
       stateMode === "ledger" ||
@@ -3782,20 +5091,34 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     ) {
       setSequenceNumber(null);
       setSequenceLoading(false);
+      setSourceAccountError(null);
       return;
     }
     let cancelled = false;
     setSequenceNumber(null);
     setSequenceLoading(true);
+    setSourceAccountError(null);
     const timer = window.setTimeout(() => {
       api.post<{ next_sequence_number: number }>(`${simulationPath}/sequence`, {
-        network: scope.network,
-        source_account_xdr: sourceAccountXdr.trim(),
+        network: requestNetwork,
+        source_account: sourceAccountXdr.trim(),
         environment_id: stateMode === "environment" ? environmentId || null : null,
       }).then((response) => {
-        if (!cancelled) setSequenceNumber(response.next_sequence_number);
-      }).catch(() => {
-        if (!cancelled) setError("The source account sequence could not be resolved from the selected state.");
+        if (!cancelled) {
+          setSequenceNumber(response.next_sequence_number);
+          setSourceAccountError(null);
+        }
+      }).catch((cause) => {
+        if (!cancelled) {
+          const rawMessage = errorMessage(
+            cause,
+            "The source account sequence could not be resolved from the selected state.",
+          );
+          const message = /unsupported simulation network:/i.test(rawMessage)
+            ? `No matching account or contract found on ${requestNetwork}.`
+            : rawMessage;
+          setSourceAccountError(message);
+        }
       }).finally(() => {
         if (!cancelled) setSequenceLoading(false);
       });
@@ -3804,7 +5127,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [argsMode, environmentId, scope.network, simulationPath, sourceAccountXdr, stateMode]);
+  }, [argsMode, environmentId, requestNetwork, simulationPath, sourceAccountXdr, stateMode]);
   useEffect(() => {
     if (!contractId.trim() || !simulationPath) {
       setContractEntries([]);
@@ -3816,7 +5139,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     const timer = window.setTimeout(() => {
       setContractEntriesLoading(true);
       api.post<{ entries: SimulationLedgerEntry[] }>(`${simulationPath}/contract-entries`, {
-        network: scope.network,
+        network: requestNetwork,
         contract_id: contractId.trim(),
         environment_id: stateMode === "environment" ? environmentId || null : null,
       }).then((response) => {
@@ -3835,19 +5158,69 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [contractId, environmentId, scope.network, simulationPath, stateMode]);
+  }, [contractId, environmentId, requestNetwork, simulationPath, stateMode]);
   useEffect(() => {
-    const run = search.get("run");
-    if (run && simulationPath)
-      api
-        .get<Record<string, unknown>>(
-          `${simulationPath}/${encodeURIComponent(run)}`,
-        )
-        .then(setSelectedRun)
-        .catch((cause) =>
-          setError(errorMessage(cause, "Could not load the simulation.")),
-        );
-  }, [search, simulationPath]);
+    const target = contractId.trim();
+    if (
+      !simulationPath ||
+      !target ||
+      !isValidStellarContractId(target) ||
+      !confirmedContractTarget
+    ) {
+      setContractSpec(null);
+      setContractSpecError(null);
+      setContractSpecLoading(false);
+      setParamValues({});
+      return;
+    }
+    const cacheKey = `${requestNetwork}:${target}`;
+    const cached = specCacheRef.current.get(cacheKey);
+    if (cached) {
+      setContractSpec(cached);
+      setContractSpecError(null);
+      return;
+    }
+    let cancelled = false;
+    setContractSpecLoading(true);
+    const timer = window.setTimeout(() => {
+      api.post<ContractSpecResponse>(`${simulationPath}/contract-spec`, {
+        network: requestNetwork,
+        contract_id: target,
+        environment_id: stateMode === "environment" ? environmentId || null : null,
+      }).then((response) => {
+        if (cancelled) return;
+        specCacheRef.current.set(cacheKey, response);
+        setContractSpec(response);
+        setContractSpecError(null);
+      }).catch(() => {
+        if (cancelled) return;
+        setContractSpec(null);
+        setContractSpecError("Error in finding indexed functions.");
+      }).finally(() => {
+        if (!cancelled) setContractSpecLoading(false);
+      });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    confirmedContractTarget,
+    contractId,
+    environmentId,
+    requestNetwork,
+    simulationPath,
+    stateMode,
+    contractSpecRetry,
+  ]);
+  useEffect(() => {
+    if (!selectedFunction || !contractSpec) return;
+    setParamValues((current) => {
+      const hasMissing = selectedFunction.inputs.some((input) => !(input.name in current));
+      if (!hasMissing) return current;
+      return { ...defaultValuesForFunction(selectedFunction, contractSpec.contract_types), ...current };
+    });
+  }, [contractSpec, selectedFunction]);
 
   const toggle = (section: string) =>
     setOpenSections((current) => ({
@@ -3930,13 +5303,13 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     if (stateMode === "environment" && !environmentId)
       throw new Error("Choose a virtual network.");
     if (stateMode === "ledger") {
-      const boundary = scope.network === "mainnet" ? 62447231 : 2070825;
+      const boundary = requestNetwork === "mainnet" ? 62447231 : 2070825;
       if (
         !Number.isSafeInteger(Number(historicalLedger)) ||
         Number(historicalLedger) < boundary
       )
         throw new Error(
-          `Historical ${scope.network} simulations begin at ledger ${boundary.toLocaleString()}.`,
+          `Historical ${requestNetwork} simulations begin at ledger ${boundary.toLocaleString()}.`,
         );
     }
     if (
@@ -3951,8 +5324,17 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       );
     if (argsMode === "raw" && !transactionEnvelopeXdr.trim())
       throw new Error("Paste a prepared transaction envelope XDR.");
+    if (argsMode === "decoded" && selectedFunction) {
+      if (hasParamErrors)
+        throw new Error("Fix the highlighted arguments before running the simulation.");
+    }
 
-    const parsedArgs = argsMode === "decoded" ? JSON.parse(args) : [];
+    const parsedArgs =
+      argsMode === "decoded"
+        ? selectedFunction && contractSpec
+          ? buildArgsFromParams(contractSpec, functionName.trim(), paramValues)
+          : JSON.parse(args)
+        : [];
     const state_source =
       stateMode === "latest"
         ? { type: "latest" }
@@ -3970,18 +5352,14 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
             contract_id: contractId.trim(),
             function_name: functionName.trim(),
             args: parsedArgs,
-            source_account_xdr: sourceAccountXdr.trim(),
+            source_account: sourceAccountXdr.trim(),
             sequence_number: sequenceNumber,
           };
     return {
-      network: scope.network,
+      network: requestNetwork,
       state_source,
       invocation,
       overrides: buildOverrides(),
-      impersonate: impersonate
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
       capture_trace: captureTrace,
     };
   };
@@ -4013,17 +5391,9 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       if (pollingGeneration.current !== generation) return;
       const fork = (polled.fork_core ?? polled) as Record<string, unknown>;
       const status = String(fork.status ?? "pending");
-      const stage = String(fork.stage ?? "queued").replaceAll("_", " ");
-      const progress = Number(fork.progress ?? 0);
-      const retryCount = Number(fork.attempts ?? fork.retry_count ?? 0);
       retryAfterMs = Math.min(
         Math.max(Number(fork.retry_after_ms ?? 1000), 250),
         5000,
-      );
-      setMessage(
-        terminalSimulationStatuses.has(status) || terminalJobStatuses.has(status)
-          ? `Simulation ${status.replaceAll("_", " ")}.`
-          : `${stage} / ${progress}%${retryCount > 1 ? ` / attempt ${retryCount}` : ""}`,
       );
       if (jobStatusPath && terminalJobStatuses.has(status)) {
         const completed = await api.get<Record<string, unknown>>(
@@ -4031,12 +5401,6 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
         );
         if (pollingGeneration.current !== generation) return;
         setSelectedRun(completed);
-        const completedFork = (completed.fork_core ?? {}) as Record<
-          string,
-          unknown
-        >;
-        const completedStatus = String(completedFork.status ?? status);
-        setMessage(`Simulation ${completedStatus.replaceAll("_", " ")}.`);
         return;
       }
       if (jobStatusPath) {
@@ -4078,19 +5442,11 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       const job = await api.get<Record<string, unknown>>(statusPath);
       if (pollingGeneration.current !== generation) return;
       const status = String(job.status ?? "queued");
-      const stage = String(job.stage ?? "queued").replaceAll("_", " ");
-      const progress = Number(job.progress ?? 0);
-      const attemptNumber = Number(job.attempts ?? 0);
       retryAfterMs = Math.min(
         Math.max(Number(job.retry_after_ms ?? 1000), 250),
         5000,
       );
       setSelectedRun({ job_id: jobId, fork_core: job });
-      setMessage(
-        terminalStatuses.has(status)
-          ? `Coverage repair ${status.replaceAll("_", " ")}.`
-          : `${stage} / ${progress}%${attemptNumber > 1 ? ` / attempt ${attemptNumber}` : ""}`,
-      );
       if (terminalStatuses.has(status)) {
         if (status !== "succeeded") {
           const lastError = job.last_error as
@@ -4113,9 +5469,13 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     try {
       request = buildAuthoritativeRequest();
     } catch (cause) {
-      setError(
-        errorMessage(cause, "Arguments and overrides must be valid JSON."),
-      );
+      const message = errorMessage(cause, "Arguments and overrides must be valid JSON.");
+      if (/source account/i.test(message)) {
+        setSourceAccountError(message);
+        setError(null);
+      } else {
+        setError(message);
+      }
       return;
     }
     const path = simulationPath;
@@ -4130,7 +5490,6 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       setResourceJobStatusPath(null);
       setSelectedRun(response);
       setResultTab("summary");
-      setMessage("Simulation queued. Resolving authoritative ledger state.");
       setError(null);
       const localId = typeof response.id === "string" ? response.id : null;
       if (localId) {
@@ -4151,7 +5510,13 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       }
       await load();
     } catch (cause) {
-      setError(errorMessage(cause, "Could not queue simulation."));
+      const message = errorMessage(cause, "Could not queue simulation.");
+      if (/source account/i.test(message)) {
+        setSourceAccountError(message);
+        setError(null);
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -4173,7 +5538,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
     }
     const path = scopePath(
       scope,
-      `/networks/${encodeURIComponent(scope.network)}/coverage/repair`,
+      `/networks/${encodeURIComponent(requestNetwork)}/coverage/repair`,
     );
     if (!path) return;
     setLoading(true);
@@ -4196,7 +5561,6 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       setResourceJobStatusPath(statusPath);
       setSelectedRun({ job_id: jobId, fork_core: accepted });
       setResultTab("summary");
-      setMessage("Coverage repair queued. Resolving canonical ledger evidence.");
       setError(null);
       await pollResourceJob(
         statusPath,
@@ -4262,7 +5626,6 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
           typeof selectedRun?.job_id === "string" ? selectedRun.job_id : null;
         if (!jobId) return;
         await api.delete<Record<string, unknown>>(resourceJobStatusPath);
-        setMessage("Coverage repair cancellation requested.");
         setError(null);
         await pollResourceJob(resourceJobStatusPath, jobId, generation, 120);
         return;
@@ -4281,7 +5644,6 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
           stage: "cancelling",
         },
       }));
-      setMessage("Simulation cancellation requested.");
       setError(null);
       await pollSimulation(simulationPath, simulationId, generation, 120);
       await load();
@@ -4348,12 +5710,30 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
       "cancelling",
     ].includes(simulationStatus);
   const normalizedRunQuery = runQuery.trim().toLowerCase();
-  const visibleRuns = runs.filter((run) =>
-    !normalizedRunQuery ||
-    `${run.function_name} ${run.status} ${run.id} ${run.base_ledger_sequence}`
-      .toLowerCase()
-      .includes(normalizedRunQuery),
-  );
+  const visibleRuns = runs.filter((run) => {
+    const status = String(run.status).toLowerCase();
+    const matchesQuery =
+      !normalizedRunQuery ||
+      `${run.function_name} ${status} ${run.id} ${run.base_ledger_sequence}`
+        .toLowerCase()
+        .includes(normalizedRunQuery);
+    const matchesFilter =
+      runFilter === "all" ||
+      (runFilter === "active" && ["queued", "running", "pending", "cancelling"].includes(status)) ||
+      (runFilter === "success" && ["success", "succeeded"].includes(status)) ||
+      (runFilter === "failed" && ["failed", "error", "inconclusive", "unavailable", "budget_limited"].includes(status)) ||
+      (runFilter === "cancelled" && status === "cancelled");
+    return matchesQuery && matchesFilter;
+  });
+
+  const refreshSimulations = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([load(), refreshSpinDelay()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (!editor)
     return (
@@ -4366,13 +5746,15 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
         <div className="pw-simulator-hero">
           <div>
             <span className="pw-empty-icon" aria-hidden="true">
-              <Play size={23} />
+              <SimulatorIcon size={62} />
             </span>
             <h1>Simulator</h1>
             <p>
               Preview Soroban transactions against real ledger snapshots,
-              inspect exact state and authorization effects, and test controlled
-              what-if scenarios without signing or submitting.
+              inspect exact state and authorization
+              <br />
+              effects, and test controlled what-if scenarios without signing or
+              submitting.
             </p>
           </div>
         </div>
@@ -4387,21 +5769,73 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
               aria-label="Search for a simulation"
             />
           </label>
-          <Button
-            primary
-            className="pw-catalog-create-button"
-            onClick={() => setEditor(true)}
-          >
-            <Plus size={17} /> New simulation
-          </Button>
+          <div className="pw-simulator-filter-control" ref={runFilterRef}>
+            <Button
+              aria-label="Filter simulations"
+              title="Filter simulations"
+              aria-expanded={runFilterOpen}
+              data-active={runFilter !== "all"}
+              onClick={() => setRunFilterOpen((open) => !open)}
+            >
+              <Filter size={15} /> Filter
+            </Button>
+            {runFilterOpen && (
+              <div className="pw-simulator-filter-menu" role="menu" aria-label="Simulation filters">
+                {([
+                  ["all", "All simulations"],
+                  ["active", "Active"],
+                  ["success", "Successful"],
+                  ["failed", "Failed"],
+                  ["cancelled", "Cancelled"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={runFilter === value}
+                    data-active={runFilter === value}
+                    onClick={() => {
+                      setRunFilter(value);
+                      setRunFilterOpen(false);
+                    }}
+                  >
+                    <span>{label}</span>
+                    {runFilter === value && <span className="pw-filter-option-check" aria-hidden="true"><Check size={10} /></span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="pw-simulator-catalog-actions">
+            <Button
+              iconOnly
+              aria-label="Refresh simulations"
+              title="Refresh simulations"
+              disabled={loading || refreshing}
+              onClick={() => void refreshSimulations()}
+            >
+              <RotateCcw className={refreshing ? "pw-spin" : ""} size={15} />
+            </Button>
+            <Button
+              primary
+              className="pw-catalog-create-button"
+              onClick={() => router.push("/simulation/new")}
+            >
+              <Plus size={17} /> New simulation
+            </Button>
+          </div>
         </div>
         {visibleRuns.length ? (
           <div className="pw-simulator-table">
             <div className="pw-simulator-table-row pw-simulator-table-head">
-              <span>Simulation</span>
+              <span>Id</span>
               <span>Status</span>
+              <span>Source</span>
+              <span>Target</span>
+              <span>Function</span>
+              <span>Network</span>
               <span>Ledger</span>
-              <span>Created</span>
+              <span>Created At</span>
               <span />
             </div>
             {visibleRuns.map((run) => (
@@ -4411,13 +5845,14 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                 key={run.id}
                 onClick={() => void openRun(run)}
               >
-                <span className="pw-simulator-name">
-                  <strong>{run.function_name || "Contract invocation"}</strong>
-                  <small>{truncateEntity(run.id, 10, 6)}</small>
-                </span>
+                <span className="pw-simulator-id pw-mono" title={run.id}>{truncateEntity(run.id, 10, 6)}</span>
                 <StatusBadge status={run.status} />
+                <span className="pw-mono" title={run.source ?? undefined}>{run.source ? truncateEntity(run.source, 10, 6) : "—"}</span>
+                <span className="pw-mono" title={run.target ?? undefined}>{run.target ? truncateEntity(run.target, 10, 6) : "—"}</span>
+                <span className="pw-simulator-function">{run.function_name || "Contract invocation"}</span>
+                <span>{scope.network}</span>
                 <span>{run.base_ledger_sequence.toLocaleString()}</span>
-                <span>{timeLabel(run.created_at)}</span>
+                <span title={run.created_at}>{createdAtLabel(run.created_at)}</span>
                 <span className="pw-simulator-row-arrow">
                   <ChevronRight size={15} />
                 </span>
@@ -4426,10 +5861,10 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
           </div>
         ) : (
           <div className="pw-simulator-empty">
-            <Play size={34} />
-            <h2>{runQuery ? "No simulations found" : "Create a simulation"}</h2>
+            <SimulatorIcon size={34} />
+            <h2>{runQuery || runFilter !== "all" ? "No simulations found" : "Create a simulation"}</h2>
             <p>
-              {runQuery
+              {runQuery || runFilter !== "all"
                 ? "Try another function, status, ledger, or simulation ID."
                 : "Preview a Soroban transaction against Stellar ledger state."}
             </p>
@@ -4442,20 +5877,41 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
   const showOutput = view !== "input";
   return (
     <div className="pw-page pw-sim-editor">
+      {functionAction && (
+        <Modal
+          title={functionAction === "source" ? "View Source" : "Load Spec"}
+          className="pw-modal-large"
+          onClose={() => setFunctionAction(null)}
+          footer={<Button onClick={() => setFunctionAction(null)}>Close</Button>}
+        >
+          <div className="pw-function-action-modal-space" aria-hidden="true" />
+        </Modal>
+      )}
       <ToastPopup
-        message={toastError}
+        message={toastError ?? error}
         kind="error"
-        onDone={() => setToastError(null)}
+        onDone={() => {
+          setToastError(null);
+          setError(null);
+        }}
       />
       <div className="pw-sim-top">
         <div className="pw-inline">
           <Button
             iconOnly
-            className={embeddedEnvironmentId ? "pw-sim-back-button" : ""}
+            className="pw-sim-back-button"
             aria-label="Exit editor"
-            onClick={() => setEditor(false)}
+            onClick={() => {
+              if (embeddedEnvironmentId) {
+                setEditor(false);
+              } else if (newSimulation) {
+                router.push("/simulator");
+              } else {
+                setEditor(false);
+              }
+            }}
           >
-            {embeddedEnvironmentId ? <ChevronLeft size={18} /> : <ArrowLeft size={15} />}
+            <ChevronLeft size={18} />
           </Button>
           <h1>New simulation</h1>
         </div>
@@ -4503,20 +5959,20 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
           )}
           <Button
             primary
-            disabled={loading || (stateMode === "environment" && !environmentId) || (argsMode === "decoded" && (sequenceLoading || sequenceNumber === null))}
+            disabled={loading || (stateMode === "environment" && !environmentId) || (argsMode === "decoded" && (sequenceLoading || sequenceNumber === null)) || (argsMode === "decoded" && !!selectedFunction && hasParamErrors)}
             onClick={() => void simulate()}
           >
             {loading ? <LoaderCircle size={14} /> : <Play size={14} />} Simulate
           </Button>
         </div>
       </div>
-      {error && <Message error>{error}</Message>}
-      {message && <Message>{message}</Message>}
       <div
         className="pw-sim-layout"
+        data-view={view}
+        data-embedded={embeddedEnvironmentId ? "true" : "false"}
         style={{
           gridTemplateColumns:
-            view === "input" ? "1fr" : view === "output" ? "1fr" : undefined,
+            view === "output" ? "1fr" : undefined,
         }}
       >
         {showInput && (
@@ -4525,18 +5981,81 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
               <div className="pw-segmented" aria-label="State source">
                 <button data-active={stateMode === "latest"} onClick={() => setStateMode("latest")}>Latest</button>
                 <button data-active={stateMode === "ledger"} onClick={() => setStateMode("ledger")}>Historical ledger</button>
-                <button data-active={stateMode === "environment"} onClick={() => setStateMode("environment")}>Virtual network</button>
+                {!newSimulation && <button data-active={stateMode === "environment"} onClick={() => setStateMode("environment")}>Virtual network</button>}
               </div>
-              {stateMode === "ledger" && <label className="pw-inline"><Database size={16} /><input
-                className="pw-field pw-mono" type="number" value={historicalLedger}
-                onChange={(event) => setHistoricalLedger(event.target.value)} placeholder="Ledger sequence" /></label>}
-              {stateMode === "environment" && <label className="pw-inline"><Database size={16} /><select
-                className="pw-field" value={environmentId} onChange={(event) => setEnvironmentId(event.target.value)}
-                style={{ width: "auto", minWidth: 210 }}><option value="">Select virtual network</option>
-                {environments.map((environment) => <option key={environment.id} value={environment.id}>
-                  {environment.name} / revision {environment.revision ?? 1}
-                </option>)}</select></label>}
+              <div className="pw-inline pw-sim-context-controls">
+                {stateMode === "ledger" && <label className="pw-inline pw-sim-ledger-control"><Database size={16} /><input
+                  aria-label="Ledger sequence"
+                  className="pw-field pw-mono pw-sim-ledger-input" type="number" value={historicalLedger}
+                  onChange={(event) => setHistoricalLedger(event.target.value)} placeholder="Ledger sequence" /></label>}
+                {stateMode === "environment" && !newSimulation && <label className="pw-inline"><Database size={16} /><select
+                  className="pw-field" value={environmentId} onChange={(event) => setEnvironmentId(event.target.value)}
+                  style={{ width: "auto", minWidth: 210 }}><option value="">Select virtual network</option>
+                  {environments.map((environment) => <option key={environment.id} value={environment.id}>
+                    {environment.name} / revision {environment.revision ?? 1}
+                  </option>)}</select></label>}
+                {stateMode !== "environment" && <span
+                  className="pw-select-shell pw-sim-network-select"
+                  ref={simulationNetworkMenuRef}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="pw-select-trigger"
+                    aria-label="Simulation network"
+                    aria-haspopup="listbox"
+                    aria-expanded={simulationNetworkMenuOpen}
+                    onClick={() => setSimulationNetworkMenuOpen((open) => !open)}
+                  >
+                    <NetworkLabel network={simulationNetwork} />
+                    <ChevronDown className={`pw-dropdown-chevron${simulationNetworkMenuOpen ? " open" : ""}`} size={15} />
+                  </button>
+                  {simulationNetworkMenuOpen && <span
+                    className="pw-select-menu pw-sim-network-menu"
+                    role="listbox"
+                    aria-label="Simulation network options"
+                  >
+                    {simulationNetworks.map((network) => <button
+                      key={network}
+                      type="button"
+                      role="option"
+                      aria-selected={simulationNetwork === network}
+                      data-active={simulationNetwork === network}
+                      onClick={() => {
+                        setSimulationNetwork(network);
+                        setSimulationNetworkMenuOpen(false);
+                      }}
+                    >
+                      <NetworkLabel network={network} />
+                      {simulationNetwork === network && <span className="pw-filter-option-check" aria-hidden="true"><Check size={10} /></span>}
+                    </button>)}
+                  </span>}
+                </span>}
+              </div>
             </div>}
+            <div className="pw-input-navigation" aria-label="Simulation input sections">
+              {([
+                ["parameters", <Zap key="parameters-icon" size={16} />, "Transaction parameters"],
+                ["balance", <CircleDollarSign key="balance-icon" size={16} />, "Override balance"],
+                ["ledger", <Layers3 key="ledger-icon" size={16} />, "Increase ledger"],
+                ["timestamp", <Clock3 key="timestamp-icon" size={16} />, "Override timestamp"],
+                ["state", <Braces key="state-icon" size={16} />, "Contract state override"],
+                ["ttl", <AlarmClock key="ttl-icon" size={16} />, "TTL override"],
+                ["debugger", <Bug key="debugger-icon" size={16} />, "Debugger evidence"],
+                ["advanced", <Code2 key="advanced-icon" size={16} />, "Advanced overrides"],
+              ] as const).map(([id, icon, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  data-active={activeInputSection === id}
+                  onClick={() => setActiveInputSection(id)}
+                >
+                  {icon}
+                  <span>{label}</span>
+                  {activeInputSection === id && <span className="pw-input-section-check" aria-hidden="true"><Check size={13} /></span>}
+                </button>
+              ))}
+            </div>
             <div className="pw-sim-compose">
               <div className="pw-step-rail">
                 <div className="pw-step">
@@ -4559,6 +6078,9 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                       setContractId("");
                       setFunctionName("");
                       setArgs("[]");
+                      setParamValues({});
+                      setContractSpec(null);
+                      setContractSpecError(null);
                     }}
                   >
                     <RotateCcw size={14} />
@@ -4566,70 +6088,323 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                 </div>
               </div>
               <div className="pw-sim-form">
-                <div className="pw-sim-section">
+                <div
+                  className="pw-sim-section"
+                  data-input-section="parameters"
+                  data-active={view === "input" && activeInputSection === "parameters" ? "true" : undefined}
+                >
                   <h2>
                     <Zap size={16} /> Transaction parameters
                   </h2>
                   <div className="pw-field-grid">
                     {argsMode === "decoded" && <><label className="pw-label pw-span-full">
-                      Source account XDR<input className="pw-field pw-mono" value={sourceAccountXdr}
-                        onChange={(event) => setSourceAccountXdr(event.target.value)} placeholder="AccountId XDR" />
+                      Source account<div className="pw-source-account-lookup" ref={sourceAccountLookupRef}>
+                        <input className="pw-field pw-mono" value={sourceAccountXdr}
+                          onChange={(event) => {
+                            setSourceAccountXdr(event.target.value);
+                            setSourceAccountError(null);
+                            setSourceAccountLookupOpen(true);
+                          }}
+                          onFocus={() => setSourceAccountLookupOpen(Boolean(sourceAccountXdr.trim()))}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") setSourceAccountLookupOpen(false);
+                            if (event.key === "ArrowDown" && sourceAccountSuggestions.length) {
+                              event.preventDefault();
+                              setSourceAccountLookupOpen(true);
+                              setSourceAccountActiveIndex((index) => (index + 1) % sourceAccountSuggestions.length);
+                            }
+                            if (event.key === "ArrowUp" && sourceAccountSuggestions.length) {
+                              event.preventDefault();
+                              setSourceAccountLookupOpen(true);
+                              setSourceAccountActiveIndex((index) => (index - 1 + sourceAccountSuggestions.length) % sourceAccountSuggestions.length);
+                            }
+                            if (event.key === "Enter" && sourceAccountSuggestions[sourceAccountActiveIndex]) {
+                              event.preventDefault();
+                              setSourceAccountXdr(sourceAccountSuggestions[sourceAccountActiveIndex].value);
+                              setSourceAccountError(null);
+                              setSourceAccountLookupOpen(false);
+                            }
+                          }}
+                          placeholder="G... account address"
+                          role="combobox"
+                          aria-autocomplete="list"
+                          aria-controls="simulation-source-account-suggestions"
+                          aria-expanded={sourceAccountLookupOpen && Boolean(sourceAccountXdr.trim())}
+                          aria-describedby={sourceAccountError ? "simulation-source-account-error" : undefined} />
+                        {sourceAccountLookupOpen && sourceAccountXdr.trim() && (
+                          <div id="simulation-source-account-suggestions" className="pw-target-lookup-menu pw-source-account-menu" role="listbox" aria-label="Source account suggestions">
+                            {sourceAccountLookupLoading ? (
+                              <span className="pw-select-empty">Checking {requestNetwork}…</span>
+                            ) : sourceAccountLookupError ? (
+                              <span className="pw-select-empty">{sourceAccountLookupError}</span>
+                            ) : sourceAccountSuggestions.length ? (
+                              sourceAccountSuggestions.map((suggestion, index) => (
+                                <button
+                                  key={`${suggestion.kind}-${suggestion.value}`}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={index === sourceAccountActiveIndex}
+                                  data-active={index === sourceAccountActiveIndex}
+                                  onPointerMove={() => setSourceAccountActiveIndex(index)}
+                                  onClick={() => {
+                                    setSourceAccountXdr(suggestion.value);
+                                    setSourceAccountError(null);
+                                    setSourceAccountLookupOpen(false);
+                                  }}
+                                >
+                                  <EntityIdenticon value={suggestion.value} kind="account" size={20} />
+                                  <span className="pw-target-suggestion-copy">
+                                    <strong>{suggestion.label}</strong>
+                                  </span>
+                                  <code>{truncateEntity(suggestion.value, 10, 6)}</code>
+                                </button>
+                              ))
+                            ) : sourceAccountError ? (
+                              <span id="simulation-source-account-error" className="pw-select-empty pw-source-account-feedback">{sourceAccountError}</span>
+                            ) : (
+                              <span className="pw-select-empty">No matching account found on {requestNetwork}.</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </label></>}
-                    <label className="pw-label pw-span-full">
-                      Contract ID
-                      <input
-                        className="pw-field pw-mono"
-                        value={contractId}
-                        onChange={(event) => setContractId(event.target.value)}
-                        placeholder="C..."
-                      />
-                    </label>
-                    <label className="pw-label pw-span-full">
-                      Function
-                      <input
-                        className="pw-field pw-mono"
-                        value={functionName}
-                        onChange={(event) =>
-                          setFunctionName(event.target.value)
-                        }
-                        placeholder="transfer"
-                      />
-                    </label>
-                    <div
-                      className="pw-span-full pw-inline"
-                      style={{ justifyContent: "space-between" }}
-                    >
-                      <span
-                        style={{ color: "var(--text-dim)", fontSize: 11.5 }}
-                      >
-                        Invocation input
+                    <div className="pw-label pw-target-field pw-span-full">
+                      <span className="pw-target-head">
+                        <label htmlFor="simulation-target">Target</label>
+                        <span className="pw-function-actions">
+                          <button type="button" onClick={() => setFunctionAction("source")}>View Source</button>
+                        </span>
                       </span>
-                      <div className="pw-segmented">
-                        <button type="button"
-                          data-active={argsMode === "decoded"}
-                          onClick={() => setArgsMode("decoded")}
-                        >
-                          Decoded
-                        </button>
-                        <button type="button"
-                          data-active={argsMode === "raw"}
-                          onClick={() => setArgsMode("raw")}
-                        >
-                          Prepared envelope
-                        </button>
+                      <div className="pw-target-lookup" ref={targetLookupRef}>
+                        <input
+                          id="simulation-target"
+                          className="pw-field pw-mono"
+                          value={contractId}
+                          onChange={(event) => {
+                            setContractId(event.target.value);
+                            setTargetLookupOpen(true);
+                          }}
+                          onFocus={() => setTargetLookupOpen(Boolean(contractId.trim()))}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") setTargetLookupOpen(false);
+                            if (event.key === "ArrowDown" && targetSuggestions.length) {
+                              event.preventDefault();
+                              setTargetLookupOpen(true);
+                              setTargetActiveIndex((index) => (index + 1) % targetSuggestions.length);
+                            }
+                            if (event.key === "ArrowUp" && targetSuggestions.length) {
+                              event.preventDefault();
+                              setTargetLookupOpen(true);
+                              setTargetActiveIndex((index) => (index - 1 + targetSuggestions.length) % targetSuggestions.length);
+                            }
+                            if (event.key === "Enter" && targetSuggestions[targetActiveIndex]) {
+                              event.preventDefault();
+                              setContractId(targetSuggestions[targetActiveIndex].value);
+                              setTargetLookupOpen(false);
+                            }
+                          }}
+                          placeholder="Contract ID or Account"
+                          role="combobox"
+                          aria-autocomplete="list"
+                          aria-controls="simulation-target-suggestions"
+                          aria-expanded={targetLookupOpen && Boolean(contractId.trim())}
+                        />
+                        {targetLookupOpen && contractId.trim() && (
+                          <div id="simulation-target-suggestions" className="pw-target-lookup-menu" role="listbox" aria-label="Target suggestions">
+                            {targetLookupLoading ? (
+                              <span className="pw-select-empty">Checking {requestNetwork}…</span>
+                            ) : targetLookupError ? (
+                              <span className="pw-select-empty">{targetLookupError}</span>
+                            ) : targetSuggestions.length ? (
+                              targetSuggestions.map((suggestion, index) => (
+                                <button
+                                  key={`${suggestion.kind}-${suggestion.value}`}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={index === targetActiveIndex}
+                                  data-active={index === targetActiveIndex}
+                                  onPointerMove={() => setTargetActiveIndex(index)}
+                                  onClick={() => {
+                                    setContractId(suggestion.value);
+                                    setTargetLookupOpen(false);
+                                  }}
+                                >
+                                  <EntityIdenticon value={suggestion.value} kind={suggestion.kind} size={20} />
+                                  <span className="pw-target-suggestion-copy">
+                                    <strong>{suggestion.label}</strong>
+                                  </span>
+                                  <code>{truncateEntity(suggestion.value, 10, 6)}</code>
+                                </button>
+                              ))
+                            ) : (
+                              <span className="pw-select-empty">No matching account or contract found on {requestNetwork}.</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
-                    {argsMode === "decoded" ? (
-                      <label className="pw-label pw-span-full">
-                        Arguments JSON
-                        <textarea
-                          className="pw-field pw-mono"
-                          rows={5}
-                          value={args}
-                          onChange={(event) => setArgs(event.target.value)}
-                        />
-                      </label>
-                    ) : (
+                    <label className="pw-label pw-function-field pw-span-full">
+                      <span className="pw-function-head">
+                        <span>Function</span>
+                        <span className="pw-function-head-tools">
+                          {contractSpecLoading && <span className="pw-spec-status">Loading functions…</span>}
+                          <div className="pw-segmented">
+                            <button type="button"
+                              data-active={argsMode === "decoded"}
+                              onClick={() => setArgsMode("decoded")}
+                            >
+                              Decoded
+                            </button>
+                            <button type="button"
+                              data-active={argsMode === "raw"}
+                              onClick={() => setArgsMode("raw")}
+                            >
+                              Prepared envelope
+                            </button>
+                          </div>
+                        </span>
+                      </span>
+                      <span
+                        className="pw-select-shell pw-function-select"
+                        ref={functionMenuRef}
+                        onPointerDown={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className="pw-select-trigger"
+                          aria-haspopup="listbox"
+                          aria-expanded={functionMenuOpen}
+                          onClick={() => {
+                            if (functionMenuOpen) {
+                              setFunctionQuery("");
+                              setFunctionMenuOpen(false);
+                              return;
+                            }
+                            if (confirmedContractTarget && isValidStellarContractId(contractId.trim())) {
+                              const cacheKey = `${requestNetwork}:${contractId.trim()}`;
+                              const cached = specCacheRef.current.get(cacheKey);
+                              if (cached) {
+                                setContractSpec(cached);
+                                setContractSpecError(null);
+                              } else {
+                                setContractSpec(null);
+                                setContractSpecError(null);
+                                setContractSpecRetry((value) => value + 1);
+                              }
+                            }
+                            setFunctionMenuOpen(true);
+                          }}
+                        >
+                          <span>
+                            {contractSpecLoading ? (
+                              <span className="pw-loading-label">
+                                Loading functions<span className="pw-loading-dots" aria-hidden="true">...</span>
+                              </span>
+                            ) : functionName || "Select function"}
+                          </span>
+                          <ChevronDown className={`pw-dropdown-chevron${functionMenuOpen ? " open" : ""}`} size={15} />
+                        </button>
+                        {functionMenuOpen && (
+                          <span className="pw-select-menu pw-function-select-menu" role="listbox" aria-label="Contract functions">
+                            <label className="pw-function-search">
+                              <Search size={13} />
+                              <input
+                                autoFocus
+                                value={functionQuery}
+                                onChange={(event) => setFunctionQuery(event.target.value)}
+                                onClick={(event) => event.stopPropagation()}
+                                placeholder="Search functions"
+                                aria-label="Search functions"
+                              />
+                            </label>
+                            <span className="pw-function-options">
+                              {contractSpecLoading ? (
+                                <span className="pw-select-empty pw-loading-label">
+                                  Loading functions<span className="pw-loading-dots" aria-hidden="true">...</span>
+                                </span>
+                              ) : contractSpecError ? (
+                                <span className="pw-select-empty pw-function-error">{contractSpecError}</span>
+                              ) : visibleFunctionOptions.length ? visibleFunctionOptions.map((option) => (
+                              <button
+                                key={option.name}
+                                type="button"
+                                role="option"
+                                aria-selected={functionName === option.name}
+                                data-active={functionName === option.name}
+                                onClick={() => {
+                                  setFunctionName(option.name);
+                                  setParamValues({});
+                                  setFunctionMenuOpen(false);
+                                }}
+                              >
+                                <span className="pw-function-option">
+                                  <span className="pw-function-option-name">{option.name}</span>
+                                  <span className="pw-function-option-params">
+                                    {option.inputs.length
+                                      ? option.inputs.map((input) => (
+                                          <span key={input.name}>
+                                            {input.name}: {typeLabel(input.type)}
+                                          </span>
+                                        ))
+                                      : <span className="pw-function-option-none">no args</span>}
+                                  </span>
+                                </span>
+                                {functionName === option.name && <span className="pw-filter-option-check" aria-hidden="true"><Check size={10} /></span>}
+                              </button>
+                              )) : (
+                                <span className="pw-select-empty">{functionOptions.length ? "No matching functions" : "No indexed functions found"}</span>
+                              )}
+                            </span>
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                    {argsMode === "decoded" && functionName.trim() && (
+                      <div className="pw-params pw-span-full">
+                        <span className="pw-function-head">
+                          <span>Arguments</span>
+                          <span className="pw-function-head-tools">
+                            {!contractSpecLoading && !contractSpec && contractSpecError && (
+                              <span className="pw-spec-status">Spec unavailable — using raw JSON args</span>
+                            )}
+                          </span>
+                        </span>
+                        {selectedFunction && contractSpec ? (
+                          <div className="pw-params-form">
+                            {selectedFunction.inputs.length === 0 && (
+                              <span className="pw-params-note">This function takes no arguments.</span>
+                            )}
+                            {selectedFunction.inputs.map((input) => (
+                              <ParamField
+                                key={input.name}
+                                name={input.name}
+                                type={input.type}
+                                value={
+                                  paramValues[input.name] ??
+                                  defaultEditorValue(input.type, contractSpec.contract_types)
+                                }
+                                error={paramErrors[input.name]}
+                                types={contractSpec.contract_types}
+                                onChange={(next) =>
+                                  setParamValues((current) => ({ ...current, [input.name]: next }))
+                                }
+                              />
+                            ))}
+                          </div>
+                        ) : contractSpecLoading ? (
+                          <span className="pw-params-note">Loading contract spec…</span>
+                        ) : (
+                          <textarea
+                            className="pw-field pw-mono"
+                            rows={5}
+                            value={args}
+                            onChange={(event) => setArgs(event.target.value)}
+                            placeholder='[{ "u32": 42 }, { "address": "C…" }]'
+                          />
+                        )}
+                      </div>
+                    )}
+                    {argsMode === "raw" && (
                       <label className="pw-label pw-span-full">
                         Transaction envelope XDR
                         <textarea
@@ -4643,26 +6418,14 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   </div>
                 </div>
                 <Accordion
-                  icon={<UserRound size={16} />}
-                  title="Impersonate accounts"
-                  open={Boolean(openSections.impersonate)}
-                  onToggle={() => toggle("impersonate")}
-                >
-                  <label className="pw-label">
-                    Approved account IDs
-                    <input
-                      className="pw-field pw-mono"
-                      value={impersonate}
-                      onChange={(event) => setImpersonate(event.target.value)}
-                      placeholder="G..., G..."
-                    />
-                  </label>
-                </Accordion>
-                <Accordion
                   icon={<CircleDollarSign size={16} />}
                   title="Override balance"
                   open={Boolean(openSections.balance)}
                   onToggle={() => toggle("balance")}
+                  sectionId="balance"
+                  selectionMode={view === "input"}
+                  active={activeInputSection === "balance"}
+                  onSelect={() => setActiveInputSection("balance")}
                 >
                   <div className="pw-field-grid">
                     <label className="pw-label">
@@ -4704,6 +6467,10 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   title="Increase ledger"
                   open={Boolean(openSections.ledger)}
                   onToggle={() => toggle("ledger")}
+                  sectionId="ledger"
+                  selectionMode={view === "input"}
+                  active={activeInputSection === "ledger"}
+                  onSelect={() => setActiveInputSection("ledger")}
                 >
                   <label className="pw-label">
                     Ledgers after snapshot
@@ -4723,6 +6490,10 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   title="Override timestamp"
                   open={Boolean(openSections.timestamp)}
                   onToggle={() => toggle("timestamp")}
+                  sectionId="timestamp"
+                  selectionMode={view === "input"}
+                  active={activeInputSection === "timestamp"}
+                  onSelect={() => setActiveInputSection("timestamp")}
                 >
                   <label className="pw-label">
                     Ledger close time
@@ -4739,6 +6510,10 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   title="Contract state override"
                   open={Boolean(openSections.state)}
                   onToggle={() => toggle("state")}
+                  sectionId="state"
+                  selectionMode={view === "input"}
+                  active={activeInputSection === "state"}
+                  onSelect={() => setActiveInputSection("state")}
                 >
                   <div className="pw-sim-storage-builder">
                     <StorageKeyBuilder
@@ -4809,6 +6584,10 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   title="TTL override"
                   open={Boolean(openSections.ttl)}
                   onToggle={() => toggle("ttl")}
+                  sectionId="ttl"
+                  selectionMode={view === "input"}
+                  active={activeInputSection === "ttl"}
+                  onSelect={() => setActiveInputSection("ttl")}
                 >
                   <div className="pw-field-grid">
                     <label className="pw-label">
@@ -4837,6 +6616,10 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   title="Debugger evidence"
                   open={Boolean(openSections.debugger)}
                   onToggle={() => toggle("debugger")}
+                  sectionId="debugger"
+                  selectionMode={view === "input"}
+                  active={activeInputSection === "debugger"}
+                  onSelect={() => setActiveInputSection("debugger")}
                 >
                   <label className="pw-inline">
                     <input
@@ -4854,6 +6637,10 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
                   title="Advanced overrides"
                   open={Boolean(openSections.advanced)}
                   onToggle={() => toggle("advanced")}
+                  sectionId="advanced"
+                  selectionMode={view === "input"}
+                  active={activeInputSection === "advanced"}
+                  onSelect={() => setActiveInputSection("advanced")}
                 >
                   <label className="pw-label">
                     Override array
@@ -4873,7 +6660,7 @@ export function SimulatorPage({ scope, embeddedEnvironmentId }: { scope: Project
         )}
         {showOutput && (
           <div className="pw-output">
-            <div className="pw-tabs">
+            <div className="pw-tabs pw-sim-result-tabs">
               <button
                 data-active={resultTab === "summary"}
                 onClick={() => setResultTab("summary")}
@@ -6044,7 +7831,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
       setBulkTagging(false);
       setTagName("");
       setMessage(
-        `Tag "${tag.name}" created. Tags attach to wallets and contracts â€” reference this tag as an alert target.`,
+        `Tag "${tag.name}" created. Tags attach to accounts and contracts â€” reference this tag as an alert target.`,
       );
       setError(null);
     } catch (cause) {
@@ -6447,7 +8234,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
             <p className="pw-modal-note">
               {selectedVisible.length} selected alert rule
               {selectedVisible.length === 1 ? "" : "s"}. Tags attach to
-              wallets and contracts; use the created tag as an alert target.
+              accounts and contracts; use the created tag as an alert target.
             </p>
           </form>
         </Modal>

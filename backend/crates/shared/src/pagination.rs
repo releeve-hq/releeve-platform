@@ -1,9 +1,9 @@
 use serde::Serialize;
 
-pub const DEFAULT_LIMIT: i64 = 20;
-pub const ALLOWED_LIMITS: [i64; 3] = [20, 50, 100];
+pub const DEFAULT_LIMIT: i64 = 10;
+pub const ALLOWED_LIMITS: [i64; 4] = [10, 20, 50, 100];
 
-/// Clamp a requested page size to the allowed set {20, 50, 100} (default 20).
+/// Clamp a requested page size to the allowed set {10, 20, 50, 100} (default 10).
 /// Values outside the set clamp to the *nearest* allowed size: `21 → 20`,
 /// `1000 → 100`, `0`/negatives → `20`.
 pub fn clamp_limit(limit: Option<i64>) -> i64 {
@@ -38,20 +38,21 @@ mod tests {
 
     #[test]
     fn allowed_limits_pass_through() {
-        for l in [20, 50, 100] {
+        for l in [10, 20, 50, 100] {
             assert_eq!(clamp_limit(Some(l)), l);
         }
     }
 
     #[test]
-    fn absent_limit_defaults_to_20() {
-        assert_eq!(clamp_limit(None), 20);
+    fn absent_limit_defaults_to_10() {
+        assert_eq!(clamp_limit(None), 10);
     }
 
     #[test]
     fn clamps_to_nearest_allowed() {
-        assert_eq!(clamp_limit(Some(0)), 20);
-        assert_eq!(clamp_limit(Some(-5)), 20);
+        assert_eq!(clamp_limit(Some(0)), 10);
+        assert_eq!(clamp_limit(Some(-5)), 10);
+        assert_eq!(clamp_limit(Some(9)), 10);
         assert_eq!(clamp_limit(Some(21)), 20);
         assert_eq!(clamp_limit(Some(49)), 50);
         assert_eq!(clamp_limit(Some(51)), 50);

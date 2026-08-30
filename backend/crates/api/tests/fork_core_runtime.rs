@@ -11,9 +11,16 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use serde_json::{Value, json};
 use sim::{ForkCoreClient, ServiceAssertionSigner};
+use stellar_xdr::{
+    BytesM, ContractCodeEntry, ContractCodeEntryExt, ContractDataDurability, ContractExecutable,
+    ContractId, ExtensionPoint, Hash, LedgerEntryData, LedgerKey, LedgerKeyContractCode,
+    LedgerKeyContractData, Limits, ScAddress, ScContractInstance, ScSpecEntry,
+    ScSpecFunctionInputV0, ScSpecFunctionV0, ScSpecTypeDef, ScSpecTypeOption, ScSpecTypeUdt,
+    ScSpecUdtEnumCaseV0, ScSpecUdtEnumV0, ScSymbol, ScVal, StringM, VecM, WriteXdr,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::TestApp;
@@ -173,7 +180,7 @@ fn request_body() -> Value {
             "contract_id": "C000000000000000000000000000000000000000000000000000000000000000",
             "function_name": "hello",
             "args": [],
-            "source_account_xdr": "AAAAAAA",
+            "source_account": "GBWCTIE2EHKJIY6KYPXQSADSOTKEQGT7A52PSRR3VJCG4E6JFMDMCYG2",
             "sequence_number": 1
         },
         "overrides": [],
@@ -251,7 +258,7 @@ async fn environment_simulation_returns_202() {
         Method::POST,
         &format!("/api/v1/{org}/{project}/environments/{env_id}/simulate"),
         &[("idempotency-key", "test-key-env-sim")],
-        Some(json!({ "invocation": { "type": "decoded", "contract_id": "x", "function_name": "hello", "args": [], "source_account_xdr": "AAAAAAA", "sequence_number": 1 } })),
+        Some(json!({ "invocation": { "type": "decoded", "contract_id": "x", "function_name": "hello", "args": [], "source_account": "GBWCTIE2EHKJIY6KYPXQSADSOTKEQGT7A52PSRR3VJCG4E6JFMDMCYG2", "sequence_number": 1 } })),
         Some(&access),
     )
     .await;
@@ -872,4 +879,293 @@ async fn tenderly_style_admin_rpc_url() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["result"]["sequence"], 888);
+}
+
+fn encode_strkey(version: u8, payload: &[u8]) -> String {
+    let mut bytes = Vec::with_capacity(payload.len() + 3);
+    bytes.push(version);
+    bytes.extend_from_slice(payload);
+    let mut crc = 0_u16;
+    for byte in &bytes {
+        crc ^= (*byte as u16) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    bytes.extend_from_slice(&crc.to_le_bytes());
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut bits = 0_u32;
+    let mut bit_count = 0_u32;
+    let mut out = String::new();
+    for byte in bytes {
+        bits = (bits << 8) | byte as u32;
+        bit_count += 8;
+        while bit_count >= 5 {
+            bit_count -= 5;
+            out.push(alphabet[((bits >> bit_count) & 0x1f) as usize] as char);
+        }
+    }
+    if bit_count > 0 {
+        out.push(alphabet[((bits << (5 - bit_count)) & 0x1f) as usize] as char);
+    }
+    out
+}
+
+fn fn_input(name: &str, type_: ScSpecTypeDef) -> ScSpecFunctionInputV0 {
+    ScSpecFunctionInputV0 {
+        doc: StringM::try_from(Vec::new()).expect("doc"),
+        name: StringM::try_from(name.as_bytes().to_vec()).expect("name"),
+        type_,
+    }
+}
+
+/// Minimal WASM whose `contractspecv0` custom section mirrors the well-known
+/// demo-storage contract (a `DataKey` enum plus a `somefunction`).
+fn demo_storage_wasm() -> Vec<u8> {
+    let data_key_enum = ScSpecEntry::UdtEnumV0(ScSpecUdtEnumV0 {
+        doc: StringM::try_from(Vec::new()).expect("doc"),
+        lib: StringM::try_from(b"soroban_sdk".to_vec()).expect("lib"),
+        name: StringM::try_from(b"DataKey".to_vec()).expect("name"),
+        cases: VecM::try_from(vec![ScSpecUdtEnumCaseV0 {
+            doc: StringM::try_from(Vec::new()).expect("doc"),
+            name: StringM::try_from(b"Admin".to_vec()).expect("name"),
+            value: 0,
+        }])
+        .expect("cases"),
+    });
+    let some_function = ScSpecEntry::FunctionV0(ScSpecFunctionV0 {
+        doc: StringM::try_from(Vec::new()).expect("doc"),
+        name: ScSymbol::try_from(b"somefunction".to_vec()).expect("symbol"),
+        inputs: VecM::try_from(vec![
+            fn_input("me", ScSpecTypeDef::U32),
+            fn_input(
+                "them",
+                ScSpecTypeDef::Option(Box::new(ScSpecTypeOption {
+                    value_type: Box::new(ScSpecTypeDef::Udt(ScSpecTypeUdt {
+                        name: StringM::try_from(b"DataKey".to_vec()).expect("name"),
+                    })),
+                })),
+            ),
+        ])
+        .expect("inputs"),
+        outputs: VecM::try_from(vec![ScSpecTypeDef::I128]).expect("outputs"),
+    });
+    let mut payload = Vec::new();
+    for entry in [data_key_enum, some_function] {
+        payload.extend(entry.to_xdr(Limits::none()).expect("entry encodes"));
+    }
+    let name = b"contractspecv0";
+    let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+    let mut section = Vec::new();
+    section.push(0_u8);
+    let encode = |out: &mut Vec<u8>, mut value: u32| loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            out.push(byte | 0x80);
+        } else {
+            out.push(byte);
+            break;
+        }
+    };
+    encode(&mut section, (1 + name.len() + payload.len()) as u32);
+    encode(&mut section, name.len() as u32);
+    section.extend_from_slice(name);
+    section.extend_from_slice(&payload);
+    wasm.extend(section);
+    wasm
+}
+
+fn contract_id_for(hash: [u8; 32]) -> String {
+    encode_strkey(0x10, &hash)
+}
+
+fn instance_key(contract_hash: [u8; 32]) -> String {
+    LedgerKey::ContractData(LedgerKeyContractData {
+        contract: ScAddress::Contract(ContractId(Hash(contract_hash))),
+        key: ScVal::LedgerKeyContractInstance,
+        durability: ContractDataDurability::Persistent,
+    })
+    .to_xdr_base64(Limits::none())
+    .expect("instance key encodes")
+}
+
+fn instance_entry_xdr(contract_hash: [u8; 32], wasm_hash: [u8; 32]) -> String {
+    LedgerEntryData::ContractData(stellar_xdr::ContractDataEntry {
+        contract: ScAddress::Contract(ContractId(Hash(contract_hash))),
+        key: ScVal::LedgerKeyContractInstance,
+        durability: ContractDataDurability::Persistent,
+        val: ScVal::ContractInstance(ScContractInstance {
+            executable: ContractExecutable::Wasm(Hash(wasm_hash)),
+            storage: None,
+        }),
+        ext: ExtensionPoint::V0,
+    })
+    .to_xdr_base64(Limits::none())
+    .expect("instance entry encodes")
+}
+
+fn code_key(wasm_hash: [u8; 32]) -> String {
+    LedgerKey::ContractCode(LedgerKeyContractCode {
+        hash: Hash(wasm_hash),
+    })
+    .to_xdr_base64(Limits::none())
+    .expect("code key encodes")
+}
+
+fn code_entry_xdr(wasm_hash: [u8; 32], wasm: &[u8]) -> String {
+    LedgerEntryData::ContractCode(ContractCodeEntry {
+        ext: ContractCodeEntryExt::V0,
+        hash: Hash(wasm_hash),
+        code: BytesM::try_from(wasm.to_vec()).expect("code bytes"),
+    })
+    .to_xdr_base64(Limits::none())
+    .expect("code entry encodes")
+}
+
+#[tokio::test]
+async fn contract_spec_loads_wasm_spec_from_virtual_environment() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    let wasm_hash = [7_u8; 32];
+    let contract_id = contract_id_for([9_u8; 32]);
+    let instance_key_xdr = instance_key([9_u8; 32]);
+    let code_key_xdr = code_key(wasm_hash);
+    let wasm = demo_storage_wasm();
+
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .and(body_partial_json(json!({ "params": { "keys": [instance_key_xdr] } })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "entries": [{ "key": instance_key_xdr, "xdr": instance_entry_xdr([9_u8; 32], wasm_hash), "liveUntilLedgerSeq": 200 }],
+                "latestLedger": 123
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .and(body_partial_json(json!({ "params": { "keys": [code_key_xdr] } })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "entries": [{ "key": code_key_xdr, "xdr": code_entry_xdr(wasm_hash, &wasm), "liveUntilLedgerSeq": 300 }],
+                "latestLedger": 123
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env(&app, &access, &org, &project, env_id).await;
+
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/simulations/contract-spec"),
+        &[],
+        Some(json!({
+            "network": "testnet",
+            "contract_id": contract_id,
+            "environment_id": env_id
+        })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "spec loads from the virtual network"
+    );
+    assert_eq!(body["contract_id"], contract_id);
+    assert_eq!(body["network"], "testnet");
+    assert_eq!(body["capability"], "available");
+    assert_eq!(body["functions"][0]["name"], "somefunction");
+    assert_eq!(body["functions"][0]["inputs"][0]["name"], "me");
+    assert_eq!(
+        body["functions"][0]["inputs"][0]["type"],
+        json!({ "kind": "u32" })
+    );
+    assert_eq!(
+        body["functions"][0]["inputs"][1]["type"],
+        json!({ "kind": "option", "inner": { "kind": "udt", "name": "DataKey" } })
+    );
+    assert_eq!(body["contract_types"]["DataKey"]["kind"], "enum");
+}
+
+#[tokio::test]
+async fn contract_spec_rejects_invalid_contract_strkey() {
+    let server = MockServer::start().await;
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+
+    let (status, _, body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/simulations/contract-spec"),
+        &[],
+        Some(json!({
+            "network": "testnet",
+            "contract_id": "not-a-contract",
+            "environment_id": null
+        })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "bad strkey is rejected");
+    assert_eq!(body["error"]["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn contract_spec_returns_not_found_when_contract_is_not_deployed() {
+    let server = MockServer::start().await;
+    let env_id = Uuid::new_v4();
+    let instance_key_xdr = instance_key([9_u8; 32]);
+
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/rpc")))
+        .and(body_partial_json(
+            json!({ "params": { "keys": [instance_key_xdr] } }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "entries": [], "latestLedger": 123 }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let app = app_with_fork_core(&server).await;
+    let (access, org) = onboard(&app).await;
+    let project = create_project(&app, &access, &org).await;
+    seed_env(&app, &access, &org, &project, env_id).await;
+
+    let (status, _, _) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/simulations/contract-spec"),
+        &[],
+        Some(json!({
+            "network": "testnet",
+            "contract_id": contract_id_for([9_u8; 32]),
+            "environment_id": env_id
+        })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "undeployed contract is 404");
 }

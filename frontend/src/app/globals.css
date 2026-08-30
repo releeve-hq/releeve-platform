@@ -5,6 +5,169 @@
   --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
 }
 
+.explorer-entity-link {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+}
+
+.explorer-entity-link > a {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-entity-copy {
+  position: relative;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 2px;
+  padding: 0;
+  opacity: 0;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  transform: translateX(-3px);
+  transition: opacity .14s ease, transform .14s ease, color .14s ease;
+}
+
+.explorer-entity-link:hover .explorer-entity-copy,
+.explorer-entity-copy:focus-visible {
+  opacity: .8;
+  transform: translateX(0);
+}
+
+.explorer-entity-copy:hover {
+  opacity: 1;
+  color: var(--text, #fff);
+}
+
+.explorer-entity-copy[data-copied="true"] {
+  width: 12px !important;
+  height: 12px !important;
+  flex-basis: 12px !important;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  border-radius: 50%;
+  background: #319b55;
+  color: #fff;
+  animation: explorer-copy-pop .22s ease-out both;
+}
+
+.explorer-entity-copy svg,
+.entity-copy-inline svg,
+.entity-copy-inline[data-copied="true"] svg {
+  width: 10px !important;
+  height: 10px !important;
+}
+
+.explorer-entity-copy[data-copied="true"] svg,
+.entity-copy-inline[data-copied="true"] svg {
+  width: 8px !important;
+  height: 8px !important;
+  stroke-width: 3;
+}
+
+.entity-copy-inline {
+  position: relative;
+}
+
+.entity-copy-inline[data-copied="true"] {
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px !important;
+  min-height: 12px !important;
+  flex: 0 0 12px !important;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #319b55;
+  color: #fff;
+  animation: explorer-copy-pop .22s ease-out both;
+}
+
+.entity-copy-inline[data-copied="true"] svg {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+@keyframes explorer-copy-pop {
+  0% { opacity: 0; transform: translateX(0) scale(.65); }
+  70% { transform: translateX(0) scale(1.08); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.home-feed-row {
+  min-height: 48px;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: background-color .12s ease;
+}
+
+.home-feed-row:hover {
+  background: var(--panel);
+}
+
+.home-feed-method,
+.home-feed-hash,
+.home-feed-ledger-txs,
+.home-feed-resource,
+.home-feed-resource-detail {
+  display: block;
+}
+
+.home-feed-method {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.home-feed-hash {
+  color: var(--text-dim) !important;
+  font-size: 11.5px;
+  line-height: 1.25;
+  text-decoration: none !important;
+  text-decoration-color: transparent !important;
+  transition: color .14s ease, text-decoration-color .14s ease;
+}
+
+.explorer-entity-link > a.home-feed-hash:hover {
+  color: var(--text) !important;
+  text-decoration: underline !important;
+  text-decoration-color: rgba(255, 255, 255, .58) !important;
+  text-underline-offset: 3px;
+}
+
+.home-feed-ledger-txs {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.home-feed-resource {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.home-feed-resource-detail {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 9.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 html, body {
   background-color: #121212;
   color: #f5f5f5;

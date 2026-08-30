@@ -9,6 +9,7 @@
 //! Postgres + Redis: latest transactions, ledgers, top tokens, and transfers.
 
 pub mod auth;
+pub mod contract_spec;
 pub mod environments;
 pub mod error;
 pub mod explorer;
@@ -20,6 +21,7 @@ pub mod monitoring;
 pub mod oauth;
 pub mod orgs;
 pub mod password;
+pub mod replays;
 pub mod simulations;
 pub mod state;
 pub mod tokens;
@@ -54,6 +56,7 @@ use crate::explorer_detail::*;
 use crate::health::{__path_health_check, HealthChecks, HealthResponse, health_check};
 use crate::monitoring::*;
 use crate::orgs::*;
+use crate::replays::*;
 use crate::simulations::*;
 use crate::state::AppState;
 
@@ -140,6 +143,61 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             "/api/v1/{org}/{project}/transactions",
             Get,
             "Project transaction list",
+        ),
+        (
+            "/api/v1/{org}/{project}/history/coverage",
+            Get,
+            "Verified Mainnet replay coverage",
+        ),
+        (
+            "/api/v1/{org}/{project}/history/transactions/{hash}",
+            Get,
+            "Retained historical transaction locator",
+        ),
+        (
+            "/api/v1/{org}/{project}/history/targets",
+            Get,
+            "Discover active contracts and accounts in a retained time window",
+        ),
+        (
+            "/api/v1/{org}/{project}/history/timelines",
+            Post,
+            "Create interactive historical timeline",
+        ),
+        (
+            "/api/v1/{org}/{project}/history/timelines/{timeline_id}",
+            Get,
+            "Interactive historical timeline metadata",
+        ),
+        (
+            "/api/v1/{org}/{project}/history/timelines/{timeline_id}/fork",
+            Post,
+            "Fork an interactive timeline playhead",
+        ),
+        (
+            "/api/v1/{org}/{project}/replays",
+            Post,
+            "Create historical replay",
+        ),
+        (
+            "/api/v1/{org}/{project}/replays/{replay_id}",
+            Get,
+            "Historical replay progress and result",
+        ),
+        (
+            "/api/v1/{org}/{project}/replays/{replay_id}/cancel",
+            Post,
+            "Cancel historical replay",
+        ),
+        (
+            "/api/v1/{org}/{project}/replays/{replay_id}/promote",
+            Post,
+            "Promote historical replay",
+        ),
+        (
+            "/api/v1/{org}/{project}/replays/{replay_id}/analysis",
+            Post,
+            "Analyze captured replay trace in SourceLens",
         ),
         (
             "/api/v1/{org}/{project}/transactions/{hash}/comments",
@@ -393,6 +451,11 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             "Start Fork Core environment sync",
         ),
         (
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/step",
+            Post,
+            "Compare environment with the next ledger state",
+        ),
+        (
             "/api/v1/{org}/{project}/environments/{environment_id}/sync/stop",
             Post,
             "Stop Fork Core environment sync",
@@ -450,17 +513,17 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
         (
             "/api/v1/{org}/{project}/environments/{environment_id}/wallets",
             Get,
-            "List linked environment wallets",
+            "List linked environment accounts",
         ),
         (
             "/api/v1/{org}/{project}/environments/{environment_id}/wallets",
             Post,
-            "Link any Stellar wallet address",
+            "Link any Stellar account address",
         ),
         (
             "/api/v1/{org}/{project}/environments/{environment_id}/wallets/{wallet_id}",
             Patch,
-            "Rename a linked environment wallet",
+            "Rename a linked environment account",
         ),
         (
             "/api/v1/{org}/{project}/environments/{environment_id}/deployments",
@@ -527,6 +590,7 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
         "/api/v1/{org}/{project}/simulations",
         "/api/v1/{org}/{project}/environments/{environment_id}/simulate",
         "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",
+        "/api/v1/{org}/{project}/environments/{environment_id}/sync/step",
         "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
     ] {
         if let Some(operation) = openapi
@@ -838,12 +902,60 @@ pub fn app(state: AppState) -> Router {
             post(simulation_contract_entries),
         )
         .route(
+            "/api/v1/{org}/{project}/simulations/contract-spec",
+            post(contract_spec::contract_spec),
+        )
+        .route(
             "/api/v1/{org}/{project}/simulations/{simulation_id}",
             get(get_simulation).delete(cancel_simulation),
         )
         .route(
             "/api/v1/{org}/{project}/jobs/{job_id}",
             get(get_simulation_job).delete(cancel_simulation_job),
+        )
+        .route(
+            "/api/v1/{org}/{project}/history/coverage",
+            get(history_coverage),
+        )
+        .route(
+            "/api/v1/{org}/{project}/history/targets",
+            get(history_targets),
+        )
+        .route(
+            "/api/v1/{org}/{project}/history/transactions/{hash}",
+            get(historical_transaction),
+        )
+        .route(
+            "/api/v1/{org}/{project}/history/timelines",
+            post(create_history_timeline),
+        )
+        .route(
+            "/api/v1/{org}/{project}/history/timelines/{timeline_id}",
+            get(get_history_timeline),
+        )
+        .route(
+            "/api/v1/{org}/{project}/history/timelines/{timeline_id}/fork",
+            post(fork_history_timeline),
+        )
+        .route(
+            "/api/v1/{org}/{project}/replays",
+            post(create_replay),
+        )
+        .route(
+            "/api/v1/{org}/{project}/replays/{replay_id}",
+            get(get_replay),
+        )
+        .route(
+            "/api/v1/{org}/{project}/replays/{replay_id}/cancel",
+            post(cancel_replay),
+        )
+        .route(
+            "/api/v1/{org}/{project}/replays/{replay_id}/promote",
+            post(promote_replay),
+        )
+        .route(
+            "/api/v1/{org}/{project}/replays/{replay_id}/analysis",
+            post(create_replay_analysis),
         )
         .route(
             "/api/v1/{org}/{project}/simulations/{simulation_id}/analysis",
@@ -979,6 +1091,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",
             post(start_environment_sync),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/sync/step",
+            post(step_environment_sync),
         )
         .route(
             "/api/v1/{org}/{project}/environments/{environment_id}/sync/stop",

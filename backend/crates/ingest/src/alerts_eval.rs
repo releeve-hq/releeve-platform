@@ -230,10 +230,7 @@ async fn project_addresses(
         ),
     };
     let rows = sqlx::query(&sql).bind(project_id).fetch_all(pool).await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>(0))
-        .collect())
+    Ok(rows.into_iter().map(|r| r.get::<String, _>(0)).collect())
 }
 
 async fn tagged_addresses(
@@ -258,10 +255,7 @@ async fn tagged_addresses(
     .bind(tag)
     .fetch_all(pool)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>(0))
-        .collect())
+    Ok(rows.into_iter().map(|r| r.get::<String, _>(0)).collect())
 }
 
 fn tx_involves(tx: &TransactionFacts, addresses: &[String]) -> bool {

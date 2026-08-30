@@ -20,7 +20,9 @@ use stellar_xdr::{
 };
 use uuid::Uuid;
 
-use crate::{extract::AuthUser, state::AppState};
+use crate::{
+    extract::AuthUser, simulations::normalize_decoded_invocation_for_fork, state::AppState,
+};
 
 struct ProjectAuth {
     organization_id: Uuid,
@@ -304,7 +306,7 @@ fn account_ledger_key_from_address(address: &str) -> Result<Option<String>, Erro
     let account_id = AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
         bytes
             .try_into()
-            .map_err(|_| Error::BadRequest("wallet address has an invalid payload".into()))?,
+            .map_err(|_| Error::BadRequest("account address has an invalid payload".into()))?,
     )));
     LedgerKey::Account(LedgerKeyAccount { account_id })
         .to_xdr_base64(Limits::none())
@@ -400,9 +402,20 @@ async fn enrich_environment(
 ) -> Result<(), Error> {
     let id = environment_uuid(environment, "id")?
         .ok_or_else(|| Error::ServiceUnavailable("fork_core_invalid_response".into()))?;
-    let row = sqlx::query_as::<_, (String, i16, Option<Value>, bool, Option<String>)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            i16,
+            Option<Value>,
+            bool,
+            Option<String>,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT initialization_status,initialization_progress,initialization_error,
-                public_explorer_enabled,rpc_slug
+                public_explorer_enabled,rpc_slug,rpc_admin_secret,created_at
            FROM fork_environments WHERE id=$1 AND project_id=$2",
     )
     .bind(id)
@@ -411,11 +424,31 @@ async fn enrich_environment(
     .await
     .map_err(Error::internal)?
     .ok_or(Error::NotFound)?;
+    let admin_secret = if let Some(secret) = row.5.clone() {
+        secret
+    } else {
+        let generated = Uuid::new_v4().to_string();
+        sqlx::query(
+            "UPDATE fork_environments
+                SET rpc_admin_secret_hash=$1,rpc_admin_secret=$2
+              WHERE id=$3 AND project_id=$4 AND rpc_admin_secret IS NULL",
+        )
+        .bind(secret_hash(&generated))
+        .bind(&generated)
+        .bind(id)
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .map_err(Error::internal)?;
+        generated
+    };
     environment["initialization_status"] = json!(row.0);
     environment["initialization_progress"] = json!(row.1);
     environment["initialization_error"] = row.2.unwrap_or(Value::Null);
     environment["public_explorer_enabled"] = json!(row.3);
     environment["rpc_slug"] = json!(row.4);
+    environment["admin_secret"] = json!(admin_secret);
+    environment["created_at"] = json!(row.6);
     Ok(())
 }
 
@@ -745,13 +778,14 @@ pub async fn create_environment(
     let admin_secret = Uuid::new_v4().to_string();
     sqlx::query(
         "UPDATE fork_environments SET public_explorer_enabled=$1,rpc_slug=$2,
-                rpc_admin_secret_hash=$3,rpc_admin_secret=NULL,
+                rpc_admin_secret_hash=$3,rpc_admin_secret=$4,
                 initialization_status='ready',initialization_progress=100
-          WHERE id=$4 AND project_id=$5",
+          WHERE id=$5 AND project_id=$6",
     )
     .bind(body.public_explorer_enabled)
     .bind(normalized_slug.as_deref())
     .bind(secret_hash(&admin_secret))
+    .bind(&admin_secret)
     .bind(environment_id)
     .bind(auth.project_id)
     .execute(&state.db)
@@ -787,7 +821,6 @@ pub async fn create_environment(
     .await?;
     let mut cached_response = environment.clone();
     if let Some(object) = cached_response.as_object_mut() {
-        object.remove("admin_secret");
         object.remove("admin_rpc_url");
     }
     sqlx::query(
@@ -944,7 +977,9 @@ async fn run_environment_action(
     if let Some(job_id) = value.get("job_id").and_then(Value::as_str) {
         value["status_url"] = json!(format!("/api/v1/{org}/{project}/jobs/{job_id}"));
     }
-    if matches!(action, "sync/start" | "sync/stop") || (action == "overrides" && body.is_some()) {
+    if matches!(action, "sync/start" | "sync/step" | "sync/stop")
+        || (action == "overrides" && body.is_some())
+    {
         refresh_environment(&state, user_id, &auth, environment_id).await?;
     }
     Ok(Json(value))
@@ -963,9 +998,10 @@ pub async fn environment_simulate(
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let body = body
+    let mut body = body
         .map(|Json(value)| value)
         .ok_or_else(|| Error::BadRequest("Simulation request is required".into()))?;
+    normalize_decoded_invocation_for_fork(&mut body)?;
     let request = body.clone();
     let accepted_value = client(&state)?
         .environment_action(
@@ -1259,8 +1295,12 @@ pub async fn environment_rpc_admin(
         return Err(Error::Forbidden);
     }
     if legacy_valid {
-        sqlx::query("UPDATE fork_environments SET rpc_admin_secret_hash=$1,rpc_admin_secret=NULL WHERE id=$2")
-            .bind(&supplied_hash).bind(environment_id).execute(&state.db).await.map_err(Error::internal)?;
+        sqlx::query("UPDATE fork_environments SET rpc_admin_secret_hash=$1 WHERE id=$2")
+            .bind(&supplied_hash)
+            .bind(environment_id)
+            .execute(&state.db)
+            .await
+            .map_err(Error::internal)?;
     }
     let body = body
         .map(|Json(value)| value)
@@ -1456,7 +1496,7 @@ pub async fn add_environment_wallet(
     .map_err(Error::internal)?;
     if already_linked {
         return Err(Error::ConflictDetail(
-            "This wallet is already linked to this environment.".into(),
+            "This account is already linked to this environment.".into(),
         ));
     }
     let network = sqlx::query_scalar::<_, String>(
@@ -1525,7 +1565,7 @@ pub async fn add_environment_wallet(
             .as_database_error()
             .is_some_and(|db| db.code().as_deref() == Some("23505"))
         {
-            Error::ConflictDetail("This wallet is already linked to this environment.".into())
+            Error::ConflictDetail("This account is already linked to this environment.".into())
         } else {
             Error::internal(error)
         }
@@ -1536,7 +1576,7 @@ pub async fn add_environment_wallet(
         environment_id,
         Some(user_id),
         "wallet.linked",
-        "Wallet linked",
+        "Account linked",
         json!({"address":address,"label":label,"virtual_only":virtual_only}),
     )
     .await?;
@@ -1624,7 +1664,7 @@ pub async fn rename_environment_wallet(
         environment_id,
         Some(user_id),
         "wallet.renamed",
-        "Wallet label updated",
+        "Account label updated",
         json!({"address":row.0,"label":row.1}),
     )
     .await?;
@@ -1778,7 +1818,7 @@ pub async fn fund_environment(
     .map_err(Error::internal)?;
     if !linked {
         return Err(Error::BadRequest(
-            "wallet must be linked to this environment before it can be funded".into(),
+            "account must be linked to this environment before it can be funded".into(),
         ));
     }
     if !valid_wallet_address(body.address.trim()) || !body.address.starts_with('G') {
@@ -1945,10 +1985,11 @@ pub async fn rotate_environment_rpc_secret(
     sqlx::query(
         "UPDATE fork_environments SET rpc_previous_secret_hash=rpc_admin_secret_hash,
                 rpc_previous_secret_expires_at=now()+interval '5 minutes',
-                rpc_admin_secret_hash=$1,rpc_admin_secret=NULL,rpc_secret_rotated_at=now()
-          WHERE id=$2 AND project_id=$3",
+                rpc_admin_secret_hash=$1,rpc_admin_secret=$2,rpc_secret_rotated_at=now()
+          WHERE id=$3 AND project_id=$4",
     )
     .bind(secret_hash(&secret))
+    .bind(&secret)
     .bind(environment_id)
     .bind(auth.project_id)
     .execute(&state.db)
@@ -2171,6 +2212,23 @@ pub async fn stop_environment_sync(
     path: Path<(String, String, Uuid)>,
 ) -> Result<Json<Value>, Error> {
     run_environment_action(state, user, path, "sync/stop", None, None).await
+}
+
+pub async fn step_environment_sync(
+    state: State<AppState>,
+    user: AuthUser,
+    path: Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<(axum::http::StatusCode, Json<Value>), Error> {
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .ok_or_else(|| Error::BadRequest("Idempotency-Key is required".into()))?;
+    let response =
+        run_environment_action(state, user, path, "sync/step", None, Some(idempotency_key)).await?;
+    Ok((axum::http::StatusCode::ACCEPTED, response))
 }
 
 pub async fn environment_sync_status(

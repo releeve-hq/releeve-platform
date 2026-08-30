@@ -1102,11 +1102,12 @@ async fn project_addresses(
              UNION SELECT address FROM contracts WHERE project_id = $1"
         ),
     };
-    let rows = sqlx::query(&sql).bind(project_id).fetch_all(pool).await.map_err(Error::internal)?;
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>(0))
-        .collect())
+    let rows = sqlx::query(&sql)
+        .bind(project_id)
+        .fetch_all(pool)
+        .await
+        .map_err(Error::internal)?;
+    Ok(rows.into_iter().map(|r| r.get::<String, _>(0)).collect())
 }
 
 async fn tagged_addresses(
@@ -1132,10 +1133,7 @@ async fn tagged_addresses(
     .fetch_all(pool)
     .await
     .map_err(Error::internal)?;
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>(0))
-        .collect())
+    Ok(rows.into_iter().map(|r| r.get::<String, _>(0)).collect())
 }
 
 fn tx_involves(tx: &TransactionFacts, addresses: &[String]) -> bool {

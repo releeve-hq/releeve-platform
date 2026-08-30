@@ -108,7 +108,7 @@ export const docGuides: DocGuide[] = [
       {
         heading: "Account impersonation",
         paragraphs: ["Impersonation lets an approved account satisfy a simulation authorization path without possessing its secret key. It never signs or submits a transaction to Stellar."],
-        note: "Treat impersonation as a privileged project operation. It is testing capability, not wallet custody.",
+        note: "Treat impersonation as a privileged project operation. It is testing capability, not account custody.",
       },
       {
         heading: "Result evidence",
@@ -125,7 +125,7 @@ export const docGuides: DocGuide[] = [
       },
       {
         heading: "Transaction preview",
-        paragraphs: ["A lightweight dry-run for dapps and CI: simulate the pending transaction and surface what moves, what it costs, and whether it fails — before anything is signed. Wallet-style previews render asset and balance changes, event logs, and decoded failure reasons."],
+        paragraphs: ["A lightweight dry-run for dapps and CI: simulate the pending transaction and surface what moves, what it costs, and whether it fails — before anything is signed. Account-style previews render asset and balance changes, event logs, and decoded failure reasons."],
       },
     ],
   },
@@ -264,7 +264,7 @@ export const docGuides: DocGuide[] = [
       },
       {
         heading: "Trace search and collaboration",
-        paragraphs: ["Search across the nested call trace by function, contract, or event. Tag contracts and wallets to group monitoring and filter views. Leave comments on any trace node and mark priorities so teams can coordinate during an incident response."],
+        paragraphs: ["Search across the nested call trace by function, contract, or event. Tag contracts and accounts to group monitoring and filter views. Leave comments on any trace node and mark priorities so teams can coordinate during an incident response."],
       },
       {
         heading: "Contract read and write",

@@ -48,10 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             settings.fork_core_issuer.clone(),
             settings.fork_core_audience.clone(),
         )?;
-        Some(sim::ForkCoreClient::new(
-            settings.fork_core_url.clone(),
-            signer,
-        )?)
+        Some(
+            sim::ForkCoreClient::new(settings.fork_core_url.clone(), signer)?
+                .with_history_preview_token(settings.fork_core_history_preview_token.clone())?,
+        )
     };
     let source_lens = if settings.source_lens_url.is_empty() {
         None

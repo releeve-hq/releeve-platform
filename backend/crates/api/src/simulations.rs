@@ -18,7 +18,7 @@ use crate::{environments::decode_strkey_payload, extract::AuthUser, state::AppSt
 use ingest::rpc::SorobanRpcClient;
 use ingest::upstream::{Backoff, CircuitBreaker};
 
-struct ProjectAuth {
+pub(crate) struct ProjectAuth {
     organization_id: Uuid,
     project_id: Uuid,
 }
@@ -40,7 +40,7 @@ pub struct CreateSimulationRequest {
 #[derive(Debug, Deserialize)]
 pub struct SimulationSequenceRequest {
     pub network: String,
-    pub source_account_xdr: String,
+    pub source_account: String,
     pub environment_id: Option<Uuid>,
 }
 
@@ -68,12 +68,12 @@ pub enum Invocation {
         contract_id: String,
         function_name: String,
         args: Value,
-        source_account_xdr: String,
+        source_account: String,
         sequence_number: i64,
     },
 }
 
-async fn authorize(
+pub(crate) async fn authorize(
     state: &AppState,
     user_id: Uuid,
     org: &str,
@@ -200,12 +200,83 @@ fn simulation_breaker() -> CircuitBreaker {
     CircuitBreaker::new(3, std::time::Duration::from_secs(30))
 }
 
-fn account_ledger_key(source_account_xdr: &str) -> Result<String, Error> {
-    let account_id = AccountId::from_xdr_base64(source_account_xdr, Limits::none())
-        .map_err(|error| Error::BadRequest(format!("invalid source account XDR: {error}")))?;
+fn account_id_from_address(source_account: &str) -> Result<AccountId, Error> {
+    let normalized_address = source_account.trim().to_ascii_uppercase();
+    let account_bytes = decode_strkey_payload(&normalized_address, 6 << 3, 32)
+        .ok_or_else(|| Error::BadRequest("source account must be a valid G... address".into()))?;
+    let account_bytes: [u8; 32] = account_bytes
+        .try_into()
+        .map_err(|_| Error::BadRequest("source account address has an invalid payload".into()))?;
+    Ok(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
+        account_bytes,
+    ))))
+}
+
+fn account_ledger_key(source_account: &str) -> Result<String, Error> {
+    let account_id = account_id_from_address(source_account)?;
     LedgerKey::Account(LedgerKeyAccount { account_id })
         .to_xdr_base64(Limits::none())
         .map_err(Error::internal)
+}
+
+pub(crate) fn normalize_decoded_invocation_for_fork(body: &mut Value) -> Result<(), Error> {
+    let Some(invocation) = body.get_mut("invocation").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    normalize_invocation_object(invocation)
+}
+
+fn normalize_invocation_object(
+    invocation: &mut serde_json::Map<String, Value>,
+) -> Result<(), Error> {
+    if invocation.get("type").and_then(Value::as_str) != Some("decoded") {
+        return Ok(());
+    }
+    let source_account = invocation
+        .get("source_account")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::BadRequest("decoded invocation requires a source account address".into())
+        })?;
+    let source_account_xdr = account_id_from_address(source_account)?
+        .to_xdr_base64(Limits::none())
+        .map_err(Error::internal)?;
+    invocation.remove("source_account");
+    invocation.insert(
+        "source_account_xdr".into(),
+        Value::String(source_account_xdr),
+    );
+    Ok(())
+}
+
+pub(crate) fn normalize_replay_invocations_for_fork(body: &mut Value) -> Result<(), Error> {
+    if let Some(replacement) = body.get_mut("replacement").and_then(Value::as_object_mut) {
+        normalize_invocation_object(replacement)?;
+    }
+    if let Some(setup) = body
+        .get_mut("setup_invocations")
+        .and_then(Value::as_array_mut)
+    {
+        for invocation in setup {
+            if let Some(invocation) = invocation.as_object_mut() {
+                normalize_invocation_object(invocation)?;
+            }
+        }
+    }
+    if let Some(replacements) = body.get_mut("replacements").and_then(Value::as_array_mut) {
+        for replacement in replacements {
+            if let Some(invocation) = replacement
+                .get_mut("invocation")
+                .and_then(Value::as_object_mut)
+            {
+                normalize_invocation_object(invocation)?;
+            }
+        }
+    }
+    if let Some(overrides) = body.get_mut("overrides").and_then(Value::as_array_mut) {
+        normalize_balance_overrides(overrides)?;
+    }
+    Ok(())
 }
 
 fn balance_ledger_key(target: &str, asset: &str) -> Result<String, Error> {
@@ -246,7 +317,7 @@ fn balance_ledger_key(target: &str, asset: &str) -> Result<String, Error> {
     .map_err(Error::internal)
 }
 
-fn contract_instance_ledger_key(contract_id: &str) -> Result<String, Error> {
+pub(crate) fn contract_instance_ledger_key(contract_id: &str) -> Result<String, Error> {
     let contract_bytes = decode_strkey_payload(contract_id, 2 << 3, 32).ok_or_else(|| {
         Error::BadRequest("contract ID must be a valid Stellar contract address".into())
     })?;
@@ -295,7 +366,7 @@ async fn read_account_entry(
     auth: &ProjectAuth,
     request: &SimulationSequenceRequest,
 ) -> Result<Value, Error> {
-    let key = account_ledger_key(&request.source_account_xdr)?;
+    let key = account_ledger_key(&request.source_account)?;
     read_ledger_entries(
         state,
         user_id,
@@ -307,7 +378,7 @@ async fn read_account_entry(
     .await
 }
 
-async fn read_ledger_entries(
+pub(crate) async fn read_ledger_entries(
     state: &AppState,
     user_id: Uuid,
     auth: &ProjectAuth,
@@ -334,6 +405,15 @@ async fn read_ledger_entries(
     rpc.call("getLedgerEntries", body["params"].clone())
         .await
         .map_err(|error| Error::ServiceUnavailable(format!("soroban_rpc: {error:?}")))
+}
+
+fn decode_ledger_entry_data(xdr: &str) -> Result<LedgerEntryData, String> {
+    if let Ok(data) = LedgerEntryData::from_xdr_base64(xdr, Limits::none()) {
+        return Ok(data);
+    }
+    LedgerEntry::from_xdr_base64(xdr, Limits::none())
+        .map(|entry| entry.data)
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -372,13 +452,12 @@ pub async fn simulation_contract_entries(
             let decoded_key = LedgerKey::from_xdr_base64(key, Limits::none())
                 .map(|value| format!("{value:?}"))
                 .unwrap_or_else(|_| "Unavailable".into());
-            let decoded_entry =
-                raw_xdr.and_then(|xdr| LedgerEntry::from_xdr_base64(xdr, Limits::none()).ok());
-            let decoded_value = decoded_entry
+            let decoded_data = raw_xdr.and_then(|xdr| decode_ledger_entry_data(xdr).ok());
+            let decoded_value = decoded_data
                 .as_ref()
-                .map(|value| format!("{:?}", value.data))
+                .map(|value| format!("{value:?}"))
                 .unwrap_or_else(|| "Entry not present in the selected state".into());
-            let value_xdr = decoded_entry.as_ref().and_then(|value| match &value.data {
+            let value_xdr = decoded_data.as_ref().and_then(|value| match value {
                 LedgerEntryData::ContractData(data) => data.val.to_xdr_base64(Limits::none()).ok(),
                 _ => None,
             });
@@ -410,16 +489,29 @@ pub async fn simulation_sequence(
     let xdr = result
         .pointer("/entries/0/xdr")
         .and_then(Value::as_str)
-        .ok_or_else(|| Error::NotFound)?;
-    let entry = LedgerEntry::from_xdr_base64(xdr, Limits::none()).map_err(|error| {
-        Error::BadRequest(format!("account ledger entry is invalid XDR: {error}"))
-    })?;
-    let current = match entry.data {
-        LedgerEntryData::Account(account) => account.seq_num.0,
-        _ => {
-            return Err(Error::BadRequest(
-                "ledger key did not resolve to an account".into(),
-            ));
+        .ok_or_else(|| {
+            Error::BadRequest("source account was not found in the selected ledger state".into())
+        })?;
+    let current = if let Ok(data) = LedgerEntryData::from_xdr_base64(xdr, Limits::none()) {
+        match data {
+            LedgerEntryData::Account(account) => account.seq_num.0,
+            _ => {
+                return Err(Error::BadRequest(
+                    "ledger key did not resolve to an account".into(),
+                ));
+            }
+        }
+    } else {
+        let entry = LedgerEntry::from_xdr_base64(xdr, Limits::none()).map_err(|error| {
+            Error::BadRequest(format!("account ledger entry is invalid XDR: {error}"))
+        })?;
+        match entry.data {
+            LedgerEntryData::Account(account) => account.seq_num.0,
+            _ => {
+                return Err(Error::BadRequest(
+                    "ledger key did not resolve to an account".into(),
+                ));
+            }
         }
     };
     Ok(Json(json!({
@@ -442,7 +534,8 @@ pub async fn create_simulation(
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let fork_body = serde_json::to_value(&body).map_err(Error::internal)?;
+    let mut fork_body = serde_json::to_value(&body).map_err(Error::internal)?;
+    normalize_decoded_invocation_for_fork(&mut fork_body)?;
     let accepted = client(&state)?
         .create_simulation(&actor(user_id, &auth), &idempotency, &fork_body)
         .await
@@ -495,7 +588,10 @@ pub async fn list_simulations(
 ) -> Result<Json<Value>, Error> {
     let auth = authorize(&state, user_id, &org, &project).await?;
     let rows = sqlx::query_scalar::<_, Value>(
-        "SELECT jsonb_build_object('id', id, 'status', status, 'function_name', function_name,
+        "SELECT jsonb_build_object('id', id, 'status', status,
+                 'source', COALESCE(NULLIF(invocation->>'source_account', ''), NULLIF(invocation->>'source_account_xdr', '')),
+                 'target', NULLIF(invocation->>'contract_id', ''),
+                 'function_name', function_name,
                  'base_ledger_sequence', base_ledger_sequence, 'fork_core_summary', fork_core_summary,
                  'fork_environment_id', fork_environment_id,
                  'created_at', created_at, 'completed_at', completed_at)
@@ -893,20 +989,37 @@ pub async fn get_simulation_debug_trace(
     Ok(Json(trace))
 }
 
+struct AnalysisBinding {
+    external_id: Uuid,
+    debug_id: Option<Uuid>,
+    origin: String,
+}
+
 async fn analysis_binding(
     state: &AppState,
     project_id: Uuid,
     analysis_id: Uuid,
-) -> Result<(Uuid, Option<Uuid>), Error> {
-    sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
-        "SELECT id,source_lens_debug_session_id FROM simulation_runs WHERE project_id=$1 AND source_lens_analysis_id=$2",
+) -> Result<AnalysisBinding, Error> {
+    let (external_id, debug_id, origin) = sqlx::query_as::<_, (Uuid, Option<Uuid>, String)>(
+        "SELECT id,source_lens_debug_session_id,'simulation'::TEXT
+           FROM simulation_runs WHERE project_id=$1 AND source_lens_analysis_id=$2
+         UNION ALL
+         SELECT fork_core_replay_id,source_lens_debug_session_id,'replay'::TEXT
+           FROM historical_replay_analysis_bindings
+          WHERE project_id=$1 AND source_lens_analysis_id=$2
+         LIMIT 1",
     )
     .bind(project_id)
     .bind(analysis_id)
     .fetch_optional(&state.db)
     .await
     .map_err(Error::internal)?
-    .ok_or(Error::NotFound)
+    .ok_or(Error::NotFound)?;
+    Ok(AnalysisBinding {
+        external_id,
+        debug_id,
+        origin,
+    })
 }
 
 pub async fn get_debugger_workspace(
@@ -915,12 +1028,12 @@ pub async fn get_debugger_workspace(
     Path((org, project, analysis_id)): Path<(String, String, Uuid)>,
 ) -> Result<Json<Value>, Error> {
     let auth = authorize(&state, user_id, &org, &project).await?;
-    let (simulation_id, debug_id) = analysis_binding(&state, auth.project_id, analysis_id).await?;
+    let binding = analysis_binding(&state, auth.project_id, analysis_id).await?;
     let analysis = lens_client(&state)?
         .get_analysis(&lens_actor(user_id, &auth), analysis_id)
         .await
         .map_err(map_lens_remote)?;
-    let debugger = if let Some(debug_id) = debug_id {
+    let debugger = if let Some(debug_id) = binding.debug_id {
         Some(
             lens_client(&state)?
                 .get_debug_session(&lens_actor(user_id, &auth), debug_id)
@@ -932,7 +1045,9 @@ pub async fn get_debugger_workspace(
     };
     Ok(Json(json!({
         "analysis_id": analysis_id,
-        "simulation_id": simulation_id,
+        "simulation_id": (binding.origin == "simulation").then_some(binding.external_id),
+        "replay_id": (binding.origin == "replay").then_some(binding.external_id),
+        "origin": binding.origin,
         "analysis": analysis,
         "debugger": debugger,
     })))
@@ -945,12 +1060,12 @@ pub async fn create_debugger_workspace(
     headers: HeaderMap,
 ) -> Result<(axum::http::StatusCode, Json<Value>), Error> {
     let auth = authorize(&state, user_id, &org, &project).await?;
-    let (simulation_id, existing) = analysis_binding(&state, auth.project_id, analysis_id).await?;
-    if let Some(debug_id) = existing {
+    let binding = analysis_binding(&state, auth.project_id, analysis_id).await?;
+    if let Some(debug_id) = binding.debug_id {
         return Ok((
             axum::http::StatusCode::OK,
             Json(
-                json!({"analysis_id":analysis_id,"simulation_id":simulation_id,"debug_session_id":debug_id,"created":false}),
+                json!({"analysis_id":analysis_id,"origin":binding.origin,"external_id":binding.external_id,"debug_session_id":debug_id,"created":false}),
             ),
         ));
     }
@@ -967,12 +1082,17 @@ pub async fn create_debugger_workspace(
     let debug_id = accepted
         .debug_session_id
         .ok_or_else(|| Error::ServiceUnavailable("source_lens_invalid_response".into()))?;
-    sqlx::query("UPDATE simulation_runs SET source_lens_debug_session_id=$2,source_lens_synced_at=now() WHERE id=$1 AND project_id=$3")
-        .bind(simulation_id).bind(debug_id).bind(auth.project_id).execute(&state.db).await.map_err(Error::internal)?;
+    if binding.origin == "simulation" {
+        sqlx::query("UPDATE simulation_runs SET source_lens_debug_session_id=$2,source_lens_synced_at=now() WHERE id=$1 AND project_id=$3")
+            .bind(binding.external_id).bind(debug_id).bind(auth.project_id).execute(&state.db).await.map_err(Error::internal)?;
+    } else {
+        sqlx::query("UPDATE historical_replay_analysis_bindings SET source_lens_debug_session_id=$2,synced_at=now() WHERE fork_core_replay_id=$1 AND project_id=$3 AND source_lens_analysis_id=$4")
+            .bind(binding.external_id).bind(debug_id).bind(auth.project_id).bind(analysis_id).execute(&state.db).await.map_err(Error::internal)?;
+    }
     Ok((
         axum::http::StatusCode::ACCEPTED,
         Json(
-            json!({"analysis_id":analysis_id,"simulation_id":simulation_id,"debug_session_id":debug_id,"job_id":accepted.job_id,"status":accepted.status,"created":accepted.created}),
+            json!({"analysis_id":analysis_id,"origin":binding.origin,"external_id":binding.external_id,"debug_session_id":debug_id,"job_id":accepted.job_id,"status":accepted.status,"created":accepted.created}),
         ),
     ))
 }
@@ -984,8 +1104,8 @@ pub async fn get_debugger_workspace_trace(
     Query(query): Query<DebugTraceQuery>,
 ) -> Result<Json<Value>, Error> {
     let auth = authorize(&state, user_id, &org, &project).await?;
-    let (_, debug_id) = analysis_binding(&state, auth.project_id, analysis_id).await?;
-    let debug_id = debug_id.ok_or(Error::NotFound)?;
+    let binding = analysis_binding(&state, auth.project_id, analysis_id).await?;
+    let debug_id = binding.debug_id.ok_or(Error::NotFound)?;
     let trace = lens_client(&state)?
         .get_debug_trace_page(
             &lens_actor(user_id, &auth),

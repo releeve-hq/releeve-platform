@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
+import { EntityCopyButton } from "@/components/explorer/entity-copy-button";
 import {
   addressRoute,
   explorerRoutes,
@@ -29,10 +30,14 @@ function EntityLink({
   className,
   children,
 }: EntityLinkProps & { href: string }) {
+  const value = typeof children === "string" ? children : title ?? "entity";
   return (
-    <Link href={href} title={title} className={className} style={baseStyle}>
-      {children}
-    </Link>
+    <span className="explorer-entity-link">
+      <Link href={href} title={title} className={className} style={baseStyle}>
+        {children}
+      </Link>
+      <EntityCopyButton value={title ?? value} label="entity" />
+    </span>
   );
 }
 
@@ -54,11 +59,12 @@ export function LedgerLink({
   network,
   className,
   title,
+  children,
 }: EntityLinkProps & { sequence: string | number }) {
   const value = String(sequence);
   return (
     <EntityLink href={explorerRoutes.ledger(network, value)} network={network} title={title ?? value} className={className}>
-      {value}
+      {children ?? value}
     </EntityLink>
   );
 }

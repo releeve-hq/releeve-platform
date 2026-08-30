@@ -19,10 +19,10 @@ function formatTime(value: string) {
   return Number.isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString();
 }
 
-function PageControls({ page, onPage, disabled }: { page: ExplorerPage<unknown> | null; onPage: (cursor: string) => void; disabled: boolean }) {
+function PageControls({ page, canBack, onBack, onNext, disabled }: { page: ExplorerPage<unknown> | null; canBack: boolean; onBack: () => void; onNext: () => void; disabled: boolean }) {
   return <div className="explorer-page-controls">
-    <button disabled={!page?.prev_cursor || disabled} onClick={() => page?.prev_cursor && onPage(page.prev_cursor)}>Back</button>
-    <button disabled={!page?.next_cursor || disabled} onClick={() => page?.next_cursor && onPage(page.next_cursor)}>Next</button>
+    <button disabled={!canBack || disabled} onClick={onBack}>Back</button>
+    <button disabled={!page?.next_cursor || disabled} onClick={onNext}>Next</button>
   </div>;
 }
 
@@ -30,23 +30,54 @@ export function ExplorerHome({ network }: { network: string }) {
   const [pageSize, setPageSize] = useState(10);
   const [transactions, setTransactions] = useState<ExplorerPage<ExplorerFeedTransaction> | null>(null);
   const [ledgers, setLedgers] = useState<ExplorerPage<ExplorerFeedLedger> | null>(null);
+  const [transactionCursor, setTransactionCursor] = useState<string | undefined>();
+  const [ledgerCursor, setLedgerCursor] = useState<string | undefined>();
+  const [transactionHistory, setTransactionHistory] = useState<string[]>([]);
+  const [ledgerHistory, setLedgerHistory] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (transactionCursor?: string, ledgerCursor?: string) => {
+  const load = useCallback(async (nextTransactionCursor = transactionCursor, nextLedgerCursor = ledgerCursor) => {
     setLoading(true);
     setError(null);
     const [transactionResult, ledgerResult] = await Promise.all([
-      getRecentTransactions(network, pageSize, transactionCursor),
-      getRecentLedgers(network, pageSize, ledgerCursor),
+      getRecentTransactions(network, pageSize, nextTransactionCursor),
+      getRecentLedgers(network, pageSize, nextLedgerCursor),
     ]);
     setTransactions(transactionResult.data);
     setLedgers(ledgerResult.data);
     setError(transactionResult.error || ledgerResult.error);
     setLoading(false);
-  }, [network, pageSize]);
+  }, [ledgerCursor, network, pageSize, transactionCursor]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const nextTransactions = () => {
+    const nextCursor = transactions?.next_cursor;
+    if (!nextCursor) return;
+    setTransactionHistory((items) => [...items, transactionCursor ?? ""]);
+    setTransactionCursor(nextCursor);
+  };
+  const backTransactions = () => {
+    setTransactionHistory((items) => {
+      const previous = items.at(-1) ?? "";
+      setTransactionCursor(previous || undefined);
+      return items.slice(0, -1);
+    });
+  };
+  const nextLedgers = () => {
+    const nextCursor = ledgers?.next_cursor;
+    if (!nextCursor) return;
+    setLedgerHistory((items) => [...items, ledgerCursor ?? ""]);
+    setLedgerCursor(nextCursor);
+  };
+  const backLedgers = () => {
+    setLedgerHistory((items) => {
+      const previous = items.at(-1) ?? "";
+      setLedgerCursor(previous || undefined);
+      return items.slice(0, -1);
+    });
+  };
 
   const latestLedger = ledgers?.data[0];
   return <main className="explorer-home">
@@ -71,14 +102,14 @@ export function ExplorerHome({ network }: { network: string }) {
 
     <section className="explorer-grid">
       <div id="ledgers" className="explorer-section">
-        <div className="explorer-section-head"><div><h2>Latest ledgers</h2><p>Recent closed ledgers from Platform’s index.</p></div><PageControls page={ledgers} onPage={(cursor) => void load(undefined, cursor)} disabled={loading} /></div>
+        <div className="explorer-section-head"><div><h2>Latest ledgers</h2><p>Recent closed ledgers from Platform’s index.</p></div><PageControls page={ledgers} canBack={ledgerHistory.length > 0} onBack={backLedgers} onNext={nextLedgers} disabled={loading} /></div>
         <div className="explorer-table" aria-busy={loading}>
           <div className="explorer-row explorer-table-label"><span>Ledger</span><span>Transactions</span><span>Closed</span></div>
           {loading && !ledgers ? <div className="explorer-empty">Loading ledgers...</div> : ledgers?.data.length ? ledgers.data.map((ledger) => <Link className="explorer-row" key={ledger.sequence} href={explorerRoutes.ledger(network, ledger.sequence)}><span className="explorer-mono">{ledger.sequence.toLocaleString()}</span><span>{ledger.transaction_count ?? '—'}</span><span>{formatTime(ledger.timestamp)}</span></Link>) : <div className="explorer-empty">No indexed ledgers are available yet.</div>}
         </div>
       </div>
       <div id="transactions" className="explorer-section">
-        <div className="explorer-section-head"><div><h2>Latest transactions</h2><p>Newest indexed operations, newest first.</p></div><div className="explorer-controls"><select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} aria-label="Transactions per page">{PAGE_SIZES.map((size) => <option key={size} value={size}>{size} rows</option>)}</select><PageControls page={transactions} onPage={(cursor) => void load(cursor)} disabled={loading} /></div></div>
+        <div className="explorer-section-head"><div><h2>Latest transactions</h2><p>Newest indexed operations, newest first.</p></div><div className="explorer-controls"><select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} aria-label="Transactions per page">{PAGE_SIZES.map((size) => <option key={size} value={size}>{size} rows</option>)}</select><PageControls page={transactions} canBack={transactionHistory.length > 0} onBack={backTransactions} onNext={nextTransactions} disabled={loading} /></div></div>
         <div className="explorer-table" aria-busy={loading}>
           <div className="explorer-row explorer-table-label explorer-transaction-row"><span>Transaction</span><span>From</span><span>Ledger</span><span>Status</span></div>
           {loading && !transactions ? <div className="explorer-empty">Loading transactions...</div> : transactions?.data.length ? transactions.data.map((transaction) => <Link className="explorer-row explorer-transaction-row" key={transaction.hash} href={explorerRoutes.tx(network, transaction.hash)}><span><strong className="explorer-mono">{truncateEntity(transaction.hash)}</strong><small>{transaction.operation_type}</small></span><span className="explorer-mono">{truncateEntity(transaction.source_account, 6, 5)}</span><span>{transaction.ledger_sequence?.toLocaleString() ?? '—'}</span><span className={transaction.status === 'success' ? 'status-success' : 'status-failed'}>{transaction.status}</span></Link>) : <div className="explorer-empty">No indexed transactions are available yet.</div>}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Bell, Check, ChevronLeft, CircleDollarSign, Copy, Eye, Globe2, MoreHorizontal, Play, Search, Send, Share2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bell, Check, ChevronDown, ChevronLeft, CircleDollarSign, Columns3, Copy, Eye, Globe2, ListFilter, MoreHorizontal, Play, RotateCcw, Search, Send, Share2, X } from "lucide-react";
 import type {
   ExplorerAccountDetail,
   ExplorerAccountTransaction,
@@ -14,6 +14,7 @@ import type {
 import { getAccountTransactions } from "@/lib/explorer-api";
 import { addressRoute, explorerRoutes, isContractAddress, stellarExpertRoute, truncateEntity } from "@/lib/explorer-routes";
 import { EntityIdenticon } from "@/components/explorer/entity-identicon";
+import { EntityCopyButton } from "@/components/explorer/entity-copy-button";
 import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
 import { AssetTransfers } from "@/components/explorer/asset-transfers";
 import { TransactionTrace } from "@/components/explorer/transaction-trace";
@@ -25,6 +26,39 @@ import {
 } from "@/components/explorer/entity-design-views";
 
 type Tab = "summary" | "contracts" | "events" | "state" | "fundflow" | "resources";
+
+type WalletTransactionColumn =
+  | "hash"
+  | "source"
+  | "target"
+  | "status"
+  | "operation"
+  | "function"
+  | "ledger"
+  | "resource"
+  | "when";
+
+const PROJECT_WALLET_COLUMNS: Array<{ key: WalletTransactionColumn; label: string }> = [
+  { key: "hash", label: "Transaction hash" },
+  { key: "source", label: "Source" },
+  { key: "target", label: "Target" },
+  { key: "operation", label: "Operation" },
+  { key: "function", label: "Function" },
+  { key: "ledger", label: "Ledger" },
+  { key: "status", label: "Status" },
+];
+
+const ENVIRONMENT_WALLET_COLUMNS: Array<{ key: WalletTransactionColumn; label: string }> = [
+  { key: "hash", label: "Transaction hash" },
+  { key: "source", label: "Source" },
+  { key: "target", label: "Target" },
+  { key: "status", label: "Status" },
+  { key: "operation", label: "Operation" },
+  { key: "function", label: "Function" },
+  { key: "ledger", label: "Ledger" },
+  { key: "resource", label: "Resource Usage" },
+  { key: "when", label: "When" },
+];
 
 function formatTimestamp(value?: string | null) {
   if (!value) return "Unknown";
@@ -174,18 +208,6 @@ function txTargetEdge(tx: ExplorerTxDetail) {
     };
 }
 
-function usageTotal(usage: ResourceUsage) {
-  return [
-    usage.cpu_instructions,
-    usage.memory_bytes,
-    usage.invoke_time_nsecs,
-    usage.disk_read_bytes,
-    usage.write_bytes,
-    usage.max_rw_key_byte,
-    usage.max_rw_data_byte,
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value)).reduce((sum, value) => sum + value, 0);
-}
-
 function resourceRows(usage: ResourceUsage) {
   const rows = [
     ["CPU instructions", usage.cpu_instructions, ""],
@@ -227,11 +249,25 @@ function EntityAnchor({ network, value, type, className }: { network: string; va
       : addressRoute(network, String(value));
   const entityKind = type === "tx" ? "transaction" : type === "address" && isContractAddress(String(value)) ? "contract" : "account";
   return (
-    <Link className={className ?? "addr-link mono"} href={href} title={String(value)}>
-      {type !== "ledger" && <EntityIdenticon className="rx-inline-identicon" value={String(value)} kind={entityKind} size={14} />}
-      <span>{type === "ledger" ? `#${value}` : truncateEntity(value, 8, 6)}</span>
-    </Link>
+    <span className="explorer-entity-link">
+      <Link className={className ?? "addr-link mono"} href={href} title={String(value)}>
+        {type === "address" && <EntityIdenticon className="rx-inline-identicon" value={String(value)} kind={entityKind} size={14} />}
+        <span>{type === "ledger" ? `#${value}` : truncateEntity(value, 8, 6)}</span>
+      </Link>
+      <EntityCopyButton value={String(value)} label={type === "tx" ? "transaction hash" : type === "ledger" ? "ledger" : "address"} />
+    </span>
   );
+}
+
+function WalletTransactionStatus({ status }: { status: string }) {
+  const normalized = status.toLowerCase();
+  if (normalized === "success") {
+    return <span className="wallet-tx-status wallet-tx-status-success"><Check aria-hidden="true" />Success</span>;
+  }
+  if (normalized === "failed" || normalized === "failure") {
+    return <span className="wallet-tx-status wallet-tx-status-failed"><X aria-hidden="true" />Failure</span>;
+  }
+  return <span className="wallet-tx-status">{status}</span>;
 }
 
 function TopBar({ network, kind, value, onBack }: { network: string; kind: "tx" | "account" | "contract" | "ledger"; value: string | number; onBack?: () => void }) {
@@ -254,6 +290,7 @@ function ExplorerDesignStyles() {
   return <><style>{`
     .rx-root{--bg:#1D1918;--panel:#262221;--border:#4a423c;--text:#f2efec;--text-dim:#9b9490;--text-faint:#6f6a67;--blue:#2f6fed;--green:#2fa84f;--orange:#e8823c;--red:#e5484d;--purple:#6e56cf;--purple-hover:#7c63d8;min-height:100dvh;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:13px;-webkit-font-smoothing:antialiased}.rx-root *{box-sizing:border-box}.rx-root a{color:inherit;text-decoration:none}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.rx-page{max-width:1400px;margin:0 auto;padding:0 28px 60px}.rx-topbar{display:flex;align-items:center;gap:16px;padding:14px 28px;border-bottom:1px solid var(--border)}.rx-back-btn{display:flex;align-items:center;gap:8px;background:transparent;border:none;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;padding:0;flex-shrink:0}.rx-back-btn svg{width:13px;height:13px;color:var(--text-faint)}.rx-tb-search{display:flex;align-items:center;gap:9px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:9px 12px;flex:1;max-width:520px;margin:0 auto}.rx-tb-search svg{width:15px;height:15px;color:var(--text-faint);flex-shrink:0}.rx-tb-search span{color:var(--text-faint);font-size:12.5px;flex:1}.rx-tb-kbd{font-size:10.5px!important;font-weight:600;border:1px solid var(--border);border-radius:5px;padding:2px 6px;flex:0 0 auto!important}.rx-topbar-actions,.rx-subheader-right{display:flex;gap:10px;flex-shrink:0;align-items:center;flex-wrap:wrap}.rx-share-item{display:flex;align-items:center;gap:6px;color:var(--text-dim);font-size:12.5px;cursor:pointer}.rx-share-item svg,.rx-icon-only-btn svg{width:14px;height:14px}.rx-icon-only-btn{display:flex;color:var(--text-dim);cursor:pointer}.rx-subheader{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:14px}.rx-subheader-left{display:flex;align-items:center;gap:14px;min-width:0}.rx-crumb-light{font-size:15px;color:var(--text-dim);white-space:nowrap}.rx-btn{display:inline-flex;align-items:center;gap:7px;font:inherit;font-size:12.5px;font-weight:600;padding:9px 14px;border-radius:7px;cursor:pointer;white-space:nowrap}.rx-btn svg{width:14px;height:14px}.rx-btn-outline{background:var(--panel);border:1px solid var(--border);color:var(--text)}.rx-btn-purple{background:var(--purple);border:1px solid var(--purple);color:#fff}.rx-btn-green{background:var(--green);border:1px solid var(--green);color:#fff}.rx-dev-toggle{display:flex;align-items:center;gap:8px;margin-right:6px}.rx-switch{position:relative;width:34px;height:19px;flex-shrink:0}.rx-switch input{opacity:0;width:0;height:0}.rx-slider{position:absolute;inset:0;background:var(--border);border-radius:999px;transition:.2s;cursor:pointer}.rx-slider:before{content:"";position:absolute;width:15px;height:15px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}.rx-switch input:checked+.rx-slider{background:var(--green)}.rx-switch input:checked+.rx-slider:before{transform:translateX(15px)}.rx-dev-label{font-size:12.5px;color:var(--text-dim)}.rx-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 60px;padding:26px 28px 10px}.rx-detail-col{display:flex;flex-direction:column}.rx-detail-row{display:flex;align-items:baseline;gap:20px;padding:7px 0;font-size:13px}.rx-dl{width:130px;flex-shrink:0;color:var(--text-faint)}.rx-dv{color:var(--text);min-width:0;overflow-wrap:anywhere}.rx-dv.link,.addr-link{color:var(--text);text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:3px;cursor:pointer}.addr-link{display:inline-flex;align-items:center;gap:6px}.rx-inline-identicon{width:14px;height:14px;flex-shrink:0}.rx-dim{color:var(--text-faint)}.rx-success{color:var(--green);display:flex;align-items:center;gap:6px}.rx-success svg{width:13px;height:13px}.rx-net-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--blue);margin-right:7px}.rx-tabs-row{position:relative;display:flex;gap:6px;padding:20px 28px 0;border-bottom:1px solid var(--border)}.rx-tab-glide{position:absolute;z-index:0;background:var(--bg);border:1px solid var(--border);border-bottom-color:var(--bg);border-radius:7px 7px 0 0;transition:left .35s cubic-bezier(.4,0,.2,1),width .35s cubic-bezier(.4,0,.2,1)}.rx-tab{padding:10px 16px;font-size:12.5px;color:var(--text-dim);cursor:pointer;border:0;background:transparent;border-radius:7px 7px 0 0;margin-bottom:-1px;position:relative;z-index:1;transition:color .2s ease}.rx-tab.active{color:var(--text);font-weight:700}.rx-tab-panel{display:block}.rx-card{background:var(--bg);border:1px solid var(--border);border-radius:8px;margin:24px 28px 0;overflow:hidden}.rx-card-header-row{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--panel);border-bottom:1px solid var(--border);font-size:13px;font-weight:700}.rx-card-header-row .rx-dim{font-weight:500}.rx-group-by{display:flex;align-items:center;gap:8px;font-weight:500}.rx-gb-label{color:var(--text-faint);font-size:11.5px}.rx-gb-btn{background:transparent;border:1px solid var(--border);color:var(--text-dim);font-size:11.5px;font-family:inherit;padding:5px 10px;border-radius:6px}.rx-gb-btn.active{background:var(--panel);color:var(--text);border-color:var(--text-faint)}table.rx-explorer-table{width:100%;border-collapse:collapse}.rx-explorer-table th{text-align:left;font-size:11px;color:var(--text-faint);font-weight:600;padding:11px 16px;border-bottom:1px solid var(--border)}.rx-explorer-table td{padding:13px 16px;font-size:12.5px;border-bottom:1px solid var(--border);color:var(--text-dim);vertical-align:top}.rx-explorer-table tr:last-child td{border-bottom:none}.rx-neg{color:var(--red)!important}.rx-pos{color:var(--green)!important}.rx-addr-icon{display:inline-block;width:16px;height:16px;border-radius:4px;vertical-align:middle;margin-right:8px;background:linear-gradient(135deg,var(--blue),var(--red))}.rx-tag{font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;margin-left:8px}.rx-tag.sender{background:rgba(229,72,77,.15);color:var(--red)}.rx-tag.receiver{background:rgba(47,168,79,.15);color:var(--green)}.rx-token-ic{display:inline-flex;width:14px;height:14px;border-radius:4px;background:linear-gradient(135deg,#6b8aff,#2f6fed);vertical-align:middle;margin-right:6px}.rx-trace-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:16px 28px 0;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;flex-wrap:wrap}.rx-trace-search{display:flex;align-items:center;gap:8px;flex:1;min-width:160px}.rx-trace-search svg{width:14px;height:14px;color:var(--text-faint)}.rx-trace-search input{background:transparent;border:none;outline:none;color:var(--text);font-size:12.5px;font-family:inherit;flex:1}.rx-trace-select{background:var(--bg);border:1px solid var(--border);color:var(--text-dim);font-size:11.5px;padding:5px 8px;border-radius:6px}.rx-trace-toggles{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.rx-trace-toggles label{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-dim)}.rx-trace-toggles input{accent-color:var(--purple);width:13px;height:13px}.rx-trace-ic-btn{width:22px;height:22px;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text-dim);display:flex;align-items:center;justify-content:center}.rx-trace-row{display:flex;align-items:center;gap:12px;margin:10px 28px 0;padding:12px 14px;border:1px solid var(--border);border-radius:8px;font-size:12px;overflow-x:auto;white-space:nowrap}.rx-call-pill{background:var(--panel);border:1px solid var(--border);color:var(--text-dim);font-weight:700;font-size:11px;padding:4px 10px;border-radius:6px;flex-shrink:0}.rx-call-idx{color:var(--text-faint);flex-shrink:0}.rx-call-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-dim)}.rx-sender-tag{color:var(--red)}.rx-receiver-tag{color:var(--green)}.rx-contract-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px}.rx-contract-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 16px}.rx-cc-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}.rx-cc-icon{width:24px;height:24px;flex-shrink:0}.rx-cc-name{font-weight:700;font-size:12.5px;color:var(--text)}.rx-cc-type{font-size:11px;color:var(--text-faint);margin-top:3px}.rx-cc-meta{display:flex;gap:20px;border-top:1px solid var(--border);padding-top:10px}.rx-cc-meta>div{display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em}.rx-cc-meta b{font-size:12.5px;color:var(--text);text-transform:none;letter-spacing:0;font-weight:600}.rx-event-item{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border)}.rx-event-item:last-child{border-bottom:none}.rx-event-idx{font-size:10px;color:var(--text-faint);margin-top:2px;min-width:12px}.rx-event-body{flex:1;min-width:0}.rx-event-name{font-weight:700;font-size:12.5px;color:var(--text)}.rx-sub-name{color:var(--text-faint);font-weight:500;margin-left:6px}.rx-event-data{font-size:11.5px;color:var(--text-faint);margin-top:5px;word-break:break-all}.rx-flow-wrap{display:flex;align-items:center;gap:18px;padding:26px 24px 30px}.rx-flow-node{flex:1;text-align:center;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 12px}.rx-flow-tag{display:block;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px}.rx-flow-node .rx-addr{font-size:12.5px;color:var(--text)}.rx-flow-node.src .rx-addr{color:var(--orange)}.rx-flow-node.dst .rx-addr{color:var(--green)}.rx-flow-node .rx-bal{margin-top:7px;font-size:11.5px;color:var(--text-dim)}.rx-flow-edge{flex:1.3;display:flex;flex-direction:column;align-items:center;gap:10px}.rx-flow-amount{font-size:12px;font-weight:700;color:var(--text);background:rgba(47,168,79,.12);border:1px solid var(--border);border-radius:999px;padding:5px 14px;white-space:nowrap}.rx-flow-line{position:relative;width:100%;height:2px;background:var(--border);border-radius:2px}.rx-flow-line:after{content:"";position:absolute;right:-2px;top:-4px;border:5px solid transparent;border-left:7px solid var(--green)}.rx-resource-list{display:flex;flex-direction:column;gap:16px;padding:18px 20px 20px}.rx-resource-top{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-dim);margin-bottom:7px}.rx-resource-top b{color:var(--text);font-weight:600}.rx-resource-track{height:7px;border-radius:999px;background:var(--panel);overflow:hidden}.rx-resource-fill{height:100%;border-radius:999px}.rx-chat-fab{position:fixed;right:28px;bottom:28px;width:52px;height:52px;border-radius:50%;background:var(--purple);display:flex;align-items:center;justify-content:center;box-shadow:0 10px 26px rgba(0,0,0,.4);color:#fff}.rx-chat-fab svg{width:22px;height:22px}.rx-wallet-crumb{display:flex;align-items:center;gap:8px}.rx-wtag{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--text);font-size:14px}.rx-wtag svg{width:14px;height:14px;color:var(--text-faint)}.rx-waddr{color:var(--text-dim);font-size:13px}.rx-icon-btn-round{width:32px;height:32px;border-radius:7px;border:1px solid var(--border);background:var(--panel);color:var(--text-dim);display:flex;align-items:center;justify-content:center}.rx-stat-row-wallet{display:flex;gap:48px;flex-wrap:wrap;padding:22px 0 20px}.rx-sw-item{display:flex;flex-direction:column;gap:8px}.rx-sw-label{font-size:11.5px;color:var(--text-faint)}.rx-sw-value{font-size:16px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}.rx-sw-value .rx-sub{font-weight:500;color:var(--text-dim);font-size:13px}.rx-sw-net-dot{width:16px;height:16px;border-radius:5px;background:linear-gradient(135deg,#6b8aff,#2f6fed);flex-shrink:0}.rx-tabs-row2{display:flex;gap:22px;padding:4px 0 14px;border-bottom:1px solid var(--border)}.rx-tab2{font-size:13px;color:var(--text-dim);padding-bottom:10px}.rx-tab2.active{color:var(--text);font-weight:700;border-bottom:2px solid var(--text)}.rx-filter-row{display:flex;gap:8px;padding:16px 0;flex-wrap:wrap}.rx-filter-chip{font-size:12px;color:var(--text-dim);padding:7px 13px;border-radius:7px;border:1px solid transparent}.rx-filter-chip.active{background:var(--panel);border-color:var(--border);color:var(--text);font-weight:600}.rx-wallet-table-wrap{border:1px solid var(--border);border-radius:8px;overflow-x:auto}table.rx-wtable{width:100%;border-collapse:collapse;min-width:900px}.rx-wtable th{text-align:left;font-size:11px;color:var(--text-faint);font-weight:600;padding:11px 16px;border-bottom:1px solid var(--border);background:var(--panel);white-space:nowrap}.rx-wtable td{padding:12px 16px;font-size:12.5px;border-bottom:1px solid var(--border);color:var(--text-dim);white-space:nowrap}.rx-status-ok{display:flex;align-items:center;gap:6px;color:var(--green)}.rx-status-ok svg{width:13px;height:13px}.rx-empty{padding:28px 16px;color:var(--text-faint);font-size:13px}.rx-pagination-row{display:flex;align-items:center;justify-content:space-between;padding:16px 2px 0}.rx-page-num{width:28px;height:28px;border-radius:6px;background:var(--panel);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:600}@media(max-width:760px){.rx-topbar,.rx-subheader{align-items:flex-start;flex-direction:column}.rx-tb-search{margin:0;max-width:none;width:100%}.rx-detail-grid{grid-template-columns:1fr;gap:0;padding-inline:18px}.rx-tabs-row{padding-inline:18px;overflow-x:auto}.rx-card,.rx-trace-bar,.rx-trace-row{margin-inline:18px}.rx-contract-grid{grid-template-columns:1fr}.rx-flow-wrap{flex-direction:column}.rx-flow-edge{width:100%}.rx-page{padding-inline:18px}.rx-stat-row-wallet{gap:22px}.rx-chat-fab{display:none}}
   `}</style><style>{`
+    .rx-root-embedded{min-height:0;background:transparent}.rx-root-embedded .rx-topbar{display:none}.rx-root-embedded .rx-page{padding:0 0 32px}.rx-root-embedded .rx-card,.rx-root-embedded .rx-trace-bar,.rx-root-embedded .rx-trace-row{margin-left:0;margin-right:0}
     .rx-json-block{max-width:460px;max-height:240px;margin:8px 0 0;padding:10px;border:1px solid var(--border);border-radius:5px;background:#181818;color:var(--text-dim);font:10.5px/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow:auto;overflow-wrap:anywhere}
     .rx-explorer-table .rx-json-block{min-width:220px;margin:0}
     .rx-share-item{border:0;background:transparent;font:inherit}
@@ -279,7 +316,7 @@ function StellarNetworkLabel({ network }: { network: string }) {
   return <span style={{ display: "inline-flex", alignItems: "center", gap: 7, textTransform: "capitalize" }}><img src="/stellar-logo.jpg" alt="" width={14} height={14} style={{ width: 14, height: 14, display: "block", objectFit: "cover", mixBlendMode: "screen", filter: "invert(1)" }} />{network}</span>;
 }
 
-export function TransactionExplorerDesign({ tx, network }: { tx: ExplorerTxDetail; network: string }) {
+export function TransactionExplorerDesign({ tx, network, embedded = false }: { tx: ExplorerTxDetail; network: string; embedded?: boolean }) {
   const [tab, setTab] = useState<Tab>("summary");
   const [devMode, setDevMode] = useState(true);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -316,22 +353,23 @@ export function TransactionExplorerDesign({ tx, network }: { tx: ExplorerTxDetai
   }, []);
 
   return (
-    <div className="rx-root">
+    <div className={`rx-root${embedded ? " rx-root-embedded" : ""}`}>
       <ExplorerDesignStyles />
-      <TopBar network={network} kind="tx" value={tx.hash} />
+      {!embedded && <TopBar network={network} kind="tx" value={tx.hash} />}
       <div className="rx-subheader">
         <div className="rx-subheader-left"><span className="rx-crumb-light">Transaction</span></div>
         <div className="rx-subheader-right">
           <div className="rx-dev-toggle"><label className="rx-switch"><input type="checkbox" checked={devMode} onChange={(event) => { const enabled = event.target.checked; setDevMode(enabled); if (!enabled) setTab("summary"); }} /><span className="rx-slider" /></label><span className="rx-dev-label">Dev mode</span></div>
-          <Link className="rx-btn rx-btn-outline" href={`/simulator?${simulatorParams.toString()}&environment=new`}>Run on Environment</Link>
-          <Link className="rx-btn rx-btn-green" href={`/simulator?${simulatorParams.toString()}`}>Re-Simulate</Link>
+          <Link className="rx-btn rx-btn-outline" href={`/simulation/new?${simulatorParams.toString()}&environment=new`}>Run on Environment</Link>
+          <Link className="rx-btn rx-btn-green" href={`/simulation/new?${simulatorParams.toString()}`}>Re-Simulate</Link>
+          {network === "mainnet" && <Link className="rx-btn rx-btn-outline" href={`/replays/new?network=mainnet&transaction=${encodeURIComponent(tx.hash)}`}><RotateCcw size={14} />Replay</Link>}
           <Link className="rx-btn rx-btn-green" href={`/debugger?tx=${encodeURIComponent(tx.hash)}`}>Debug</Link>
         </div>
       </div>
       <div className="rx-page">
         <div className="rx-detail-grid">
           <div className="rx-detail-col">
-            <DetailRow label="Hash"><span className="mono">{tx.hash}</span></DetailRow>
+            <DetailRow label="Hash"><EntityAnchor network={network} value={tx.hash} type="tx" /></DetailRow>
             <DetailRow label="Network"><StellarNetworkLabel network={tx.network} /></DetailRow>
             <DetailRow label="Status"><span className={tx.status.toLowerCase() === "success" ? "rx-success" : "rx-failed"}>{tx.status.toLowerCase() === "success" ? <Check /> : <X />}{tx.status}</span></DetailRow>
             <DetailRow label="Ledger"><EntityAnchor network={network} value={tx.ledger} type="ledger" /></DetailRow>
@@ -343,9 +381,8 @@ export function TransactionExplorerDesign({ tx, network }: { tx: ExplorerTxDetai
             <DetailRow label="Amount">{amountLabel(tx)}</DetailRow>
             <DetailRow label="Fee charged">{feeLabel(tx.fee_charged)}</DetailRow>
             <DetailRow label="Operation Type">{tx.operation_type}</DetailRow>
-            <DetailRow label="Resource usage">{usageTotal(tx.resource_usage).toLocaleString()} measured units</DetailRow>
-            <DetailRow label="Calls">{tx.call_tree.length.toLocaleString()}</DetailRow>
-            <DetailRow label="Index">{tx.application_order ?? "Not indexed"}</DetailRow>
+            <DetailRow label="Max fee">{feeLabel(tx.max_fee)}</DetailRow>
+            <DetailRow label="Transaction size">{tx.transaction_size != null ? `${tx.transaction_size.toLocaleString()} bytes` : "Not indexed"}</DetailRow>
             <DetailRow label="Sequence Number">{tx.sequence_number ?? "Not indexed"}</DetailRow>
           </div>
         </div>
@@ -409,13 +446,27 @@ function ResourcePanel({ tx }: { tx: ExplorerTxDetail }) {
 
 export function WalletExplorerDesign({ account, network, address, label, environmentId, embedded = false, environmentScoped = false, onBack, onFund, onWatch, onSend }: { account: ExplorerAccountDetail; network: string; address: string; label?: string | null; environmentId?: string; embedded?: boolean; environmentScoped?: boolean; onBack?: () => void; onFund?: () => void; onWatch?: () => void; onSend?: () => void }) {
   const [tab, setTab] = useState("transactions");
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(10);
   const [cursor, setCursor] = useState<string | null>(null);
   const [page, setPage] = useState<ExplorerPagedEnvelope<ExplorerAccountTransaction> | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState("5m");
+  const [refreshMenuOpen, setRefreshMenuOpen] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<Record<WalletTransactionColumn, boolean>>({
+    hash: true,
+    source: true,
+    target: true,
+    status: true,
+    operation: true,
+    function: true,
+    ledger: true,
+    resource: true,
+    when: true,
+  });
 
   useEffect(() => {
     if (environmentScoped) {
@@ -427,11 +478,20 @@ export function WalletExplorerDesign({ account, network, address, label, environ
     let alive = true;
     setLoading(true);
     setError(null);
+    const startedAt = performance.now();
     getAccountTransactions(network, address, limit, cursor).then((result) => {
       if (!alive) return;
       setPage(result.data);
       setError(result.error);
       setLoading(false);
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[wallet-load] transactions", {
+          address,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          rows: result.data?.data.length ?? 0,
+          error: result.error,
+        });
+      }
     });
     return () => {
       alive = false;
@@ -442,6 +502,15 @@ export function WalletExplorerDesign({ account, network, address, label, environ
   const nextCursor = page?.pagination.next_cursor ?? null;
   const canGoBack = history.length > 0 && !loading;
   const canGoNext = Boolean(nextCursor) && !loading;
+  const transactionColumns = environmentScoped
+    ? ENVIRONMENT_WALLET_COLUMNS
+    : PROJECT_WALLET_COLUMNS;
+  const visibleTransactionColumns = transactionColumns.filter((column) => visibleColumns[column.key]);
+  const isColumnVisible = (column: WalletTransactionColumn) => visibleColumns[column];
+
+  const toggleColumn = (column: WalletTransactionColumn) => {
+    setVisibleColumns((current) => ({ ...current, [column]: !current[column] }));
+  };
 
   const goNext = () => {
     if (!nextCursor) return;
@@ -457,15 +526,13 @@ export function WalletExplorerDesign({ account, network, address, label, environ
   };
   const changeLimit = (value: number) => {
     setLimit(value);
-    setCursor(null);
-    setHistory([]);
   };
   const copyAddress = async () => {
     await navigator.clipboard.writeText(address);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   };
-  const simulateHref = `/simulator?${environmentScoped && environmentId ? `environment=${encodeURIComponent(environmentId)}&` : ""}impersonate=${encodeURIComponent(address)}`;
+  const simulateHref = `/simulation/new?${environmentScoped && environmentId ? `environment=${encodeURIComponent(environmentId)}&` : ""}impersonate=${encodeURIComponent(address)}`;
 
   return (
     <ExplorerEntityShell
@@ -479,23 +546,24 @@ export function WalletExplorerDesign({ account, network, address, label, environ
           <button
             className="wallet-embedded-back"
             type="button"
-            aria-label="Back to wallets"
+            aria-label="Back to accounts"
             onClick={onBack}
           >
             <ChevronLeft />
           </button>
         )}
-        <div className="entity-title">
+        <div className="entity-title entity-card-identity">
           <EntityIdenticon value={address} kind={isContractAddress(address) ? "contract" : "account"} size={26} />
           <div className="entity-identity">
-            <span>{label?.trim() || "Wallet"}</span>
+          <span className="entity-card-entity-name">{label?.trim() || "Account"}</span>
             <div className="entity-address-line">
-              <h1 title={address}>{truncateEntity(address, 8, 6)}</h1>
+              <h1 className="entity-card-entity-address" title={address}>{truncateEntity(address, 8, 6)}</h1>
               <button
                 className="entity-copy-inline"
+                data-copied={copied ? "true" : "false"}
                 type="button"
-                aria-label="Copy wallet address"
-                title={copied ? "Copied" : "Copy wallet address"}
+                aria-label="Copy account address"
+                title={copied ? "Copied" : "Copy account address"}
                 onClick={() => void copyAddress()}
               >
                 {copied ? <Check /> : <Copy />}
@@ -514,66 +582,134 @@ export function WalletExplorerDesign({ account, network, address, label, environ
             {embedded && <button className="entity-button" type="button" onClick={() => void navigator.clipboard.writeText(window.location.href)}><Share2 /> Share</button>}
             {embedded && <a className="entity-button" href={stellarExpertRoute(network, "account", address)} target="_blank" rel="noreferrer"><Globe2 /> Explorer</a>}
             <button className="entity-button" type="button"><Bell /> Create alert</button>
-            <Link className="entity-button" href={`/simulator?impersonate=${encodeURIComponent(address)}`}>Impersonate</Link>
-            <Link className="entity-button primary" href={`/simulator?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
+            <Link className="entity-button" href={`/simulation/new?impersonate=${encodeURIComponent(address)}`}>Impersonate</Link>
+            <Link className="entity-button primary" href={`/simulation/new?impersonate=${encodeURIComponent(address)}`}><Play /> Simulate</Link>
           </>}
         </div>
       </section>
       <div className="entity-page">
-        <dl className={`entity-grid${environmentScoped ? " entity-grid-environment" : ""}`}>
+        <dl className="entity-grid wallet-metadata-grid entity-grid-environment">
           <div className="entity-field"><dt>Network</dt><dd><StellarNetworkLabel network={network} /></dd></div>
           <div className="entity-field"><dt>XLM balance</dt><dd>{account.xlm_balance ?? "Not indexed"}</dd></div>
           <div className="entity-field"><dt>USD value</dt><dd>{account.usd_value ?? "Not available"}</dd></div>
           <div className="entity-field"><dt>Token holdings</dt><dd>{account.token_holdings.length} assets</dd></div>
           {!environmentScoped && <div className="entity-field"><dt>Project tracking</dt><dd>{account.tracked ? "Tracked" : "Public lookup"}</dd></div>}
         </dl>
-        <div className={`entity-tabs${environmentScoped ? " entity-tabs-environment" : ""}`}>
-          <button className={tab === "transactions" ? "active" : ""} onClick={() => setTab("transactions")}>Transactions</button>
-          {!environmentScoped && <button className={tab === "simulations" ? "active" : ""} onClick={() => setTab("simulations")}>Simulations</button>}
-          <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>Assets</button>
+        <div className="wallet-tabs-row">
+          <div className={`entity-tabs wallet-tabs${environmentScoped ? " entity-tabs-environment" : ""}`}>
+            <button className={tab === "transactions" ? "active" : ""} onClick={() => setTab("transactions")}>Transactions</button>
+            {!environmentScoped && <button className={tab === "simulations" ? "active" : ""} onClick={() => setTab("simulations")}>Simulations</button>}
+            <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>Assets</button>
+          </div>
+          {tab === "transactions" && (
+            <div className="wallet-tabs-tools">
+              <div className="wallet-refresh-control">
+                <button type="button" className="wallet-tool-button" aria-haspopup="listbox" aria-expanded={refreshMenuOpen} onClick={() => setRefreshMenuOpen((open) => !open)}>
+                  <RotateCcw aria-hidden="true" />
+                  {refreshInterval}
+                  <ChevronDown aria-hidden="true" />
+                </button>
+                {refreshMenuOpen && (
+                  <div className="wallet-refresh-menu" role="listbox" aria-label="Transaction refresh interval">
+                    {["30s", "1m", "5m", "15m"].map((interval) => (
+                      <button key={interval} type="button" role="option" aria-selected={refreshInterval === interval} onClick={() => { setRefreshInterval(interval); setRefreshMenuOpen(false); }}>
+                        {interval}
+                        {refreshInterval === interval && <Check aria-hidden="true" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button type="button" className="wallet-tool-button" onClick={() => setColumnsOpen(true)}><Columns3 aria-hidden="true" />Columns</button>
+              <button type="button" className="wallet-tool-button"><ListFilter aria-hidden="true" />Filters</button>
+            </div>
+          )}
         </div>
         {tab === "transactions" ? (
           <>
             <div className={`entity-table-wrap${environmentScoped ? " entity-table-wrap-environment" : ""}`}>
               <table className={`entity-table contract-transactions-table${environmentScoped ? " entity-transactions-table-environment" : ""}`}>
-                <thead><tr>{environmentScoped ? <><th>Transaction hash</th><th>Source</th><th>Target</th><th>Status</th><th>Operation</th><th>Function</th><th>Ledger</th><th>Resource Usage</th><th>When</th></> : <><th>Transaction hash</th><th>Source</th><th>Target</th><th>Operation</th><th>Ledger</th><th>Status</th></>}</tr></thead>
+                <thead><tr>{visibleTransactionColumns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
                 <tbody>
-                  {loading ? <tr><td colSpan={environmentScoped ? 9 : 6}>Loading transactions...</td></tr> : error ? <tr><td colSpan={environmentScoped ? 9 : 6}>{error}</td></tr> : rows.length ? rows.map((tx) => (
+                  {loading && !rows.length ? <tr><td colSpan={Math.max(1, visibleTransactionColumns.length)}>Loading transactions...</td></tr> : error ? <tr><td colSpan={Math.max(1, visibleTransactionColumns.length)}>{error}</td></tr> : rows.length ? rows.map((tx) => (
                     <tr key={tx.hash}>
-                      <td><Link href={explorerRoutes.tx(network, tx.hash)}><code>{truncateEntity(tx.hash, 8, 6)}</code></Link></td>
-                      <td>{tx.source_account ? <EntityAnchor network={network} value={tx.source_account} type="address" /> : "Not indexed"}</td>
-                      <td>{tx.destination_account ? <EntityAnchor network={network} value={tx.destination_account} type="address" /> : "No transfer"}</td>
+                      {isColumnVisible("hash") && <td><EntityAnchor className="wallet-transaction-hash mono" network={network} value={tx.hash} type="tx" /></td>}
+                      {isColumnVisible("source") && <td>{tx.source_account ? <EntityAnchor className="wallet-transaction-entity addr-link mono" network={network} value={tx.source_account} type="address" /> : "Not indexed"}</td>}
+                      {isColumnVisible("target") && <td>{tx.destination_account ? <EntityAnchor className="wallet-transaction-entity addr-link mono" network={network} value={tx.destination_account} type="address" /> : "No transfer"}</td>}
                       {environmentScoped ? <>
-                        <td className={tx.status === "success" ? "status-ok" : ""}>{tx.status}</td>
-                        <td>{tx.operation_type}</td>
-                        <td>{tx.call_trace?.root_function ?? "Not indexed"}</td>
-                        <td>{tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</td>
-                        <td>Not indexed</td>
-                        <td>{formatTimestamp(tx.timestamp)}</td>
+                        {isColumnVisible("status") && <td><WalletTransactionStatus status={tx.status} /></td>}
+                        {isColumnVisible("operation") && <td>{tx.operation_type}</td>}
+                        {isColumnVisible("function") && <td>{tx.call_trace?.root_function ?? "-"}</td>}
+                        {isColumnVisible("ledger") && <td>{tx.ledger_sequence != null || tx.ledger != null ? <EntityAnchor className="wallet-transaction-ledger addr-link mono" network={network} value={tx.ledger_sequence ?? tx.ledger ?? ""} type="ledger" /> : "Not indexed"}</td>}
+                        {isColumnVisible("resource") && <td>Not indexed</td>}
+                        {isColumnVisible("when") && <td>{formatTimestamp(tx.timestamp)}</td>}
                       </> : <>
-                        <td>{tx.call_trace?.root_function ?? tx.operation_type}</td>
-                        <td>{tx.ledger_sequence ?? tx.ledger ?? "Not indexed"}</td>
-                        <td className={tx.status === "success" ? "status-ok" : ""}>{tx.status}</td>
+                        {isColumnVisible("operation") && <td>{tx.operation_type}</td>}
+                        {isColumnVisible("function") && <td>{tx.call_trace?.root_function ?? "-"}</td>}
+                        {isColumnVisible("ledger") && <td>{tx.ledger_sequence != null || tx.ledger != null ? <EntityAnchor className="wallet-transaction-ledger addr-link mono" network={network} value={tx.ledger_sequence ?? tx.ledger ?? ""} type="ledger" /> : "Not indexed"}</td>}
+                        {isColumnVisible("status") && <td><WalletTransactionStatus status={tx.status} /></td>}
                       </>}
                     </tr>
-                  )) : <tr><td colSpan={environmentScoped ? 9 : 6}>No transactions indexed for this wallet yet.</td></tr>}
+                  )) : <tr><td colSpan={Math.max(1, visibleTransactionColumns.length)}>No transactions indexed for this account yet.</td></tr>}
                 </tbody>
               </table>
             </div>
             <EntityPagination limit={limit} onLimitChange={changeLimit} canBack={canGoBack} canNext={canGoNext} loading={loading} pageNumber={history.length + 1} onBack={goBack} onNext={goNext} />
           </>
         ) : tab === "simulations" && !environmentScoped ? (
-          <div className="entity-table-wrap"><div className="entity-table-head"><h2>Simulations</h2></div><div className="entity-empty">No simulations are linked to this public wallet view yet.</div></div>
+          <div className="entity-table-wrap"><div className="entity-table-head"><h2>Simulations</h2></div><div className="entity-empty">No simulations are linked to this public account view yet.</div></div>
         ) : (
           <div className={`entity-table-wrap${environmentScoped ? " entity-table-wrap-environment" : ""}`}>
-            {!environmentScoped && <div className="entity-table-head"><h2>Assets</h2></div>}
-            <table className={`entity-table${environmentScoped ? " contract-transactions-table entity-assets-table-environment" : ""}`}>
+            <table className={`entity-table contract-transactions-table${environmentScoped ? " entity-assets-table-environment" : ""}`}>
               <thead><tr>{environmentScoped ? <><th>Name</th><th>Balance</th><th>Token Price</th><th>Value</th></> : <><th>Asset</th><th>Balance</th><th>USD value</th><th>Network</th></>}</tr></thead>
-              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{displayAsset(holding.asset)}</td><td><code>{holding.balance ?? "Not indexed"}</code></td><td>{environmentScoped ? "Not available" : holding.usd_value ?? "Not available"}</td>{environmentScoped ? <td>{holding.usd_value ?? "Not available"}</td> : <td><StellarNetworkLabel network={network} /></td>}</tr>) : <tr><td colSpan={4}>No token holdings indexed for this wallet yet.</td></tr>}</tbody>
+              <tbody>{account.token_holdings.length ? account.token_holdings.map((holding) => <tr key={holding.asset}><td>{displayAsset(holding.asset)}</td><td><code>{holding.balance ?? "Not indexed"}</code></td><td>{environmentScoped ? "Not available" : holding.usd_value ?? "Not available"}</td>{environmentScoped ? <td>{holding.usd_value ?? "Not available"}</td> : <td><StellarNetworkLabel network={network} /></td>}</tr>) : <tr><td colSpan={4}>No token holdings indexed for this account yet.</td></tr>}</tbody>
             </table>
           </div>
         )}
       </div>
+      {columnsOpen && (
+        <div
+          className="wallet-columns-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setColumnsOpen(false);
+          }}
+        >
+          <section
+            className="wallet-columns-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="wallet-columns-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="wallet-columns-header">
+              <div>
+                <h2 id="wallet-columns-title">Columns</h2>
+                <p>Choose the columns shown in this table.</p>
+              </div>
+              <button type="button" aria-label="Close columns" onClick={() => setColumnsOpen(false)}>
+                <X aria-hidden="true" />
+              </button>
+            </div>
+            <div className="wallet-columns-list">
+              {transactionColumns.map((column) => (
+                <button
+                  key={column.key}
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(visibleColumns[column.key])}
+                  onClick={() => toggleColumn(column.key)}
+                >
+                  <span>{column.label}</span>
+                  <span className="wallet-column-toggle" data-on={visibleColumns[column.key] ? "true" : "false"} aria-hidden="true">
+                    <span />
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
     </ExplorerEntityShell>
   );
 }

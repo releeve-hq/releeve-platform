@@ -10,15 +10,19 @@ const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
 const MARKETING_ROUTES = ['/pricing', '/docs', '/terms', '/privacy'];
 const PUBLIC_APP_ROUTES = ['/virtual-explorer'];
-const EXPLORER_ENTITY_ROUTES = new Set(['ledger', 'tx', 'account', 'contract']);
 const APP_ROUTES = [
   '/home',
   '/dashboard',
+  '/explorer',
   '/simulator',
+  '/simulation',
+  '/replays',
+  '/vnet',
   '/virtual-environments',
   '/activity',
   '/alerts',
   '/wallets',
+  '/accounts',
   '/contracts',
   '/settings',
   '/debugger',
@@ -44,12 +48,6 @@ function isPublicRoute(pathname: string): boolean {
     || PUBLIC_APP_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
 }
 
-function isExplorerRoute(pathname: string): boolean {
-  if (pathname === '/explorer' || pathname.startsWith('/explorer/')) return true;
-  const [, , entity, id] = pathname.split('/');
-  return Boolean(entity && id && EXPLORER_ENTITY_ROUTES.has(entity));
-}
-
 function isAppRoute(pathname: string): boolean {
   return APP_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'));
 }
@@ -69,14 +67,14 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
       if (!isAuthenticated) router.replace(`/signin?next=${encodeURIComponent(pathname === '/dashboard' ? '/home' : pathname)}`);
       return;
     }
-    if (!isAuthRoute(pathname) && !isPublicRoute(pathname) && !isExplorerRoute(pathname) && !isAuthenticated) {
+    if (!isAuthRoute(pathname) && !isPublicRoute(pathname) && !isAuthenticated) {
       router.push('/signin');
     }
   }, [isLoading, isAuthenticated, pathname, router]);
 
   if (isAppRoute(pathname)) {
     if (isLoading || !isAuthenticated) return null;
-    if (isDashboardShellRoute(pathname)) return <ReleeveApp />;
+    if (isDashboardShellRoute(pathname)) return <ReleeveApp>{children}</ReleeveApp>;
     return <>{children}</>;
   }
 
@@ -85,10 +83,6 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
   }
 
   if (pathname === '/') {
-    return <>{children}</>;
-  }
-
-  if (isExplorerRoute(pathname)) {
     return <>{children}</>;
   }
 

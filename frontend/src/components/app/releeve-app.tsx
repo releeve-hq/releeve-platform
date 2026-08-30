@@ -2,11 +2,12 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Network } from "lucide-react";
+import { Database, Network } from "lucide-react";
 import { AddressLink, LedgerLink, TxHashLink } from "@/components/explorer/entity-links";
 import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
-import { truncateEntity, isContractAddress } from "@/lib/explorer-routes";
+import { explorerRoutes, truncateEntity, isContractAddress } from "@/lib/explorer-routes";
 import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -38,15 +39,18 @@ import {
 import { ProjectSettingsPage } from "@/components/app/settings-pages";
 import { SharedProfileMenu } from "@/components/ui/shared-profile-menu";
 import { ReleeveLogo } from "@/components/ui/releeve-logo";
+import { ReplayPage as ProjectReplayPage } from "@/components/app/replay-pages";
 
 /* ─── types ─── */
 type PageKey =
   | "home"
+  | "explorer"
   | "transactions"
   | "wallets"
   | "contracts"
   | "ledgers"
   | "simulator"
+  | "replays"
   | "debugger"
   | "virtualenv"
   | "activity"
@@ -145,6 +149,14 @@ function getNavIcon(key: string) {
           <path d="M6 10v9h5v-5h2v5h5v-9" />
         </>
       );
+    case "explorer":
+      return (
+        <>
+          <circle cx="12" cy="12" r="8.5" />
+          <path d="m15.8 8.2-2.2 5.4-5.4 2.2 2.2-5.4 5.4-2.2Z" />
+          <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+        </>
+      );
     case "simulator":
       return (
         <>
@@ -154,11 +166,18 @@ function getNavIcon(key: string) {
           <circle cx="19" cy="6" r="2" />
         </>
       );
+    case "replays":
+      return (
+        <>
+          <path d="M4 12a8 8 0 1 0 2.3-5.7L4 8" />
+          <path d="M4 3v5h5M12 8v5l3 2" />
+        </>
+      );
     case "virtualenv":
       return (
         <>
-          <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
-          <path d="M12 3v18M4 7.5l8 4.5 8-4.5" />
+          <rect width="7" height="7" x="14" y="3" rx="1" />
+          <path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3" />
         </>
       );
     case "activity":
@@ -221,11 +240,13 @@ function getNavIcon(key: string) {
 
 const NAV: Array<{ key: PageKey; label: string }> = [
   { key: "home", label: "Home" },
+  { key: "explorer", label: "Explorer" },
   { key: "simulator", label: "Simulator" },
+  { key: "replays", label: "Replay" },
   { key: "virtualenv", label: "Virtual Network" },
   { key: "activity", label: "Activity" },
   { key: "alerts", label: "Alerts" },
-  { key: "wallets", label: "Wallets" },
+  { key: "wallets", label: "Accounts" },
   { key: "contracts", label: "Contracts" },
   { key: "docs", label: "Documentation" },
   { key: "settings", label: "Settings" },
@@ -235,11 +256,13 @@ const ALL_NAV = NAV;
 
 const APP_ROUTE_BY_PAGE: Partial<Record<PageKey, string>> = {
   home: "/home",
+  explorer: "/explorer/mainnet",
   simulator: "/simulator",
-  virtualenv: "/virtual-environments",
+  replays: "/replays/new",
+  virtualenv: "/vnet",
   activity: "/activity",
   alerts: "/alerts",
-  wallets: "/wallets",
+  wallets: "/accounts",
   contracts: "/contracts",
   docs: "/docs",
   settings: "/settings",
@@ -249,11 +272,16 @@ const APP_ROUTE_BY_PAGE: Partial<Record<PageKey, string>> = {
 const PAGE_BY_APP_ROUTE: Record<string, PageKey> = {
   "/": "home",
   "/home": "home",
+  "/explorer": "explorer",
   "/simulator": "simulator",
+  "/simulation/new": "simulator",
+  "/replays/new": "replays",
+  "/vnet": "virtualenv",
   "/virtual-environments": "virtualenv",
   "/activity": "activity",
   "/alerts": "alerts",
   "/wallets": "wallets",
+  "/accounts": "wallets",
   "/contracts": "contracts",
   "/settings": "settings",
   "/settings/organization": "organization-settings",
@@ -261,11 +289,13 @@ const PAGE_BY_APP_ROUTE: Record<string, PageKey> = {
 
 const CRUMBS: Record<PageKey, string> = {
   home: "Home",
-  transactions: "Explore / Transactions",
-  wallets: "Explore / Wallets",
-  contracts: "Explore / Contracts",
-  ledgers: "Explore / Ledgers",
+  explorer: "Explorer",
+  transactions: "Transactions",
+  wallets: "Accounts",
+  contracts: "Contracts",
+  ledgers: "Ledgers",
   simulator: "Simulator",
+  replays: "Replay",
   debugger: "Debugger",
   virtualenv: "Virtual Network",
   activity: "Activity",
@@ -797,51 +827,89 @@ function ChevRow({ children, onClick }: { children: React.ReactNode; onClick?: (
   );
 }
 
-function BlockRow({ sequence, txs, gas, pct, gwei, time, network = DEMO_NETWORK }: ExplorerLedger & { network?: string }) {
+type LedgerRowData = Pick<ExplorerLedger, "sequence" | "txs" | "time"> & {
+  successful: number;
+  failed: number;
+  network?: string;
+  first?: boolean;
+};
+
+function BlockRow({ sequence, txs, successful, failed, time, network = DEMO_NETWORK, first = false }: LedgerRowData) {
+  const router = useRouter();
+  const href = explorerRoutes.ledger(network, sequence);
+  const open = () => void router.push(href);
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 8px", gap: 8, borderTop: "1px solid var(--border)" }}>
+    <div
+      className="home-feed-row"
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      }}
+      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", gap: 8, borderTop: first ? "none" : "1px solid var(--border)" }}
+    >
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, width: 112 }}>
-        <Icon size={16}>
-          <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
-          <path d="M12 3v18M4 7.5l8 4.5 8-4.5" />
-        </Icon>
+        <Database size={16} strokeWidth={1.8} aria-hidden="true" style={{ display: "block", flex: "0 0 16px" }} />
         <div>
-          <span style={{ fontWeight: 700, fontSize: 12.5, color: "var(--text)", display: "block" }}>
+          <span style={{ fontWeight: 700, fontSize: 12.5, color: "var(--text)", display: "block" }} onClick={(event) => event.stopPropagation()}>
             <LedgerLink sequence={sequence} network={network} />
           </span>
-          <span style={{ fontSize: 10.5, color: "var(--text-faint)", display: "block", marginTop: 1 }}>{txs}</span>
+          <span className="home-feed-ledger-txs">{txs}</span>
         </div>
       </div>
-      <div style={{ flex: 1, minWidth: 112, textAlign: "center" }}>
-        <span style={{ fontSize: 12, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
-          {gas} <span style={{ color: "var(--text-faint)" }}>({pct})</span>
+      <div className="ledger-outcomes" aria-label={`${successful} successful transactions and ${failed} failed transactions`}>
+        <span className="ledger-outcome ledger-outcome-success">
+          <span className="ledger-outcome-dot" aria-hidden="true" />
+          {successful.toLocaleString()}
         </span>
-        <span style={{ fontSize: 10.5, color: "var(--text-faint)", display: "block", marginTop: 1 }}>{gwei} Gwei</span>
+        <span className="ledger-outcome ledger-outcome-failed">
+          <span className="ledger-outcome-dot" aria-hidden="true" />
+          {failed.toLocaleString()}
+        </span>
       </div>
       <span style={{ fontSize: 10.5, color: "var(--text-faint)", textAlign: "right", flexShrink: 0, whiteSpace: "nowrap" }}>{time}</span>
     </div>
   );
 }
 
-function TxRow({ method, hash, from, to, time, network = DEMO_NETWORK }: ExplorerTransaction & { network?: string }) {
+function TxRow({ method, hash, from, to, time, network = DEMO_NETWORK, first = false }: ExplorerTransaction & { network?: string; first?: boolean }) {
+  const router = useRouter();
+  const href = explorerRoutes.tx(network, hash);
+  const open = () => void router.push(href);
   const renderEntity = (value: string) => {
     const clean = value.trim();
     if (/^[GC][A-Z2-7]{55}$/.test(clean)) {
-      return <AddressLink address={clean} network={network} />;
+      return <span onClick={(event) => event.stopPropagation()}><AddressLink address={clean} network={network} /></span>;
     }
     return <span title={clean} style={{ color: "var(--text-faint)" }}>{clean}</span>;
   };
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "10px 8px", gap: 7, borderTop: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 7, flexShrink: 0, width: 132 }}>
-        <svg viewBox="0 0 24 24" stroke="var(--green)" strokeWidth="2.5" fill="none" width={14} height={14} style={{ flexShrink: 0, marginTop: 2 }}>
+    <div
+      className="home-feed-row"
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      }}
+      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", gap: 7, borderTop: first ? "none" : "1px solid var(--border)" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 7, flexShrink: 0, width: 132 }}>
+        <svg viewBox="0 0 24 24" stroke="var(--green)" strokeWidth="2.5" fill="none" width={14} height={14} style={{ flexShrink: 0 }}>
           <path d="M5 13l4 4L19 7" />
         </svg>
         <div>
-          <span style={{ fontSize: 10, color: "var(--text-faint)", display: "block" }}>{method || "-"}</span>
-          <span style={{ fontSize: 10.5, color: "var(--text-dim)", display: "block", marginTop: 2 }}>
-            <TxHashLink hash={hash} network={network} />
+          <span className="home-feed-method">{method || "-"}</span>
+          <span className="home-feed-hash" style={{ display: "block", marginTop: 3 }} onClick={(event) => event.stopPropagation()}>
+            <TxHashLink hash={hash} network={network} className="home-feed-hash" />
           </span>
         </div>
       </div>
@@ -890,18 +958,13 @@ function timeAgo(value?: string | null) {
   return `${Math.floor(hours / 24)} days ago`;
 }
 
-function ledgerRow(ledger: ExplorerFeedLedger, network: string): ExplorerLedger & { network: string } {
+function ledgerRow(ledger: ExplorerFeedLedger, network: string): LedgerRowData {
   const txCount = ledger.transaction_count ?? 0;
-  const resource = ledger.total_cpu_instructions ?? 0;
-  const percent = ledger.resource_limit && ledger.resource_limit > 0
-    ? `${Math.min(100, Math.round((resource / ledger.resource_limit) * 100))}%`
-    : "n/a";
   return {
     sequence: String(ledger.sequence),
     txs: `${txCount.toLocaleString()} txs`,
-    gas: resource ? resource.toLocaleString() : "Indexed",
-    pct: percent,
-    gwei: "Stellar",
+    successful: ledger.successful_transaction_count ?? 0,
+    failed: ledger.failed_transaction_count ?? 0,
     time: timeAgo(ledger.timestamp),
     network,
   };
@@ -972,7 +1035,39 @@ function EmptyFeedRow({ label }: { label: string }) {
   return <div style={{ padding: "17px 8px", color: "var(--text-faint)", fontSize: 12 }}>{label}</div>;
 }
 
-function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" }) {
+function HomePage() {
+  return (
+    <div className="db-overview">
+      <section className="db-overview-intro">
+        <div>
+          <h1>Welcome to Releeve.</h1>
+        </div>
+      </section>
+
+      <section className="db-overview-mosaic" aria-label="Workspace overview">
+        <article className="db-overview-mosaic-feature" />
+        <div className="db-overview-mosaic-side">
+          <article className="db-overview-mosaic-ledger" />
+          <div className="db-overview-outcomes">
+            <article className="db-overview-outcome db-overview-outcome-success" />
+            <article className="db-overview-outcome db-overview-outcome-failed" />
+          </div>
+        </div>
+      </section>
+      <section className="db-overview-strips" aria-hidden="true">
+        <article className="db-overview-strip db-overview-strip-wide" />
+        <article className="db-overview-strip db-overview-strip-narrow" />
+      </section>
+      <section className="db-overview-capabilities">
+        <article />
+        <article />
+        <article />
+      </section>
+    </div>
+  );
+}
+
+function ExplorerPage({ network }: { network: "mainnet" | "testnet" | "futurenet" }) {
   const [ledgers, setLedgers] = useState<ExplorerFeedPage<ExplorerFeedLedger> | null>(null);
   const [transactions, setTransactions] = useState<ExplorerFeedPage<ExplorerFeedTransaction> | null>(null);
   const [feedError, setFeedError] = useState<string | null>(null);
@@ -1057,6 +1152,17 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
   const processedOperations = ledgers
     ? ledgers.data.reduce((total, ledger) => total + (ledger.transaction_count ?? 0), 0)
     : null;
+  const stats: Array<{
+    label: string;
+    value: string;
+    ul?: boolean;
+    ledger?: number | null;
+  }> = [
+    { label: "Last closed ledger", value: latestLedger?.sequence?.toLocaleString() ?? "--", ul: true, ledger: latestLedger?.sequence ?? null },
+    { label: "Processed Operations", value: processedOperations?.toLocaleString() ?? "--" },
+    { label: "Average ledger closing time", value: averageLedgerCloseTime(ledgers?.data) },
+    { label: "Live update", value: lastUpdated ?? "Connecting" },
+  ];
   return (
     <div>
       <DashboardToastPopup message={feedError} kind="error" onDone={() => setFeedError(null)} />
@@ -1073,19 +1179,14 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
         <span style={{ color: "var(--text-faint)", fontSize: 10.5, fontWeight: 600, border: "1px solid var(--border)", borderRadius: 5, padding: "2px 6px" }}>⌃ K</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", columnGap: 14, margin: "0 3px 16px" }}>
-        {[
-          { label: "Last closed ledger", value: latestLedger?.sequence?.toLocaleString() ?? "--", ul: true },
-          { label: "Processed Operations", value: processedOperations?.toLocaleString() ?? "--" },
-          { label: "Average ledger closing time", value: averageLedgerCloseTime(ledgers?.data) },
-          { label: "Live update", value: lastUpdated ?? "Connecting" },
-        ].map((s) => (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", margin: "14px 3px 20px" }}>
+        {stats.map((s) => (
           <div key={s.label} style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
-            <span style={{ color: "var(--text-dim)", fontSize: 10.5, lineHeight: 1.3 }}>{s.label}</span>
+            <span style={{ color: "var(--text)", fontSize: 12.5, lineHeight: 1.3, fontWeight: 600, opacity: 0.72 }}>{s.label}</span>
             <span
               style={{
                 color: "var(--text)",
-                fontSize: 14,
+                fontSize: 15,
                 fontWeight: 700,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -1095,7 +1196,7 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
                 textDecorationColor: "var(--text-faint)",
               }}
             >
-              {s.ul && s.value !== "--" ? <LedgerLink sequence={s.value} network={network} /> : s.value}
+              {s.ul && s.ledger != null ? <LedgerLink sequence={s.ledger} network={network}>{s.value}</LedgerLink> : s.value}
             </span>
           </div>
         ))}
@@ -1119,11 +1220,9 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
             </span>
           </div>
           <Card>
-            <div style={{ padding: "0 8px" }}>
+            <div>
               {ledgerRows.map((b, i) => (
-                <div key={i} style={i === 0 ? { borderTop: "none" } : {}}>
-                  <BlockRow {...b} />
-                </div>
+                <BlockRow key={i} {...b} first={i === 0} />
               ))}
               {ledgers && ledgerRows.length === 0 && <EmptyFeedRow label="No ledgers have been indexed for this network yet." />}
               {!ledgers && <EmptyFeedRow label="Loading latest ledgers..." />}
@@ -1148,11 +1247,9 @@ function HomePage({ network }: { network: "mainnet" | "testnet" | "futurenet" })
             </span>
           </div>
           <Card>
-            <div style={{ padding: "0 8px" }}>
+            <div>
               {txRows.map((tx, i) => (
-                <div key={i} style={i === 0 ? { borderTop: "none" } : {}}>
-                  <TxRow {...tx} />
-                </div>
+                <TxRow key={i} {...tx} first={i === 0} />
               ))}
               {transactions && txRows.length === 0 && <EmptyFeedRow label="No transactions have been indexed for this network yet." />}
               {!transactions && <EmptyFeedRow label="Loading latest transactions..." />}
@@ -1209,7 +1306,7 @@ function ActivityPage() {
           {[
             { text: <>Signed transaction <TxHashLink hash={DEMO_TRANSACTIONS[0].hash} network={DEMO_NETWORK} /> for 0.25 ETH</>, when: "2 minutes ago" },
             { text: "Contract MyToken deployed to testnet", when: "1 hour ago" },
-            { text: "Wallet metamask-1 connected", when: "3 hours ago" },
+            { text: "Account metamask-1 connected", when: "3 hours ago" },
             { text: 'Simulation "Bull run · v1.2" completed', when: "Yesterday" },
           ].map((item, i) => (
             <div key={i} style={{ padding: "9px 0", borderTop: i === 0 ? "none" : "1px solid var(--border)", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
@@ -1274,7 +1371,7 @@ function WalletsPage() {
               <circle cx="19" cy="12" r="1.3" />
             </svg>
           </span>
-          <span className="ex-crumb">Wallet</span>
+          <span className="ex-crumb">Account</span>
           <span className="ex-crumb-sep">/</span>
           <span className="ex-crumb-light ex-monospace">{truncateEntity(address, 10, 6)}</span>
           <span className="ex-icon-btn">
@@ -1451,12 +1548,28 @@ function ContractsPage() {
 }
 
 /* ─── Main dashboard ─── */
-export default function ReleeveApp() {
+export default function ReleeveApp({ children }: { children?: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user } = useAuth();
-  const pageForPath = useCallback((path: string): PageKey => path.startsWith("/debugger/") ? "debugger" : PAGE_BY_APP_ROUTE[path] ?? "home", []);
-  const [page, setPage] = useState<PageKey>(() => pathname.startsWith("/debugger/") ? "debugger" : PAGE_BY_APP_ROUTE[pathname] ?? "home");
+  const pageForPath = useCallback((path: string): PageKey => {
+    if (path === "/explorer" || path.startsWith("/explorer/")) return "explorer";
+    if (path.startsWith("/debugger/")) return "debugger";
+    if (path.startsWith("/replays/")) return "replays";
+    if (path.startsWith("/vnet/")) return "virtualenv";
+    if (path.startsWith("/accounts/") || path.startsWith("/wallets/")) return "wallets";
+    if (path.startsWith("/contracts/")) return "contracts";
+    return PAGE_BY_APP_ROUTE[path] ?? "home";
+  }, []);
+  const [page, setPage] = useState<PageKey>(() => {
+    if (pathname === "/explorer" || pathname.startsWith("/explorer/")) return "explorer";
+    if (pathname.startsWith("/debugger/")) return "debugger";
+    if (pathname.startsWith("/replays/")) return "replays";
+    if (pathname.startsWith("/vnet/")) return "virtualenv";
+    if (pathname.startsWith("/accounts/") || pathname.startsWith("/wallets/")) return "wallets";
+    if (pathname.startsWith("/contracts/")) return "contracts";
+    return PAGE_BY_APP_ROUTE[pathname] ?? "home";
+  });
   const [light, setLight] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("releeve-marketing-theme") === "light";
@@ -1616,8 +1729,19 @@ export default function ReleeveApp() {
       setNetOpen(null);
       return;
     }
+    if (k === "explorer") {
+      router.push(`/explorer/${encodeURIComponent(network)}`);
+      setPage(k);
+      setNavOpen(false);
+      setWsOpen(false);
+      setProjOpen(false);
+      setNotifOpen(null);
+      setNetOpen(null);
+      return;
+    }
     const appRoute = APP_ROUTE_BY_PAGE[k];
     if (appRoute && appRoute !== pathname) {
+      setPage(k);
       router.push(appRoute);
     } else {
       setPage(k);
@@ -1664,6 +1788,9 @@ export default function ReleeveApp() {
   }, []);
 
   const topNavKey = page === "settings" ? "settings" : page;
+  const explorerNetwork = pathname.startsWith("/explorer/")
+    ? decodeURIComponent(pathname.split("/")[2] || network)
+    : network;
 
   const css = `
     :root {
@@ -1679,6 +1806,70 @@ export default function ReleeveApp() {
     }
     .db-root * { box-sizing: border-box; }
     .db-root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; font-size: 12.5px; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .db-overview { max-width: 1180px; margin: 0 auto; padding-bottom: 34px; }
+    .db-overview-intro { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin: 0 0 18px; }
+    .db-overview-intro > div:first-child { max-width: 650px; }
+    .db-overview-kicker { color: var(--orange); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .db-overview h1 { max-width: 650px; margin: 0 0 8px; font-size: clamp(15px, 1.8vw, 20px); font-weight: 600; line-height: 1.2; letter-spacing: -.015em; }
+    .db-overview-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 12%, transparent); }
+    .db-overview-mosaic { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 12px; }
+    .db-overview-mosaic-feature, .db-overview-mosaic-ledger, .db-overview-outcome { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+    .db-overview-mosaic-feature { min-height: 385px; display: flex; flex-direction: column; padding: 20px 22px; }
+    .db-overview-mosaic-label { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-faint); font-size: 10.5px; letter-spacing: .02em; }
+    .db-overview-mosaic-label > span:first-child { color: var(--orange); font: 700 10px var(--font-mono), monospace; }
+    .db-overview-feature-copy { position: relative; z-index: 1; max-width: 465px; margin: auto 0; }
+    .db-overview-feature-copy h2 { margin: 10px 0 10px; max-width: 460px; font-size: clamp(25px, 3.2vw, 39px); font-weight: 500; line-height: 1.08; letter-spacing: -.04em; }
+    .db-overview-feature-copy p { max-width: 410px; margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+    .db-overview-feature-stats { display: flex; gap: 34px; margin: 28px 0 26px; }
+    .db-overview-feature-stats div { display: flex; flex-direction: column; gap: 4px; }
+    .db-overview-feature-stats strong { color: var(--text); font-size: 24px; font-weight: 650; letter-spacing: -.04em; }
+    .db-overview-feature-stats span { color: var(--text-faint); font-size: 10.5px; }
+    .db-overview-mosaic-link { display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+    .db-overview-mosaic-link:hover, .db-overview-mosaic-ledger a:hover { color: var(--orange); }
+    .db-overview-feature-grid { position: absolute; right: -26px; bottom: -22px; display: grid; grid-template-columns: repeat(4, 68px); gap: 7px; transform: rotate(-16deg); opacity: .42; }
+    .db-overview-feature-grid span { height: 68px; border: 1px solid color-mix(in srgb, var(--orange) 45%, transparent); background: color-mix(in srgb, var(--orange) 8%, transparent); }
+    .db-overview-mosaic-side { display: grid; grid-template-rows: minmax(205px, 1fr) minmax(120px, .58fr); gap: 12px; }
+    .db-overview-mosaic-ledger { min-height: 225px; display: flex; flex-direction: column; padding: 20px 22px; }
+    .db-overview-live-label { display: inline-flex; align-items: center; gap: 7px; color: var(--green); }
+    .db-overview-ledger-main { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin: auto 0 25px; }
+    .db-overview-ledger-main div { display: flex; flex-direction: column; gap: 6px; }
+    .db-overview-ledger-main strong { color: var(--text); font-size: clamp(32px, 4vw, 52px); font-weight: 500; letter-spacing: -.05em; }
+    .db-overview-ledger-main span { color: var(--text-faint); font-size: 10.5px; }
+    .db-overview-ledger-main a { color: var(--text); font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .db-overview-ledger-line { display: flex; align-items: end; gap: 5px; height: 47px; border-bottom: 1px solid var(--border); }
+    .db-overview-ledger-line span { flex: 1; min-width: 5px; height: 13px; background: color-mix(in srgb, var(--orange) 70%, var(--panel)); }
+    .db-overview-ledger-line span:nth-child(2) { height: 22px; } .db-overview-ledger-line span:nth-child(3) { height: 18px; } .db-overview-ledger-line span:nth-child(4) { height: 31px; } .db-overview-ledger-line span:nth-child(5) { height: 25px; } .db-overview-ledger-line span:nth-child(6) { height: 39px; } .db-overview-ledger-line span:nth-child(7) { height: 29px; } .db-overview-ledger-line span:nth-child(8) { height: 43px; } .db-overview-ledger-line span:nth-child(9) { height: 33px; } .db-overview-ledger-line span:nth-child(10) { height: 40px; } .db-overview-ledger-line span:nth-child(11) { height: 27px; } .db-overview-ledger-line span:nth-child(12) { height: 46px; }
+    .db-overview-outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .db-overview-outcome { min-height: 122px; display: flex; flex-direction: column; justify-content: end; padding: 17px; }
+    .db-overview-outcome-mark { position: absolute; top: 19px; left: 18px; width: 8px; height: 8px; border-radius: 50%; }
+    .db-overview-outcome strong { font-size: 29px; font-weight: 600; letter-spacing: -.04em; }
+    .db-overview-outcome > span:last-child { margin-top: 5px; color: var(--text-faint); font-size: 10.5px; line-height: 1.35; }
+    .db-overview-outcome-success strong { color: #00b889; } .db-overview-outcome-success .db-overview-outcome-mark { background: #00b889; }
+    .db-overview-outcome-failed strong { color: #ff2f63; } .db-overview-outcome-failed .db-overview-outcome-mark { background: #ff2f63; }
+    .db-overview-mosaic-dots { display: flex; justify-content: center; gap: 8px; margin: 10px 0 48px; }
+    .db-overview-mosaic-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--text-faint); opacity: .58; }
+    .db-overview-mosaic-dots span.active { background: var(--orange); opacity: 1; }
+    .db-overview-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
+    .db-overview h2 { max-width: 570px; margin: 9px 0 0; font-size: clamp(20px, 2.4vw, 29px); font-weight: 500; line-height: 1.16; letter-spacing: -.03em; }
+    .db-overview-section-heading > p { max-width: 260px; margin: 0; color: var(--text-dim); line-height: 1.55; text-align: right; }
+    .db-overview-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .db-overview-strips { display: flex; flex-direction: column; gap: 14px; margin: 28px 0 28px; }
+    .db-overview-strip { height: 120px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+    .db-overview-strip-wide { width: 100%; }
+    .db-overview-strip-narrow { align-self: flex-start; width: min(560px, 100%); }
+    .db-overview-capabilities article { min-height: 208px; display: flex; flex-direction: column; align-items: flex-start; padding: 20px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); }
+    .db-overview-card-number { color: var(--orange); font: 700 11px var(--font-mono), monospace; }
+    .db-overview h3 { margin: 30px 0 8px; font-size: 15px; font-weight: 700; }
+    .db-overview-capabilities p { flex: 1; margin: 0 0 18px; color: var(--text-dim); font-size: 12px; line-height: 1.55; }
+    .db-overview-capabilities button { border: 0; padding: 0; background: transparent; color: var(--text); }
+    .db-overview-capabilities button:hover { background: transparent; color: var(--orange); }
+    .ledger-outcomes { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 84px; font-size: 14px; font-weight: 700; }
+    .ledger-outcome { display: inline-flex; align-items: center; gap: 5px; }
+    .ledger-outcome-dot { width: 7px; height: 7px; border-radius: 50%; }
+    .ledger-outcome-success { color: #00b889; }
+    .ledger-outcome-success .ledger-outcome-dot { background: #00b889; }
+    .ledger-outcome-failed { color: #ff2f63; }
+    .ledger-outcome-failed .ledger-outcome-dot { background: #ff2f63; }
     .db-desktop-brand { flex: 0 1 360px !important; max-width: 360px !important; }
     .db-desktop-search { min-height: 32px; height: 32px; padding: 6px 10px !important; border-radius: 6px !important; background: var(--panel-2) !important; border-color: var(--border) !important; transition: border-color .15s ease, box-shadow .15s ease; }
     .db-crumb-search { flex: 0 1 360px !important; max-width: 360px !important; min-width: 220px !important; }
@@ -1764,6 +1955,20 @@ export default function ReleeveApp() {
       .db-desktop-layout { display: block !important; height: auto; overflow: visible; }
       .db-body { display: block; }
       .db-sidebar { display: ${navOpen ? "block" : "none"} !important; }
+      .db-overview-mosaic { grid-template-columns: 1fr; }
+      .db-overview-mosaic-feature { min-height: 335px; }
+      .db-overview-mosaic-side { grid-template-rows: 235px 140px; }
+    }
+    @media (max-width: 620px) {
+      .db-overview-intro { display: block; margin-bottom: 24px; }
+      .db-overview h1 { font-size: 18px; }
+      .db-overview-mosaic-feature { min-height: 375px; padding: 18px; }
+      .db-overview-mosaic-ledger { min-height: 200px; padding: 18px; }
+      .db-overview-outcomes { gap: 8px; }
+      .db-overview-outcome { min-height: 118px; padding: 14px; }
+      .db-overview-section-heading { display: block; }
+      .db-overview-section-heading > p { margin-top: 12px; text-align: left; }
+      .db-overview-capabilities { grid-template-columns: 1fr; }
     }
 
     /* ── Explorer shared (transaction + account detail) ── */
@@ -1973,7 +2178,7 @@ export default function ReleeveApp() {
 
           {/* Desktop left logo + search */}
           <div className="db-desktop-brand" style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, maxWidth: 460 }}>
-            <ReleeveLogo size={24} />
+            <ReleeveLogo size={24} tone="auto" />
 
             {/* Desktop search bar */}
             <div
@@ -2246,12 +2451,19 @@ export default function ReleeveApp() {
 
         {/* ── Main content ── */}
         <div className="db-content" style={{ padding: "8px 3px 0", overflowY: "auto", scrollbarWidth: "none" }}>
-          {page === "home" && <HomePage network={network} />}
+          {page === "home" && <HomePage />}
+          {page === "explorer" && (pathname.split("/").filter(Boolean).length > 2 && children ? children : <ExplorerPage network={explorerNetwork as "mainnet" | "testnet" | "futurenet"} />)}
           {page === "wallets" && <ProjectWalletsPage scope={projectScope} />}
           {page === "contracts" && <ProjectContractsPage scope={projectScope} />}
-          {page === "simulator" && <ProjectSimulatorPage scope={projectScope} />}
+          {page === "simulator" && <ProjectSimulatorPage scope={projectScope} newSimulation={pathname === "/simulation/new"} />}
+          {page === "replays" && <ProjectReplayPage scope={projectScope} />}
           {page === "debugger" && <ProjectDebuggerPage scope={projectScope} analysisId={pathname.split("/")[2] ?? ""} />}
-          {page === "virtualenv" && <ProjectVirtualEnvPage scope={projectScope} />}
+          {page === "virtualenv" && (
+            <ProjectVirtualEnvPage
+              scope={projectScope}
+              environmentId={pathname.startsWith("/vnet/") ? decodeURIComponent(pathname.split("/")[2] ?? "") : undefined}
+            />
+          )}
           {page === "activity" && <ActivityPage />}
           {page === "alerts" && <ProjectAlertsPage scope={projectScope} />}
           {page === "settings" && (

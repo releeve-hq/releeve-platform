@@ -9,7 +9,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::{Json, body::Bytes};
 use chrono::{DateTime, Utc};
+use futures::{StreamExt, TryStreamExt};
 use ingest::decode::{decode_classic_tx, decode_invoke_detail, decode_ledger};
+use ingest::models::LedgerRecord;
 use ingest::rpc::SorobanRpcClient;
 use ingest::state::{upsert_ledger, upsert_tx};
 use ingest::upstream::{Backoff, CircuitBreaker};
@@ -19,8 +21,8 @@ use shared::{Cursor, Error, Paged, Pagination, Permission, PermissionSet, clamp_
 use sqlx::{PgPool, Row};
 use std::time::Duration;
 use stellar_xdr::{
-    ContractDataDurability, ContractId, LedgerKey, LedgerKeyContractData, Limits, ScAddress, ScVal,
-    WriteXdr,
+    ContractDataDurability, ContractId, FeeBumpTransactionInnerTx, LedgerKey,
+    LedgerKeyContractData, Limits, ReadXdr, ScAddress, ScVal, TransactionEnvelope, WriteXdr,
 };
 use uuid::Uuid;
 
@@ -485,6 +487,27 @@ fn numeric_str(row: &sqlx::postgres::PgRow, name: &str) -> Option<String> {
     row.try_get::<Option<String>, _>(name).ok().flatten()
 }
 
+fn transaction_envelope_stats(raw_envelope_xdr: Option<&str>) -> (Option<String>, Option<i64>) {
+    let Some(raw_envelope_xdr) = raw_envelope_xdr else {
+        return (None, None);
+    };
+    let Ok(envelope) = TransactionEnvelope::from_xdr_base64(raw_envelope_xdr, Limits::none()) else {
+        return (None, None);
+    };
+    let max_fee = match &envelope {
+        TransactionEnvelope::Tx(tx) => Some(tx.tx.fee.to_string()),
+        TransactionEnvelope::TxFeeBump(tx) => match &tx.tx.inner_tx {
+            FeeBumpTransactionInnerTx::Tx(_) => Some(tx.tx.fee.to_string()),
+        },
+        TransactionEnvelope::TxV0(tx) => Some(tx.tx.fee.to_string()),
+    };
+    let size = envelope
+        .to_xdr(Limits::none())
+        .ok()
+        .map(|bytes| bytes.len() as i64);
+    (max_fee, size)
+}
+
 // ---- Transaction detail -------------------------------------------------------------
 
 pub async fn public_lookup(
@@ -519,7 +542,7 @@ pub async fn public_lookup(
         if upstream_exists(&format!("{base}/accounts/{query}")).await {
             suggestions.push(json!({
                 "kind": "account", "value": query,
-                "label": "Wallet / Account", "description": "Open balances and transaction history"
+                "label": "Account", "description": "Open balances and transaction history"
             }));
         }
     } else if query.starts_with('C') && query.len() == 56 {
@@ -539,7 +562,14 @@ pub async fn public_lookup(
         .fetch_one(&state.db)
         .await
         .map_err(Error::internal)?;
-        if local || upstream_exists(&format!("{base}/contracts/{query}")).await {
+        let on_network = rpc_url_for_network(&network, &state.settings.soroban_rpc_url)
+            .map(|rpc_url| async move { contract_exists_on_network(&rpc_url, query).await })
+            .map(|future| async { future.await.unwrap_or(false) });
+        let on_network = match on_network {
+            Some(future) => future.await,
+            None => false,
+        };
+        if local || on_network {
             suggestions.push(json!({
                 "kind": "contract", "value": query,
                 "label": "Contract", "description": "Open contract activity and events"
@@ -671,6 +701,9 @@ async fn load_tx_detail(
     let states = state_changes(pool, hash).await?;
     let events = tx_events(pool, hash).await?;
     let annotations = annotations(pool, hash).await?;
+    let (max_fee, transaction_size) = transaction_envelope_stats(
+        row.get::<Option<String>, _>("raw_envelope_xdr").as_deref(),
+    );
 
     Ok(json!({
         "hash": row.get::<String, _>("hash"),
@@ -684,6 +717,8 @@ async fn load_tx_detail(
         "operation_target_kind": row.get::<Option<String>, _>("operation_target_kind"),
         "operation_details": row.get::<Value, _>("operation_details"),
         "fee_charged": numeric_str(&row, "fee_charged"),
+        "max_fee": max_fee,
+        "transaction_size": transaction_size,
         "sequence_number": row.get::<Option<String>, _>("sequence_number"),
         "application_order": row.get::<Option<i32>, _>("application_order"),
         "resource_usage": {
@@ -721,7 +756,7 @@ async fn tx_header_row(
                cpu_instructions, memory_bytes, invoke_time_nsecs, disk_read_bytes,
                write_bytes, max_rw_key_byte, max_rw_data_byte,
                cpu_instruction_limit, disk_read_bytes_limit, write_bytes_limit,
-               resource_fee::text
+               resource_fee::text, raw_envelope_xdr
         FROM transactions
         WHERE network = $1 AND hash = $2
         "#,
@@ -788,7 +823,11 @@ fn explorer_breaker() -> CircuitBreaker {
 fn rpc_url_for_network(network: &str, configured_rpc_url: &str) -> Option<String> {
     match network {
         "testnet" => Some("https://soroban-testnet.stellar.org".to_string()),
-        "mainnet" if !configured_rpc_url.trim().is_empty() => Some(configured_rpc_url.to_string()),
+        "mainnet" => Some(if configured_rpc_url.trim().is_empty() {
+            "https://mainnet.sorobanrpc.com".to_string()
+        } else {
+            configured_rpc_url.to_string()
+        }),
         _ => None,
     }
 }
@@ -908,6 +947,85 @@ fn horizon_url_for_network(network: &str) -> Option<&'static str> {
     }
 }
 
+async fn fetch_horizon_ledger(network: &str, sequence: i64) -> Result<Value, Error> {
+    let base = horizon_url_for_network(network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+    reqwest::Client::new()
+        .get(format!("{base}/ledgers/{sequence}"))
+        .send()
+        .await
+        .map_err(Error::internal)?
+        .error_for_status()
+        .map_err(|_| Error::NotFound)?
+        .json::<Value>()
+        .await
+        .map_err(Error::internal)
+}
+
+async fn fetch_horizon_ledger_transactions(
+    network: &str,
+    sequence: i64,
+) -> Result<Vec<ingest::models::TxRecord>, Error> {
+    let base = horizon_url_for_network(network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+    let client = reqwest::Client::new();
+    let body = client
+        .get(format!("{base}/ledgers/{sequence}/transactions?order=asc&limit=200"))
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(Error::internal)?
+        .error_for_status()
+        .map_err(Error::internal)?
+        .json::<Value>()
+        .await
+        .map_err(Error::internal)?;
+    let records = body
+        .get("_embedded")
+        .and_then(|embedded| embedded.get("records"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    futures::stream::iter(records)
+        .map(|mut transaction| {
+            let client = client.clone();
+            async move {
+                let hash = transaction
+                    .get("hash")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Error::BadRequest("Horizon transaction has no hash".into()))?
+                    .to_string();
+                let operations = client
+                    .get(format!("{base}/transactions/{hash}/operations?limit=200"))
+                    .timeout(Duration::from_secs(20))
+                    .send()
+                    .await
+                    .map_err(Error::internal)?
+                    .error_for_status()
+                    .map_err(Error::internal)?
+                    .json::<Value>()
+                    .await
+                    .map_err(Error::internal)?;
+                let operations = operations
+                    .get("_embedded")
+                    .and_then(|embedded| embedded.get("records"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(object) = transaction.as_object_mut() {
+                    object.insert("operations".to_string(), Value::Array(operations));
+                }
+                decode_classic_tx(&transaction, network).map_err(Error::internal)
+            }
+        })
+        .buffer_unordered(8)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect()
+}
+
 fn classic_asset_label(op: &Value) -> String {
     match op
         .get("asset_type")
@@ -987,6 +1105,77 @@ async fn fetch_horizon_tx_with_fund_flow(
         obj.insert("operations".to_string(), Value::Array(rows.clone()));
     }
     Ok((tx, rows.iter().filter_map(op_flow_edge).collect()))
+}
+
+async fn fetch_horizon_account_transactions(
+    network: &str,
+    address: &str,
+    limit: i64,
+) -> Result<Option<Vec<(Value, ingest::models::TxRecord)>>, Error> {
+    let base = horizon_url_for_network(network)
+        .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!(
+            "{base}/accounts/{address}/transactions?order=desc&limit={limit}"
+        ))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(Error::internal)?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let body = response
+        .error_for_status()
+        .map_err(Error::internal)?
+        .json::<Value>()
+        .await
+        .map_err(Error::internal)?;
+    let records = body
+        .get("_embedded")
+        .and_then(|embedded| embedded.get("records"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let transactions = futures::stream::iter(records)
+        .map(|mut transaction| {
+            let client = client.clone();
+            async move {
+                let hash = transaction
+                    .get("hash")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Error::BadRequest("Horizon transaction has no hash".into()))?
+                    .to_string();
+                let operations = client
+                    .get(format!("{base}/transactions/{hash}/operations?limit=200"))
+                    .timeout(Duration::from_secs(15))
+                    .send()
+                    .await
+                    .map_err(Error::internal)?
+                    .error_for_status()
+                    .map_err(Error::internal)?
+                    .json::<Value>()
+                    .await
+                    .map_err(Error::internal)?;
+                let operations = operations
+                    .get("_embedded")
+                    .and_then(|embedded| embedded.get("records"))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(object) = transaction.as_object_mut() {
+                    object.insert("operations".to_string(), Value::Array(operations));
+                }
+                let decoded = decode_classic_tx(&transaction, network).map_err(Error::internal)?;
+                Ok::<_, Error>((transaction, decoded))
+            }
+        })
+        .buffer_unordered(8)
+        .try_collect::<Vec<_>>()
+        .await?;
+    Ok(Some(transactions))
 }
 
 async fn ensure_horizon_ledger(pool: &PgPool, network: &str, tx: &Value) -> Result<(), Error> {
@@ -1137,13 +1326,34 @@ pub async fn public_ledger_transactions(
 ) -> Result<Json<Paged<Value>>, Error> {
     let limit = clamp_limit(q.limit);
     let cursor = parse_time_cursor(q.cursor.as_deref())?;
-    let page = transaction_page(&state.db, &network, limit, cursor, |sql, binds| {
+    let mut page = transaction_page(&state.db, &network, limit, cursor.clone(), |sql, binds| {
         binds.push(json!(sequence.to_string()));
         let n = binds.len();
         sql.push_str(&format!(" AND ledger_sequence = ${n}::bigint"));
         Ok(())
     })
     .await?;
+    if page.data.is_empty() && cursor.is_none() {
+        // A ledger detail can be fetched from Horizon before the background
+        // indexer reaches it. Hydrate that ledger's transactions on demand so
+        // forward navigation works just like navigation through indexed
+        // historical ledgers.
+        load_ledger(&state.db, &network, sequence).await?;
+        if let Ok(transactions) = fetch_horizon_ledger_transactions(&network, sequence).await {
+            for transaction in transactions {
+                upsert_tx(&state.db, &transaction)
+                    .await
+                    .map_err(Error::internal)?;
+            }
+            page = transaction_page(&state.db, &network, limit, None, |sql, binds| {
+                binds.push(json!(sequence.to_string()));
+                let n = binds.len();
+                sql.push_str(&format!(" AND ledger_sequence = ${n}::bigint"));
+                Ok(())
+            })
+            .await?;
+        }
+    }
     Ok(Json(page))
 }
 
@@ -1179,19 +1389,9 @@ async fn load_ledger(pool: &PgPool, network: &str, sequence: i64) -> Result<Valu
         .fetch_optional(pool)
         .await
         .map_err(Error::internal)?;
+    let mut horizon_body = None;
     if row.is_none() {
-        let base = horizon_url_for_network(network)
-            .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
-        let body = reqwest::Client::new()
-            .get(format!("{base}/ledgers/{sequence}"))
-            .send()
-            .await
-            .map_err(Error::internal)?
-            .error_for_status()
-            .map_err(|_| Error::NotFound)?
-            .json::<Value>()
-            .await
-            .map_err(Error::internal)?;
+        let body = fetch_horizon_ledger(network, sequence).await?;
         let ledger = decode_ledger(&body, network).map_err(Error::internal)?;
         upsert_ledger(pool, &ledger)
             .await
@@ -1202,8 +1402,15 @@ async fn load_ledger(pool: &PgPool, network: &str, sequence: i64) -> Result<Valu
             .fetch_optional(pool)
             .await
             .map_err(Error::internal)?;
+        horizon_body = Some(body);
     }
     let row = row.ok_or(Error::NotFound)?;
+    // The platform's normalized ledger table predates the full Horizon ledger
+    // header. Enrich the detail response from Horizon so protocol/tx-set
+    // metadata is available even for ledgers already stored locally.
+    if horizon_body.is_none() {
+        horizon_body = fetch_horizon_ledger(network, sequence).await.ok();
+    }
     let total = row.get::<Option<i64>, _>("total_cpu_instructions");
     let limit = row.get::<Option<i64>, _>("resource_limit");
     let percent = match (total, limit) {
@@ -1215,10 +1422,14 @@ async fn load_ledger(pool: &PgPool, network: &str, sequence: i64) -> Result<Valu
         "hash": row.get::<String, _>("hash"),
         "parent_hash": row.get::<Option<String>, _>("parent_hash"),
         "transaction_count": row.get::<Option<i32>, _>("transaction_count"),
+        "operation_count": horizon_body.as_ref().and_then(|body| body.get("operation_count").and_then(Value::as_i64)),
         "size_bytes": row.get::<Option<i32>, _>("size_bytes"),
         "timestamp": row.get::<DateTime<Utc>, _>("timestamp"),
         "base_operation_fee": numeric_str(&row, "base_operation_fee"),
         "base_reserve": numeric_str(&row, "base_reserve"),
+        "protocol_version": horizon_body.as_ref().and_then(|body| body.get("protocol_version").and_then(Value::as_i64)),
+        "max_tx_set_size": horizon_body.as_ref().and_then(|body| body.get("max_tx_set_size").and_then(Value::as_i64)),
+        "tx_set_operation_count": horizon_body.as_ref().and_then(|body| body.get("tx_set_operation_count").and_then(Value::as_i64)),
         "aggregate_resource_usage": {
             "total_cpu_instructions": total,
             "resource_limit": limit,
@@ -1300,6 +1511,8 @@ async fn transaction_page(
             operation_type,
             timestamp,
             application_order,
+            fee_charged::text,
+            raw_envelope_xdr,
             COALESCE((
                 SELECT e.to_address
                 FROM tx_fund_flow_edges e
@@ -1407,11 +1620,10 @@ async fn transaction_page(
     if let Some((ts, hash)) = cursor {
         q = q.bind(ts).bind(hash);
     }
-    let rows = q
-        .bind(limit + 1)
-        .fetch_all(pool)
-        .await
-        .map_err(Error::internal)?;
+    let rows = q.bind(limit + 1).fetch_all(pool).await.map_err(|error| {
+        tracing::error!(%error, network, "explorer transaction query failed");
+        Error::internal(error)
+    })?;
     let mut data = Vec::new();
     let mut cursors = Vec::new();
     for row in rows {
@@ -1436,7 +1648,9 @@ async fn transaction_page(
                 "root_function": row.get::<Option<String>, _>("root_function")
             },
             "timestamp": ts,
-            "application_order": row.get::<Option<i32>, _>("application_order")
+            "application_order": row.get::<Option<i32>, _>("application_order"),
+            "fee_charged": numeric_str(&row, "fee_charged"),
+            "max_fee": transaction_envelope_stats(row.get::<Option<String>, _>("raw_envelope_xdr").as_deref()).0
         }));
     }
     Ok(paged_json(data, cursors, limit, had_cursor))
@@ -1659,7 +1873,7 @@ pub async fn public_account_transactions(
 ) -> Result<Json<Paged<Value>>, Error> {
     let limit = clamp_limit(q.limit);
     let cursor = parse_time_cursor(q.cursor.as_deref())?;
-    let page = transaction_page(&state.db, &network, limit, cursor, |sql, binds| {
+    let mut page = transaction_page(&state.db, &network, limit, cursor.clone(), |sql, binds| {
         binds.push(json!(address));
         let n = binds.len();
         sql.push_str(&format!(
@@ -1674,6 +1888,29 @@ pub async fn public_account_transactions(
         Ok(())
     })
     .await?;
+    if page.data.is_empty()
+        && cursor.is_none()
+        && let Some(transactions) =
+            fetch_horizon_account_transactions(&network, &address, limit).await?
+    {
+        for (transaction, _) in &transactions {
+            ensure_horizon_ledger(&state.db, &network, transaction).await?;
+        }
+        for (_, transaction) in transactions {
+            upsert_tx(&state.db, &transaction)
+                .await
+                .map_err(Error::internal)?;
+        }
+        page = transaction_page(&state.db, &network, limit, None, |sql, binds| {
+            binds.push(json!(address));
+            let n = binds.len();
+            sql.push_str(&format!(
+                " AND (source_account = ${n} OR EXISTS (SELECT 1 FROM tx_fund_flow_edges e WHERE e.tx_hash = transactions.hash AND (e.from_address = ${n} OR e.to_address = ${n})))"
+            ));
+            Ok(())
+        })
+        .await?;
+    }
     Ok(Json(page))
 }
 
@@ -1707,7 +1944,7 @@ pub async fn add_account(
         .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
     if !upstream_exists(&format!("{base}/accounts/{}", req.address.trim())).await {
         return Err(Error::BadRequest(
-            "wallet does not exist on the selected Stellar network".into(),
+            "account does not exist on the selected Stellar network".into(),
         ));
     }
     let display_name = req
@@ -1715,7 +1952,7 @@ pub async fn add_account(
         .as_deref()
         .map(str::trim)
         .filter(|name| !name.is_empty())
-        .unwrap_or("Wallet");
+        .unwrap_or("Account");
     let id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO wallets (project_id, address, network, display_name) VALUES ($1,$2,$3,$4) ON CONFLICT (project_id, address) DO UPDATE SET network = EXCLUDED.network, display_name = EXCLUDED.display_name RETURNING id",
     )
@@ -1797,7 +2034,7 @@ pub async fn rename_account(
     auth.require_mutation()?;
     let name = req.name.trim();
     if name.is_empty() {
-        return Err(Error::BadRequest("wallet name cannot be empty".into()));
+        return Err(Error::BadRequest("account name cannot be empty".into()));
     }
     sqlx::query("UPDATE wallets SET display_name = $1 WHERE project_id = $2 AND address = $3")
         .bind(name)
@@ -1931,7 +2168,7 @@ async fn account_summary(
                 .ok()
                 .flatten()
         })
-        .unwrap_or_else(|| "Wallet".to_string());
+        .unwrap_or_else(|| "Account".to_string());
     let tags = match (project_id, wallet_id) {
         (Some(project_id), Some(id)) => entity_tags(pool, project_id, "wallet", id).await?,
         _ => Vec::new(),
@@ -2378,17 +2615,200 @@ async fn contract_transaction_page(
     address: &str,
     q: PageQuery,
 ) -> Result<Paged<Value>, Error> {
+    let page = local_contract_transaction_page(pool, network, address, &q).await?;
+    if !page.data.is_empty() || q.cursor.is_some() {
+        return Ok(page);
+    }
+
+    // The live Soroban RPC only retains a recent ledger window. If this
+    // contract predates that window, use the indexed public explorer as a
+    // bounded historical source, persist the decoded rows, and serve them
+    // through the same local query on subsequent requests.
+    if let Err(error) = hydrate_contract_transactions_from_stellar_expert(
+        pool,
+        network,
+        address,
+        page.pagination.limit,
+    )
+    .await
+    {
+        tracing::warn!(%error, network, address, "historical contract transaction hydration failed");
+        return Ok(page);
+    }
+
+    local_contract_transaction_page(pool, network, address, &q).await
+}
+
+async fn local_contract_transaction_page(
+    pool: &PgPool,
+    network: &str,
+    address: &str,
+    q: &PageQuery,
+) -> Result<Paged<Value>, Error> {
     let limit = clamp_limit(q.limit);
     let cursor = parse_time_cursor(q.cursor.as_deref())?;
     transaction_page(pool, network, limit, cursor, |sql, binds| {
         binds.push(json!(address));
         let n = binds.len();
         sql.push_str(&format!(
-            " AND EXISTS (SELECT 1 FROM tx_call_tree_nodes c WHERE c.tx_hash = transactions.hash AND c.contract_id = ${n})"
+            r#" AND (
+                EXISTS (SELECT 1 FROM tx_call_tree_nodes c WHERE c.tx_hash = transactions.hash AND c.contract_id = ${n})
+                OR operation_target_address = ${n}
+                OR EXISTS (SELECT 1 FROM tx_events e WHERE e.tx_hash = transactions.hash AND e.contract_id = ${n})
+            )"#
         ));
         Ok(())
     })
     .await
+}
+
+async fn hydrate_contract_transactions_from_stellar_expert(
+    pool: &PgPool,
+    network: &str,
+    address: &str,
+    requested_limit: i64,
+) -> Result<usize, Error> {
+    let network_segment = match network {
+        "mainnet" => "public",
+        "testnet" => "testnet",
+        _ => return Ok(0),
+    };
+    let client = reqwest::Client::new();
+    let event_limit = requested_limit.clamp(20, 100);
+    let events_url = format!(
+        "https://api.stellar.expert/explorer/{network_segment}/contract/{address}/events?order=desc&limit={event_limit}"
+    );
+    let events: Value = client
+        .get(events_url)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(Error::internal)?
+        .error_for_status()
+        .map_err(Error::internal)?
+        .json()
+        .await
+        .map_err(Error::internal)?;
+
+    let mut ledger_set = HashSet::new();
+    if let Some(records) = events
+        .pointer("/_embedded/records")
+        .and_then(Value::as_array)
+    {
+        for event in records {
+            if let Some(ledger) = stellar_expert_event_ledger(event) {
+                ledger_set.insert(ledger);
+            }
+        }
+    }
+    let mut ledgers: Vec<i64> = ledger_set.into_iter().collect();
+    ledgers.sort_unstable_by(|left, right| right.cmp(left));
+    ledgers.truncate(20);
+
+    let ledger_results = futures::stream::iter(ledgers.into_iter().map(|ledger| {
+        let client = client.clone();
+        let ledger_url =
+            format!("https://api.stellar.expert/explorer/{network_segment}/ledger/{ledger}/tx");
+        async move {
+            let transactions = client
+                .get(ledger_url)
+                .timeout(Duration::from_secs(20))
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<Value>()
+                .await?;
+            Ok::<_, reqwest::Error>((ledger, transactions))
+        }
+    }))
+    .buffer_unordered(4)
+    .collect::<Vec<_>>()
+    .await;
+
+    let mut hydrated = 0;
+    for result in ledger_results {
+        let Ok((ledger, ledger_transactions)) = result else {
+            tracing::warn!(network, "could not fetch a historical contract ledger");
+            continue;
+        };
+
+        let Some(records) = ledger_transactions.as_array() else {
+            continue;
+        };
+        let ledger_timestamp = records
+            .iter()
+            .find_map(|record| record.get("ts").and_then(Value::as_i64))
+            .and_then(|timestamp| DateTime::<Utc>::from_timestamp(timestamp, 0));
+        let Some(ledger_timestamp) = ledger_timestamp else {
+            continue;
+        };
+        if let Err(error) = upsert_ledger(
+            pool,
+            &LedgerRecord {
+                sequence: ledger,
+                network: network.to_string(),
+                // The upstream ledger endpoint exposes the header XDR but not
+                // its hash. Keep a stable provenance marker so transactions
+                // can satisfy the local ledger foreign key without inventing
+                // a network hash for display.
+                hash: format!("stellar-expert-{network}-{ledger}"),
+                parent_hash: None,
+                transaction_count: records.len() as i64,
+                size_bytes: 0,
+                timestamp: ledger_timestamp,
+                base_operation_fee: None,
+                base_reserve: None,
+                total_cpu_instructions: None,
+                resource_limit: None,
+            },
+        )
+        .await
+        {
+            tracing::warn!(%error, network, ledger, "could not persist hydrated contract ledger");
+            continue;
+        }
+        for record in records {
+            let Some(timestamp) = record.get("ts").and_then(Value::as_i64) else {
+                continue;
+            };
+            let Some(created_at) = DateTime::<Utc>::from_timestamp(timestamp, 0) else {
+                continue;
+            };
+            let rpc_like = json!({
+                "hash": record.get("hash").and_then(Value::as_str),
+                "status": "SUCCESS",
+                "ledger": record.get("ledger").and_then(Value::as_i64).unwrap_or(ledger),
+                "createdAt": created_at.to_rfc3339(),
+                "envelopeXdr": record.get("body").and_then(Value::as_str),
+                "resultMetaXdr": record.get("meta").and_then(Value::as_str),
+            });
+            let Ok(tx) = decode_invoke_detail(&rpc_like, network) else {
+                continue;
+            };
+            let matches_contract = tx.operation_target_address.as_deref() == Some(address)
+                || tx.call_tree.iter().any(|call| call.contract_id == address)
+                || tx.events.iter().any(|event| event.contract_id == address);
+            if !matches_contract {
+                continue;
+            }
+            match upsert_tx(pool, &tx).await {
+                Ok(_) => hydrated += 1,
+                Err(error) => {
+                    // A single malformed historical record must not hide the
+                    // rest of the contract history. Native indexed records
+                    // and later retries can still enrich this transaction.
+                    tracing::warn!(%error, hash = %tx.hash, "could not persist hydrated contract transaction");
+                }
+            }
+        }
+    }
+    Ok(hydrated)
+}
+
+fn stellar_expert_event_ledger(event: &Value) -> Option<i64> {
+    let id = event.get("id")?.as_str()?;
+    let raw_id = id.split('-').next()?.parse::<u64>().ok()?;
+    i64::try_from(raw_id >> 32).ok()
 }
 
 pub async fn public_contract_events(

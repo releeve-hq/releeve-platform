@@ -43,6 +43,7 @@ pub struct Settings {
     pub fork_core_signing_kid: String,
     pub fork_core_issuer: String,
     pub fork_core_audience: String,
+    pub fork_core_history_preview_token: String,
     pub source_lens_url: String,
     pub source_lens_signing_key_file: String,
     pub source_lens_signing_kid: String,
@@ -144,6 +145,7 @@ impl Settings {
             .set_default("fork_core_signing_kid", "platform-current")?
             .set_default("fork_core_issuer", "releeve-platform")?
             .set_default("fork_core_audience", "fork-core")?
+            .set_default("fork_core_history_preview_token", "")?
             .set_default("source_lens_url", "")?
             .set_default("source_lens_signing_key_file", "")?
             .set_default("source_lens_signing_kid", "platform-current")?

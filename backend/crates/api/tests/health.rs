@@ -38,6 +38,7 @@ fn test_state(db: sqlx::PgPool, redis: redis::Client) -> AppState {
         oauth_callback_base: "http://127.0.0.1:8080".into(),
         soroban_rpc_url: String::new(),
         fork_core_url: String::new(),
+        fork_core_history_preview_token: String::new(),
         fork_core_signing_key_file: String::new(),
         fork_core_signing_kid: "test".into(),
         fork_core_issuer: "releeve-platform".into(),

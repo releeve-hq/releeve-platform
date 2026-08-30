@@ -251,7 +251,7 @@ function OrganizationHeader({ title, organization, light, onToggleTheme, singleB
     <>
       <header className="org-commandbar">
         <div className="org-commandbar-title">
-          <ReleeveLogo size={24} />
+          <ReleeveLogo size={24} tone="auto" />
           {singleBar ? (
             <>
               <span className="org-commandbar-slash">/</span>

@@ -8,9 +8,5 @@ export default function RootLayout({
 }: {
   children: React.ReactNode
 }) {
-  return (
-    <html lang="en">
-      <body className="explorer-route">{children}</body>
-    </html>
-  )
+  return children
 }

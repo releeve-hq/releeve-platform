@@ -159,8 +159,8 @@ html[data-marketing-theme="light"] .marketing-site {
 .releeve-logo--auto .releeve-logo__white { display: block; }
 .releeve-logo--auto .releeve-logo__black { display: none; }
 
-html[data-marketing-theme="light"] .marketing-root .releeve-logo--auto .releeve-logo__white { display: none; }
-html[data-marketing-theme="light"] .marketing-root .releeve-logo--auto .releeve-logo__black { display: block; }
+html[data-marketing-theme="light"] .releeve-logo--auto .releeve-logo__white { display: none; }
+html[data-marketing-theme="light"] .releeve-logo--auto .releeve-logo__black { display: block; }
 
 .marketing-nav-links {
   display: flex;
