@@ -600,21 +600,43 @@ function StateWatchPanel({ environment }: { environment: EnvironmentRecord }) {
 export function EnvironmentWorkspace({ environment, basePath, scope, onBack, onDeleted, onRefresh }: {
   environment: EnvironmentRecord;
   basePath: string;
-  scope: { organization: string | null; project: string | null; network: "mainnet" | "testnet" | "futurenet" };
+  scope: { organization: string | null; project: string | null; projectId: string | null; network: "mainnet" | "testnet" | "futurenet" };
   onBack: () => void;
   onDeleted: () => void;
   onRefresh: () => Promise<void> | void;
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const environmentRoute = `/vnet/${encodeURIComponent(environment.id)}`;
+  // Project-scoped vnet URLs look like /projects/:id/vnet/:env/:tab?/:address?
+  // while the legacy shape is /vnet/:id/:tab?/:address?. Both resolve here.
+  const projectVnet = (() => {
+    const parts = pathname.split("/").filter(Boolean);
+    if (parts[0] !== "projects" || parts.length < 4 || parts[2] !== "vnet") return null;
+    try {
+      return {
+        base: `/projects/${parts[1]}/vnet/${parts[3]}`,
+        tab: parts[4] ? decodeURIComponent(parts[4]) : undefined,
+        address: parts[5] ? decodeURIComponent(parts[5]) : null,
+      };
+    } catch {
+      return null;
+    }
+  })();
+  const environmentRoute = projectVnet
+    ? projectVnet.base
+    : `/vnet/${encodeURIComponent(environment.id)}`;
   const isEnvironmentRoute = pathname === environmentRoute || pathname.startsWith(`${environmentRoute}/`);
   const pathParts = pathname.split("/");
-  const requestedTab = pathParts[3] === "wallets" ? "accounts" : pathParts[3];
+  const rawTab = projectVnet ? projectVnet.tab : pathParts[3];
+  const requestedTab = rawTab === "wallets" ? "accounts" : rawTab;
   const routeTab = environmentTabIds.has(requestedTab as EnvironmentTab)
     ? requestedTab as EnvironmentTab
     : "overview";
-  const requestedEntityAddress = pathParts[4] ? decodeURIComponent(pathParts[4]) : null;
+  const requestedEntityAddress = projectVnet
+    ? projectVnet.address
+    : pathParts[4]
+      ? decodeURIComponent(pathParts[4])
+      : null;
   const [tab, setTab] = useState<EnvironmentTab>(routeTab);
   const [data, setData] = useState<WorkspaceData>({ wallets: [], deployments: [], activity: [], logs: [], revisions: [] });
   const [loading, setLoading] = useState(true);

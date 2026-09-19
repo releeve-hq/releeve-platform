@@ -2,9 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { storedProjectHome } from '@/lib/explorer-routes';
 
 export function ExplorerShell({ network, children }: { network: string; children: React.ReactNode }) {
   const pathname = usePathname();
+  const [homeHref, setHomeHref] = useState('/organizations');
+  useEffect(() => {
+    setHomeHref(storedProjectHome());
+  }, []);
   const root = `/explorer/${encodeURIComponent(network)}`;
   const navigation = [
     { label: 'Overview', href: root },
@@ -17,12 +23,12 @@ export function ExplorerShell({ network, children }: { network: string; children
   return (
     <div className="explorer-shell">
       <aside className="explorer-sidebar">
-        <Link href="/home" className="explorer-sidebar-brand">Releeve</Link>
+        <Link href={homeHref} className="explorer-sidebar-brand">Releeve</Link>
         <p>Explorer</p>
         <nav aria-label="Explorer navigation">
           {navigation.map((item) => <Link key={item.label} href={item.href} className={pathname === root && item.label === 'Overview' ? 'active' : ''}>{item.label}</Link>)}
         </nav>
-        <div className="explorer-sidebar-footer"><Link href="/home">Workspace</Link></div>
+        <div className="explorer-sidebar-footer"><Link href={homeHref}>Workspace</Link></div>
       </aside>
       <div className="explorer-shell-content">{children}</div>
       <style>{`

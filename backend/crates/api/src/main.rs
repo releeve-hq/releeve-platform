@@ -1,4 +1,4 @@
-use api::mailer::SmtpMailer;
+use api::mailer::{CloudflareEmailSender, LoggingMailer, Mailer, ResendEmailSender};
 use api::oauth::OAuthClients;
 use api::state::AppState;
 use api::tokens::JwtIssuer;
@@ -30,13 +30,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let redis = redis::Client::open(settings.redis_url.clone())?;
 
     let jwt = JwtIssuer::new(settings.jwt_secret.clone(), settings.jwt_access_ttl);
-    let mailer = SmtpMailer::new(
-        &settings.smtp_host,
-        settings.smtp_port,
-        &settings.smtp_username,
-        &settings.smtp_password,
-        &settings.smtp_from,
-    )?;
+    // Outbox sender: Resend when configured, else Cloudflare Email Service,
+    // else a logging sender so local flows (verification links in logs)
+    // keep working. Request handlers only enqueue; this sender is drained
+    // by the worker.
+    let mailer: std::sync::Arc<dyn Mailer> = if !settings.resend_api_key.is_empty() {
+        tracing::info!("email sender: resend");
+        std::sync::Arc::new(ResendEmailSender::new(
+            settings.resend_api_key.clone(),
+            settings.email_from.clone(),
+        ))
+    } else if !settings.cloudflare_email_api_token.is_empty()
+        && !settings.cloudflare_account_id.is_empty()
+    {
+        tracing::info!("email sender: cloudflare");
+        std::sync::Arc::new(CloudflareEmailSender::new(
+            settings.cloudflare_account_id.clone(),
+            settings.cloudflare_email_api_token.clone(),
+            settings.email_from.clone(),
+        ))
+    } else {
+        tracing::info!("email sender: logging (set RESEND_API_KEY to deliver)");
+        std::sync::Arc::new(LoggingMailer)
+    };
+    tokio::spawn(api::email_queue::run_worker(
+        db.clone(),
+        mailer.clone(),
+        std::time::Duration::from_secs(settings.email_worker_poll_secs.max(1)),
+    ));
     let oauth = OAuthClients::from_settings(&settings);
     let fork_core = if settings.fork_core_url.is_empty() {
         None
@@ -78,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             redis,
             settings,
             jwt,
-            mailer: std::sync::Arc::new(mailer),
+            mailer,
             oauth,
             fork_core,
             source_lens,

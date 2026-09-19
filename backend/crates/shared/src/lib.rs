@@ -14,4 +14,4 @@ pub use config::{IngestSettings, Settings};
 pub use cursor::{Cursor, CursorError};
 pub use error::{Error, ErrorEnvelope, ErrorKind, Result};
 pub use pagination::{ALLOWED_LIMITS, DEFAULT_LIMIT, Paged, Pagination, clamp_limit};
-pub use permissions::{Permission, PermissionSet};
+pub use permissions::{Permission, PermissionSet, Role};

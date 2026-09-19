@@ -7,7 +7,7 @@ import '../../auth.css';
 
 function CallbackContent() {
   useEffect(() => {
-    window.location.replace('/onboarding');
+    window.location.replace('/organizations');
   }, []);
 
   return (

@@ -31,6 +31,55 @@ export function truncateEntity(value: string | number, head = 8, tail = 6): stri
   return `${text.slice(0, head)}...${text.slice(-tail)}`;
 }
 
+type StoredWorkspaceShape = {
+  organization?: unknown;
+  project?: unknown;
+  projectId?: unknown;
+};
+
+function readStoredWorkspace(): StoredWorkspaceShape | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(
+      localStorage.getItem("releeve-active-workspace") || "null",
+    ) as StoredWorkspaceShape | null;
+  } catch {
+    return null;
+  }
+}
+
+/// Canonical base for the remembered project (`/projects/:id`), or null
+/// when nothing usable is stored. Project IDs are globally unique and
+/// rename-proof, unlike slugs.
+function storedProjectBase(): string | null {
+  const stored = readStoredWorkspace();
+  if (typeof stored?.projectId === "string" && stored.projectId) {
+    return `/projects/${encodeURIComponent(stored.projectId)}`;
+  }
+  return null;
+}
+
+/// Project home URL from the locally remembered workspace (client only).
+/// Used by explorer chrome to link back without depending on app state.
+export function storedProjectHome(): string {
+  return storedProjectBase() ?? "/organizations";
+}
+
+/// Project-scoped section URL from the remembered workspace.
+export function storedProjectSection(section: string): string {
+  const base = storedProjectBase();
+  return base ? `${base}/${section}` : "/organizations";
+}
+export function storedProjectAlerts(contract?: string): string {
+  const base = storedProjectBase();
+  if (!base) return "/organizations";
+  return contract ? `${base}/alerts?contract=${encodeURIComponent(contract)}` : `${base}/alerts`;
+}
+export function storedProjectContract(address: string): string {
+  const base = storedProjectBase();
+  return base ? `${base}/contracts/${encodeURIComponent(address)}` : "/organizations";
+}
+
 export function stellarExpertRoute(network: ExplorerNetwork, kind: "tx" | "account" | "contract" | "ledger", value: string | number): string {
   const base = network === "mainnet"
     ? "https://stellar.expert/explorer/public"

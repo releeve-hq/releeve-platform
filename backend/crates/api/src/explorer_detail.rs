@@ -491,7 +491,8 @@ fn transaction_envelope_stats(raw_envelope_xdr: Option<&str>) -> (Option<String>
     let Some(raw_envelope_xdr) = raw_envelope_xdr else {
         return (None, None);
     };
-    let Ok(envelope) = TransactionEnvelope::from_xdr_base64(raw_envelope_xdr, Limits::none()) else {
+    let Ok(envelope) = TransactionEnvelope::from_xdr_base64(raw_envelope_xdr, Limits::none())
+    else {
         return (None, None);
     };
     let max_fee = match &envelope {
@@ -701,9 +702,8 @@ async fn load_tx_detail(
     let states = state_changes(pool, hash).await?;
     let events = tx_events(pool, hash).await?;
     let annotations = annotations(pool, hash).await?;
-    let (max_fee, transaction_size) = transaction_envelope_stats(
-        row.get::<Option<String>, _>("raw_envelope_xdr").as_deref(),
-    );
+    let (max_fee, transaction_size) =
+        transaction_envelope_stats(row.get::<Option<String>, _>("raw_envelope_xdr").as_deref());
 
     Ok(json!({
         "hash": row.get::<String, _>("hash"),
@@ -970,7 +970,9 @@ async fn fetch_horizon_ledger_transactions(
         .ok_or_else(|| Error::BadRequest(format!("unsupported explorer network: {network}")))?;
     let client = reqwest::Client::new();
     let body = client
-        .get(format!("{base}/ledgers/{sequence}/transactions?order=asc&limit=200"))
+        .get(format!(
+            "{base}/ledgers/{sequence}/transactions?order=asc&limit=200"
+        ))
         .timeout(Duration::from_secs(20))
         .send()
         .await

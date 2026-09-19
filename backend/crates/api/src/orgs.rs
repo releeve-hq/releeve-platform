@@ -5,7 +5,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::{Cursor, Error, Paged, Pagination, Permission, PermissionSet, clamp_limit};
+use shared::{Cursor, Error, Paged, Pagination, Permission, PermissionSet, Role, clamp_limit};
 use uuid::Uuid;
 
 use crate::auth::accounts::is_unique_violation;
@@ -126,9 +126,9 @@ impl OrgAuth {
 }
 
 async fn resolve_org(state: &AppState, user_id: Uuid, slug: &str) -> Result<OrgAuth, Error> {
-    let row = sqlx::query_as::<_, (Uuid, String, bool, bool, i16)>(
+    let row = sqlx::query_as::<_, (Uuid, String, bool, bool, i16, String)>(
         r#"
-        SELECT o.id, o.slug, u.email_verified, o.owner_user_id = $1, m.permissions
+        SELECT o.id, o.slug, u.email_verified, o.owner_user_id = $1, m.permissions, m.status
         FROM organizations o
         JOIN organization_members m ON m.organization_id = o.id AND m.user_id = $1
         JOIN users u ON u.id = m.user_id
@@ -140,7 +140,10 @@ async fn resolve_org(state: &AppState, user_id: Uuid, slug: &str) -> Result<OrgA
     .fetch_optional(&state.db)
     .await
     .map_err(Error::internal)?;
-    let (org_id, slug, email_verified, owner, raw) = row.ok_or(Error::NotFound)?;
+    let (org_id, slug, email_verified, owner, raw, status) = row.ok_or(Error::NotFound)?;
+    if status != "active" {
+        return Err(Error::Forbidden);
+    }
     Ok(OrgAuth {
         org_id,
         slug,
@@ -161,9 +164,10 @@ pub struct OrgSummary {
     pub is_personal: bool,
     pub plan_tier: String,
     pub owner_user_id: Uuid,
+    pub is_owner: bool,
 }
 
-async fn load_org(pool: &sqlx::PgPool, slug: &str) -> Result<OrgSummary, Error> {
+async fn load_org(pool: &sqlx::PgPool, slug: &str, viewer: &Uuid) -> Result<OrgSummary, Error> {
     let r = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, bool, String, Uuid)>(
         "SELECT id, slug, name, avatar_url, is_personal, plan_tier, owner_user_id FROM organizations WHERE slug = $1",
     )
@@ -180,6 +184,7 @@ async fn load_org(pool: &sqlx::PgPool, slug: &str) -> Result<OrgSummary, Error> 
         is_personal: r.4,
         plan_tier: r.5,
         owner_user_id: r.6,
+        is_owner: r.6 == *viewer,
     })
 }
 
@@ -189,7 +194,7 @@ pub async fn get_org(
     Path(org): Path<String>,
 ) -> Result<Json<OrgSummary>, Error> {
     resolve_org(&state, user_id, &org).await?;
-    Ok(Json(load_org(&state.db, &org).await?))
+    Ok(Json(load_org(&state.db, &org, &user_id).await?))
 }
 
 #[derive(Deserialize)]
@@ -225,7 +230,7 @@ pub async fn rename_org(
     .execute(&state.db)
     .await
     .map_err(Error::internal)?;
-    Ok(Json(load_org(&state.db, &auth.slug).await?))
+    Ok(Json(load_org(&state.db, &auth.slug, &user_id).await?))
 }
 
 pub async fn delete_org(
@@ -285,7 +290,7 @@ pub async fn create_org(
     .await
     .map_err(Error::internal)?;
     tx.commit().await.map_err(Error::internal)?;
-    Ok(Json(load_org(&state.db, &slug).await?))
+    Ok(Json(load_org(&state.db, &slug, &user_id).await?))
 }
 
 async fn unique_slug(pool: &sqlx::PgPool, base: &str, mut attempt: u32) -> Result<String, Error> {
@@ -310,7 +315,16 @@ async fn unique_slug(pool: &sqlx::PgPool, base: &str, mut attempt: u32) -> Resul
 
 // ---- Members ------------------------------------------------------------------------
 
-type MemberRow = (Uuid, Uuid, String, Option<String>, i16, DateTime<Utc>, bool);
+type MemberRow = (
+    Uuid,
+    Uuid,
+    String,
+    Option<String>,
+    i16,
+    DateTime<Utc>,
+    bool,
+    String,
+);
 
 #[derive(Serialize)]
 pub struct MemberSummary {
@@ -319,10 +333,37 @@ pub struct MemberSummary {
     pub email: String,
     pub username: Option<String>,
     pub permissions: Vec<Permission>,
+    pub role: String,
+    pub status: String,
     pub is_owner: bool,
+    pub created_at: DateTime<Utc>,
 }
 
-const MEMBER_SELECT: &str = "SELECT m.id, m.user_id, u.email, u.username, m.permissions, m.created_at, o.owner_user_id = m.user_id \
+fn member_summary_from_row(
+    id: Uuid,
+    user_id: Uuid,
+    email: String,
+    username: Option<String>,
+    permissions_raw: i16,
+    created_at: DateTime<Utc>,
+    is_owner: bool,
+    status: String,
+) -> MemberSummary {
+    let set = PermissionSet(permissions_raw);
+    MemberSummary {
+        id,
+        user_id,
+        email,
+        username,
+        permissions: set.iter(),
+        role: Role::for_permissions(is_owner, set).as_str().to_string(),
+        status,
+        is_owner,
+        created_at,
+    }
+}
+
+const MEMBER_SELECT: &str = "SELECT m.id, m.user_id, u.email, u.username, m.permissions, m.created_at, o.owner_user_id = m.user_id, m.status \
      FROM organization_members m JOIN users u ON u.id = m.user_id JOIN organizations o ON o.id = m.organization_id";
 
 async fn fetch_members_paged(
@@ -359,13 +400,17 @@ pub async fn list_members(
     let cursors: Vec<(Uuid, DateTime<Utc>)> = rows.iter().map(|r| (r.0, r.5)).collect();
     let data: Vec<MemberSummary> = rows
         .iter()
-        .map(|r| MemberSummary {
-            id: r.0,
-            user_id: r.1,
-            email: r.2.clone(),
-            username: r.3.clone(),
-            permissions: PermissionSet(r.4).iter(),
-            is_owner: r.6,
+        .map(|r| {
+            member_summary_from_row(
+                r.0,
+                r.1,
+                r.2.clone(),
+                r.3.clone(),
+                r.4,
+                r.5,
+                r.6,
+                r.7.clone(),
+            )
         })
         .collect();
     Ok(Json(into_page(data, cursors, limit, had_cursor)))
@@ -375,8 +420,253 @@ pub async fn list_members(
 #[serde(deny_unknown_fields)]
 pub struct InviteMemberRequest {
     email: String,
+    /// Named role; permissions are always derived server-side from it.
+    /// Defaults to `developer`. `owner` cannot be granted here.
     #[serde(default)]
-    permissions: Vec<Permission>,
+    role: Option<String>,
+}
+
+/// Conservative email shape check for invites (local part, @, dotted
+/// domain, no spaces, sane lengths). Full deliverability is the mail
+/// provider's job; this only rejects obvious junk before a row is stored.
+fn valid_email(email: &str) -> bool {
+    if email.len() > 254 || email.contains(' ') {
+        return false;
+    }
+    let mut parts = email.split('@');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(local), Some(domain), None) => {
+            !local.is_empty()
+                && !domain.is_empty()
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.ends_with('.')
+        }
+        _ => false,
+    }
+}
+
+fn invite_role(name: &Option<String>) -> Result<Role, Error> {
+    let role = Role::parse(name.as_deref().unwrap_or("member"))
+        .ok_or_else(|| Error::BadRequest("unknown role; use viewer, member, or admin".into()))?;
+    if role == Role::Owner {
+        return Err(Error::BadRequest(
+            "ownership is transferred, never granted by invite".into(),
+        ));
+    }
+    Ok(role)
+}
+
+#[derive(Serialize)]
+pub struct InvitationSummary {
+    pub id: Uuid,
+    pub email: String,
+    pub permissions: Vec<Permission>,
+    pub role: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// `GET /api/v1/{org}/invitations` — pending invitations (powers the
+/// members Pending filter). Requires member management.
+pub async fn list_invitations(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path(org): Path<String>,
+) -> Result<Json<Vec<InvitationSummary>>, Error> {
+    let auth = resolve_org(&state, user_id, &org).await?;
+    auth.require(Permission::ManageMembers)?;
+    let rows = sqlx::query_as::<_, (Uuid, String, i16, String, DateTime<Utc>)>(
+        "SELECT id, email, permissions, status, created_at FROM organization_invitations \
+         WHERE organization_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 200",
+    )
+    .bind(auth.org_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(Error::internal)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| {
+                let set = PermissionSet(r.2);
+                InvitationSummary {
+                    id: r.0,
+                    email: r.1,
+                    permissions: set.iter(),
+                    role: Role::for_permissions(false, set).as_str().to_string(),
+                    status: r.3,
+                    created_at: r.4,
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// Public invitation preview for the `/invite/{id}` landing page. Only the
+/// organization identity, role, and a masked email are exposed — no
+/// membership data leaks before authentication.
+#[derive(Serialize)]
+pub struct InvitationPreview {
+    pub id: Uuid,
+    pub organization_slug: String,
+    pub organization_name: Option<String>,
+    pub role: String,
+    pub status: String,
+    pub email_hint: String,
+}
+
+pub async fn preview_invitation(
+    State(state): State<AppState>,
+    Path(invitation_id): Path<Uuid>,
+) -> Result<Json<InvitationPreview>, Error> {
+    let row = sqlx::query_as::<_, (String, Option<String>, i16, String, String)>(
+        "SELECT o.slug, o.name, i.permissions, i.status, i.email \
+         FROM organization_invitations i JOIN organizations o ON o.id = i.organization_id \
+         WHERE i.id = $1",
+    )
+    .bind(invitation_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    Ok(Json(InvitationPreview {
+        id: invitation_id,
+        organization_slug: row.0,
+        organization_name: row.1,
+        role: Role::for_permissions(false, PermissionSet(row.2))
+            .as_str()
+            .to_string(),
+        status: row.3,
+        email_hint: mask_email(&row.4),
+    }))
+}
+
+fn mask_email(email: &str) -> String {
+    match email.split_once('@') {
+        Some((local, domain)) => {
+            let shown: String = local.chars().take(2).collect();
+            format!("{shown}***@{domain}")
+        }
+        None => "***".to_string(),
+    }
+}
+
+/// Accept a pending invitation. The caller's account email must match the
+/// invitation; on success they become a member with the invited fixed role
+/// and the invitation is marked accepted. Idempotent for existing members.
+pub async fn accept_invitation(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, invitation_id)): Path<(String, Uuid)>,
+) -> Result<Json<MemberSummary>, Error> {
+    let auth = resolve_org(&state, user_id, &org).await?;
+    let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(Error::internal)?;
+    let mut tx = state.db.begin().await.map_err(Error::internal)?;
+    let invite = sqlx::query_as::<_, (String, i16, String)>(
+        "SELECT email, permissions, status FROM organization_invitations \
+         WHERE organization_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(auth.org_id)
+    .bind(invitation_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    if invite.2 != "pending" {
+        return Err(Error::ConflictDetail(
+            "this invitation is no longer pending".into(),
+        ));
+    }
+    if !invite.0.eq_ignore_ascii_case(&email) {
+        return Err(Error::Forbidden);
+    }
+    let member_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO organization_members (organization_id, user_id, permissions) VALUES ($1,$2,$3) \
+         ON CONFLICT (organization_id, user_id) DO UPDATE SET permissions = EXCLUDED.permissions RETURNING id",
+    )
+    .bind(auth.org_id)
+    .bind(user_id)
+    .bind(invite.1)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(Error::internal)?;
+    sqlx::query(
+        "UPDATE organization_invitations SET status = 'accepted', updated_at = now() WHERE id = $1",
+    )
+    .bind(invitation_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(Error::internal)?;
+    tx.commit().await.map_err(Error::internal)?;
+    member_summary(auth.org_id, member_id, &state.db)
+        .await
+        .map(Json)
+}
+
+/// Revoke a pending invitation (requires member management).
+pub async fn revoke_invitation(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, invitation_id)): Path<(String, Uuid)>,
+) -> Result<Json<serde_json::Value>, Error> {
+    let auth = resolve_org(&state, user_id, &org).await?;
+    auth.require(Permission::ManageMembers)?;
+    auth.require_verified()?;
+    let updated = sqlx::query(
+        "UPDATE organization_invitations SET status = 'revoked', updated_at = now() \
+         WHERE organization_id = $1 AND id = $2 AND status = 'pending'",
+    )
+    .bind(auth.org_id)
+    .bind(invitation_id)
+    .execute(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .rows_affected();
+    if updated == 0 {
+        return Err(Error::NotFound);
+    }
+    Ok(Json(serde_json::json!({ "revoked": true })))
+}
+
+/// Claim matching pending invitations for a freshly created user. Called
+/// from signup and OAuth auto-provisioning so invitees land in their orgs
+/// without a separate accept step.
+pub async fn claim_invitations_for_email(
+    pool: &sqlx::PgPool,
+    user_id: Uuid,
+    email: &str,
+) -> Result<(), Error> {
+    let mut tx = pool.begin().await.map_err(Error::internal)?;
+    let pending = sqlx::query_as::<_, (Uuid, Uuid, i16)>(
+        "SELECT id, organization_id, permissions FROM organization_invitations \
+         WHERE email = $1 AND status = 'pending' FOR UPDATE",
+    )
+    .bind(email.to_lowercase())
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(Error::internal)?;
+    for (invitation_id, org_id, permissions) in pending {
+        sqlx::query(
+            "INSERT INTO organization_members (organization_id, user_id, permissions) VALUES ($1,$2,$3) \
+             ON CONFLICT (organization_id, user_id) DO NOTHING",
+        )
+        .bind(org_id)
+        .bind(user_id)
+        .bind(permissions)
+        .execute(&mut *tx)
+        .await
+        .map_err(Error::internal)?;
+        sqlx::query("UPDATE organization_invitations SET status = 'accepted', updated_at = now() WHERE id = $1")
+            .bind(invitation_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(Error::internal)?;
+    }
+    tx.commit().await.map_err(Error::internal)?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -387,6 +677,7 @@ pub enum InviteMemberResponse {
         id: Uuid,
         email: String,
         permissions: Vec<Permission>,
+        role: String,
         status: String,
         created_at: DateTime<Utc>,
     },
@@ -403,7 +694,11 @@ pub async fn invite_member(
     auth.require_verified()?;
 
     let email = req.email.trim().to_lowercase();
-    let permissions = PermissionSet::from(&req.permissions[..]);
+    if !valid_email(&email) {
+        return Err(Error::BadRequest("a valid email is required".into()));
+    }
+    let role = invite_role(&req.role)?;
+    let permissions = role.permissions();
     let target_user = sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email = $1")
         .bind(&email)
         .fetch_optional(&state.db)
@@ -427,10 +722,40 @@ pub async fn invite_member(
         .fetch_one(&state.db)
         .await
         .map_err(Error::internal)?;
+        // Notify the invitee through the outbox worker; delivery failures
+        // never fail the invite itself.
+        let invite_link = format!(
+            "{}/invite/{}",
+            state.settings.app_base_url.trim_end_matches('/'),
+            row.0,
+        );
+        if let Err(e) = crate::email_queue::enqueue(
+            &state.db,
+            crate::mailer::Email {
+                to: email.clone(),
+                subject: format!("You've been invited to {} on Releeve", auth.slug),
+                body: format!(
+                    "You've been invited to join {} on Releeve as {}. Accept it here: {}",
+                    auth.slug,
+                    role.as_str(),
+                    invite_link,
+                ),
+                html: Some(crate::mailer::invite_email_html(
+                    &auth.slug,
+                    role.as_str(),
+                    &invite_link,
+                )),
+            },
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "invitation email could not be queued");
+        }
         return Ok(Json(InviteMemberResponse::Invitation {
             id: row.0,
             email,
             permissions: PermissionSet(row.1).iter(),
+            role: role.as_str().to_string(),
             status: row.2,
             created_at: row.3,
         }));
@@ -454,7 +779,12 @@ pub async fn invite_member(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PatchMemberRequest {
-    permissions: Vec<Permission>,
+    /// Named role; permissions are always derived server-side from it.
+    #[serde(default)]
+    role: Option<String>,
+    /// `active` or `suspended`.
+    #[serde(default)]
+    status: Option<String>,
 }
 
 pub async fn patch_member(
@@ -488,16 +818,45 @@ pub async fn patch_member(
             "the organization owner cannot be modified; transfer ownership first".into(),
         ));
     }
-    let perms = PermissionSet::from(&req.permissions[..]).raw();
-    sqlx::query(
-        "UPDATE organization_members SET permissions = $3 WHERE organization_id = $1 AND id = $2",
-    )
-    .bind(auth.org_id)
-    .bind(member_id)
-    .bind(perms)
-    .execute(&mut *tx)
-    .await
-    .map_err(Error::internal)?;
+    if target_user_id == user_id && req.status.as_deref() == Some("suspended") {
+        return Err(Error::BadRequest(
+            "you cannot suspend your own membership".into(),
+        ));
+    }
+    if req.role.is_none() && req.status.is_none() {
+        return Err(Error::BadRequest(
+            "nothing to update; provide role and/or status".into(),
+        ));
+    }
+    if let Some(role) = &req.role {
+        let set = invite_role(&Some(role.clone()))?.permissions();
+        sqlx::query(
+            "UPDATE organization_members SET permissions = $3 WHERE organization_id = $1 AND id = $2",
+        )
+        .bind(auth.org_id)
+        .bind(member_id)
+        .bind(set.raw())
+        .execute(&mut *tx)
+        .await
+        .map_err(Error::internal)?;
+    }
+    if let Some(status) = &req.status {
+        let status = status.trim().to_lowercase();
+        if status != "active" && status != "suspended" {
+            return Err(Error::BadRequest(
+                "unknown status; use active or suspended".into(),
+            ));
+        }
+        sqlx::query(
+            "UPDATE organization_members SET status = $3 WHERE organization_id = $1 AND id = $2",
+        )
+        .bind(auth.org_id)
+        .bind(member_id)
+        .bind(status)
+        .execute(&mut *tx)
+        .await
+        .map_err(Error::internal)?;
+    }
     tx.commit().await.map_err(Error::internal)?;
     Ok(Json(
         member_summary(auth.org_id, member_id, &state.db).await?,
@@ -554,8 +913,8 @@ async fn member_summary(
     member_id: Uuid,
     pool: &sqlx::PgPool,
 ) -> Result<MemberSummary, Error> {
-    let r = sqlx::query_as::<_, (Uuid, String, Option<String>, i16, bool)>(
-        "SELECT m.user_id, u.email, u.username, m.permissions, o.owner_user_id = m.user_id FROM organization_members m JOIN users u ON u.id = m.user_id JOIN organizations o ON o.id = m.organization_id WHERE m.organization_id = $1 AND m.id = $2",
+    let r = sqlx::query_as::<_, (Uuid, String, Option<String>, i16, bool, String, DateTime<Utc>)>(
+        "SELECT m.user_id, u.email, u.username, m.permissions, o.owner_user_id = m.user_id, m.status, m.created_at FROM organization_members m JOIN users u ON u.id = m.user_id JOIN organizations o ON o.id = m.organization_id WHERE m.organization_id = $1 AND m.id = $2",
     )
     .bind(org_id)
     .bind(member_id)
@@ -563,14 +922,9 @@ async fn member_summary(
     .await
     .map_err(Error::internal)?
     .ok_or(Error::NotFound)?;
-    Ok(MemberSummary {
-        id: member_id,
-        user_id: r.0,
-        email: r.1,
-        username: r.2,
-        permissions: PermissionSet(r.3).iter(),
-        is_owner: r.4,
-    })
+    Ok(member_summary_from_row(
+        member_id, r.0, r.1, r.2, r.3, r.6, r.4, r.5,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -627,7 +981,7 @@ pub async fn transfer_ownership(
         .map_err(Error::internal)?;
     tx.commit().await.map_err(Error::internal)?;
 
-    Ok(Json(load_org(&state.db, &auth.slug).await?))
+    Ok(Json(load_org(&state.db, &auth.slug, &user_id).await?))
 }
 
 // ---- Access tokens -------------------------------------------------------------------
@@ -937,6 +1291,48 @@ pub async fn get_project(
 ) -> Result<Json<ProjectSummary>, Error> {
     let (auth, id) = resolve_project_id(&state, user_id, &org, &project, None).await?;
     Ok(Json(project_summary(&state.db, auth.org_id, id).await?))
+}
+
+/// Project lookup for project-scoped URLs (`/projects/{id}/...`), which
+/// address projects by immutable ID instead of per-org slugs.
+#[derive(Serialize)]
+pub struct ProjectLookup {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub network: String,
+    pub organization_id: Uuid,
+    pub organization_slug: String,
+}
+
+pub async fn lookup_project(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path(project_id): Path<Uuid>,
+) -> Result<Json<ProjectLookup>, Error> {
+    let row = sqlx::query_as::<_, (Uuid, String, String, String, Uuid, String)>(
+        r#"
+        SELECT p.id, p.slug, p.name, p.network, o.id, o.slug
+        FROM projects p
+        JOIN organizations o ON o.id = p.organization_id
+        JOIN organization_members m ON m.organization_id = o.id AND m.user_id = $1
+        WHERE p.id = $2 AND m.status = 'active'
+        "#,
+    )
+    .bind(user_id)
+    .bind(project_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(Error::internal)?
+    .ok_or(Error::NotFound)?;
+    Ok(Json(ProjectLookup {
+        id: row.0,
+        slug: row.1,
+        name: row.2,
+        network: row.3,
+        organization_id: row.4,
+        organization_slug: row.5,
+    }))
 }
 
 #[derive(Deserialize)]

@@ -18,3 +18,8 @@ frontend/playwright-report
 *.log
 .DS_Store
 Thumbs.db
+
+# Local agent/project instructions (not part of the public repository)
+/AGENTS.md
+/frontend/AGENTS.md
+/frontend/CLAUDE.md

@@ -12,7 +12,7 @@
   width: min(370px, calc(100vw - 36px));
   padding: 18px;
   border: 1px solid var(--cookie-line);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--cookie-bg);
   box-shadow: 0 22px 70px rgba(0,0,0,.38);
   color: var(--cookie-ink);

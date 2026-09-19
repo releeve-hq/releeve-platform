@@ -12,7 +12,7 @@ type OAuthProvider = 'github' | 'google';
 
 export function AuthForm({ mode }: { mode: AuthMode }) {
   const router = useRouter();
-  const { login, signup, error, isVerificationSent, isLoading, clearError } = useAuth();
+  const { login, signup, error, isLoading, clearError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -36,9 +36,20 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     try {
       if (isLogin) {
         await login(email, password);
-        router.replace('/onboarding');
+        // Returning users pick their organization, then their project.
+        router.replace('/organizations');
       } else {
         await signup(email, password);
+        // New accounts sign straight in: their email names their personal
+        // organization, and onboarding continues on its projects page with the
+        // create-project modal open.
+        try {
+          await login(email, password);
+        } catch {
+          router.replace('/signin');
+          return;
+        }
+        router.replace(await firstRunDestination());
       }
     } catch {
       // The auth context exposes the user-safe API error.
@@ -65,19 +76,15 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     }
   }
 
-  if (!isLogin && isVerificationSent) {
-    return (
-      <div className="auth-form-wrapper">
-        <AuthTopbar href="/signin" label="Sign in" />
-        <section className="auth-card auth-confirmation" aria-live="polite">
-          <h1 className="auth-headline">Check your inbox.</h1>
-          <p className="auth-description">
-            We sent a verification link to {email || 'your email address'}. Confirm it before signing in.
-          </p>
-          <Link href="/signin" className="auth-email-button">Back to sign in</Link>
-        </section>
-      </div>
-    );
+  async function firstRunDestination(): Promise<string> {
+    try {
+      const organizations = await api.get<Array<{ slug: string; is_personal: boolean }>>('/api/v1/me/organizations');
+      const personal = organizations.find((organization) => organization.is_personal) ?? organizations[0];
+      if (personal) return `/organizations/${encodeURIComponent(personal.slug)}?new=1`;
+    } catch {
+      // Fall through to the organization picker.
+    }
+    return '/organizations';
   }
 
   return (

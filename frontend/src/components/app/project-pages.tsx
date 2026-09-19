@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import {
   type FormEvent,
@@ -80,6 +80,7 @@ const EnvironmentWorkspace = dynamic(
 export type ProjectScope = {
   organization: string | null;
   project: string | null;
+  projectId: string | null;
   network: "mainnet" | "testnet" | "futurenet";
 };
 
@@ -554,7 +555,7 @@ function scalarPlaceholder(type: ContractSpecType): string {
     case "string":
       return "text";
     case "symbol":
-      return "symbol (≤ 32 bytes)";
+      return "symbol (= 32 bytes)";
     case "bytes":
       return "hex, even length";
     case "bytes_n":
@@ -687,7 +688,7 @@ function validateEditorValue(
     case "symbol": {
       const text = value.kind === "scalar" ? value.text : "";
       if (!text) return "Required";
-      return new TextEncoder().encode(text).length > 32 ? "Symbol must be ≤ 32 bytes" : null;
+      return new TextEncoder().encode(text).length > 32 ? "Symbol must be = 32 bytes" : null;
     }
     case "bytes": {
       const text = value.kind === "scalar" ? value.text.trim() : "";
@@ -925,6 +926,36 @@ function createdAtLabel(value?: string | null) {
   });
 }
 
+/// Page URL for a catalog section, staying inside a project-scoped URL
+/// when a workspace is active (/projects/:id/...).
+function projectSectionHref(scope: ProjectScope, section: "" | "simulator" | "accounts" | "contracts" | "alerts" | "activity" | "replays" | "vnet" | "debugger" | "settings"): string {
+  if (!scope.projectId) return "/organizations";
+  const base = `/projects/${encodeURIComponent(scope.projectId)}`;
+  return section ? `${base}/${section}` : base;
+}
+
+/// Entity address from a project-scoped catalog URL:
+/// /projects/:id/accounts|contracts/:address
+function projectSectionAddress(pathname: string, section: "accounts" | "contracts"): string | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] !== "projects" || parts.length < 4 || parts[2] !== section) return null;
+  try {
+    return decodeURIComponent(parts[3]);
+  } catch {
+    return null;
+  }
+}
+
+/// Index URL for a catalog section, staying inside a project-scoped URL
+/// when the current page is one (/projects/:id/...).
+function sectionIndexHref(pathname: string, section: "accounts" | "contracts"): string {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] === "projects" && parts.length >= 2 && parts[1]) {
+    return `/projects/${parts[1]}/${section}`;
+  }
+  return "/organizations";
+}
+
 function errorMessage(cause: unknown, fallback: string) {
   if (cause instanceof ApiError) return cause.message || fallback;
   if (cause instanceof Error) {
@@ -934,10 +965,21 @@ function errorMessage(cause: unknown, fallback: string) {
   return fallback;
 }
 
+/// Contract mark — the exact sidebar glyph, reused on the main page so the
+/// header, empty state, and sidebar all render the identical icon.
+function ContractGlyph({ size = 38 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={1.35} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 3h9l3 3v15H6z" />
+      <path d="M9 11l2 2 4-4M9 16h6" />
+    </svg>
+  );
+}
+
 function headerIcon(title: string) {
   const key = title.toLowerCase();
-  if (key.includes("wallet")) return <Wallet size={38} strokeWidth={1.35} />;
-  if (key.includes("contract")) return <Box size={38} strokeWidth={1.35} />;
+  if (key.includes("wallet") || key.includes("account")) return <Wallet size={38} strokeWidth={1.35} />;
+  if (key.includes("contract")) return <ContractGlyph size={38} />;
   if (
     key.includes("environment") ||
     key.includes("virtual network") ||
@@ -1269,7 +1311,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const searchParams = useSearchParams();
   const pathAddress = pathname.startsWith("/accounts/")
     ? decodeURIComponent(pathname.slice("/accounts/".length).split("/")[0] ?? "")
-    : null;
+    : projectSectionAddress(pathname, "accounts");
   const requestedAddress = pathAddress || searchParams.get("address");
   const requestedNetwork = searchParams.get("network") ?? scope.network;
   const openedQueryAddress = useRef<string | null>(null);
@@ -1460,7 +1502,8 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
   const openWallet = useCallback(async (value: string, network: string = scope.network) => {
     const base = scopePath(scope, `/accounts/${encodeURIComponent(value)}`);
     if (!base) return;
-    const detailPath = `/accounts/${encodeURIComponent(value)}`;
+    const sectionBase = projectSectionHref(scope, "accounts");
+    const detailPath = sectionBase === "/organizations" ? sectionBase : `${sectionBase}/${encodeURIComponent(value)}`;
     openedQueryAddress.current = value;
     if (pathname !== detailPath) router.push(detailPath);
     setLoading(true);
@@ -1697,7 +1740,7 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
            onBack={() => {
              setSelected(null);
              openedQueryAddress.current = selectedAddress;
-             router.replace("/accounts");
+             router.replace(sectionIndexHref(pathname, "accounts"));
            }}
         />
       </div>
@@ -1966,7 +2009,13 @@ export function WalletsPage({ scope }: { scope: ProjectScope }) {
               );
             })}
           </div>
-        ) : null}
+        ) : (
+          <div className="pw-simulator-empty">
+            <Wallet size={34} />
+            <h2>{query ? "No matching accounts" : "No accounts yet"}</h2>
+            <p>{query ? "Try another search." : "Add your first project account to manage it here."}</p>
+          </div>
+        )}
       </div>
       <Pagination page={page} onPage={load} />
 
@@ -2253,7 +2302,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
   const pathname = usePathname();
   const requestedAddress = pathname.startsWith("/contracts/")
     ? decodeURIComponent(pathname.slice("/contracts/".length).split("/")[0] ?? "")
-    : null;
+    : projectSectionAddress(pathname, "contracts");
   const openedQueryAddress = useRef<string | null>(null);
   const [page, setPage] = useState<CursorPage<TrackedEntity>>({ data: [] });
   const [selected, setSelected] = useState<Record<string, unknown> | null>(
@@ -2399,7 +2448,8 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
   ) => {
     const base = scopePath(scope, `/contracts/${encodeURIComponent(value)}`);
     if (!base) return;
-    const detailPath = `/contracts/${encodeURIComponent(value)}`;
+    const sectionBase = projectSectionHref(scope, "contracts");
+    const detailPath = sectionBase === "/organizations" ? sectionBase : `${sectionBase}/${encodeURIComponent(value)}`;
     openedQueryAddress.current = value;
     if (pathname !== detailPath) router.push(detailPath);
     setLoading(true);
@@ -2739,7 +2789,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
           onBack={() => {
             setSelected(null);
             openedQueryAddress.current = selectedAddress;
-            router.replace("/contracts");
+            router.replace(sectionIndexHref(pathname, "contracts"));
           }}
         />
       </div>
@@ -2886,7 +2936,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
               network={scope.network}
               onOpen={(hash) =>
                 router.push(
-                  `/explorer/${scope.network}/transaction/${encodeURIComponent(hash)}`,
+                  `/explorer/${scope.network}/tx/${encodeURIComponent(hash)}`,
                 )
               }
             />
@@ -2905,7 +2955,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
                     onClick={() =>
                       event.tx_hash &&
                       router.push(
-                        `/explorer/${scope.network}/transaction/${encodeURIComponent(event.tx_hash)}`,
+                        `/explorer/${scope.network}/tx/${encodeURIComponent(event.tx_hash)}`,
                       )
                     }
                   >
@@ -2970,7 +3020,7 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
             />
           </div>
           <div className="pw-toolbar-actions">
-            <Button onClick={() => router.push("/contracts?verify=1")}>
+            <Button className="pw-verify-contract-button" onClick={() => router.push(projectSectionHref(scope, "contracts"))}>
               Verify contract
             </Button>
             <Button
@@ -3226,7 +3276,13 @@ export function ContractsPage({ scope }: { scope: ProjectScope }) {
               );
             })}
           </div>
-        ) : null}
+        ) : (
+          <div className="pw-simulator-empty">
+            <ContractGlyph size={34} />
+            <h2>{query ? "No matching contracts" : "No contracts yet"}</h2>
+            <p>{query ? "Try another search." : "Add your first Soroban contract to manage it here."}</p>
+          </div>
+        )}
       </div>
       <Pagination page={page} onPage={load} />
       {showAdd && (
@@ -3731,7 +3787,7 @@ function ContractDetailView(props: ContractDetailProps) {
             network={network}
             onOpen={(hash) =>
               router.push(
-                `/explorer/${network}/transaction/${encodeURIComponent(hash)}`,
+                `/explorer/${network}/tx/${encodeURIComponent(hash)}`,
               )
             }
           />
@@ -3750,7 +3806,7 @@ function ContractDetailView(props: ContractDetailProps) {
                   onClick={() =>
                     event.tx_hash &&
                     router.push(
-                      `/explorer/${network}/transaction/${encodeURIComponent(event.tx_hash)}`,
+                      `/explorer/${network}/tx/${encodeURIComponent(event.tx_hash)}`,
                     )
                   }
                 >
@@ -4052,7 +4108,8 @@ export function VirtualEnvPage({ scope, environmentId }: { scope: ProjectScope; 
   }, [environmentFilterOpen]);
   const openEnvironment = (environment: Environment) => {
     setSelected(environment);
-    router.push(`/vnet/${encodeURIComponent(environment.id)}/overview`);
+    const href = projectSectionHref(scope, "vnet");
+    router.push(href === "/organizations" ? href : `${href}/${encodeURIComponent(environment.id)}/overview`);
   };
 
   const createEnvironment = async (input: CreateEnvironmentInput) => {
@@ -4086,11 +4143,11 @@ export function VirtualEnvPage({ scope, environmentId }: { scope: ProjectScope; 
         scope={scope}
         onBack={() => {
           setSelected(null);
-          router.push("/vnet");
+          router.push(projectSectionHref(scope, "vnet"));
         }}
         onDeleted={() => {
           setSelected(null);
-          router.push("/vnet");
+          router.push(projectSectionHref(scope, "vnet"));
           void load();
         }}
         onRefresh={load}
@@ -5604,7 +5661,8 @@ export function SimulatorPage({
         `${simulationPath}/${encodeURIComponent(simulationId)}/analysis`,
         {},
       );
-      router.push(`/debugger/${encodeURIComponent(accepted.analysis_id)}`);
+      const debuggerBase = projectSectionHref(scope, "debugger");
+      router.push(debuggerBase === "/organizations" ? debuggerBase : `${debuggerBase}/${encodeURIComponent(accepted.analysis_id)}`);
     } catch (cause) {
       setError(
         errorMessage(
@@ -5905,7 +5963,7 @@ export function SimulatorPage({
               if (embeddedEnvironmentId) {
                 setEditor(false);
               } else if (newSimulation) {
-                router.push("/simulator");
+                router.push(projectSectionHref(scope, "simulator"));
               } else {
                 setEditor(false);
               }
@@ -6908,11 +6966,11 @@ export function DebuggerPage({
     <div className="pw-page pw-debugger">
       <div className="pw-debug-head">
         <div className="pw-inline">
-          <Button
-            iconOnly
-            aria-label="Back to simulator"
-            onClick={() => router.push("/simulator")}
-          >
+            <Button
+              iconOnly
+              aria-label="Back to simulator"
+              onClick={() => router.push(projectSectionHref(scope, "simulator"))}
+            >
             <ArrowLeft size={15} />
           </Button>
           <div className="pw-detail-title">
@@ -7831,7 +7889,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
       setBulkTagging(false);
       setTagName("");
       setMessage(
-        `Tag "${tag.name}" created. Tags attach to accounts and contracts â€” reference this tag as an alert target.`,
+        `Tag "${tag.name}" created. Tags attach to accounts and contracts — reference this tag as an alert target.`,
       );
       setError(null);
     } catch (cause) {
@@ -7952,7 +8010,7 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
                     onClick={() =>
                       firing.tx_hash &&
                       router.push(
-                        `/explorer/${scope.network}/transaction/${encodeURIComponent(firing.tx_hash)}`,
+                        `/explorer/${scope.network}/tx/${encodeURIComponent(firing.tx_hash)}`,
                       )
                     }
                   >
@@ -8092,22 +8150,15 @@ export function AlertsPage({ scope }: { scope: ProjectScope }) {
             body="Monitoring rules are scoped to a Releeve project."
           />
         ) : !visible.length ? (
-          <EmptyState
-            icon={<Bell size={22} />}
-            title={query ? "No matching alerts" : "No alert rules"}
-            body={
-              query
+          <div className="pw-simulator-empty">
+            <Bell size={34} />
+            <h2>{query ? "No matching alerts" : "No alert rules"}</h2>
+            <p>
+              {query
                 ? "Try another rule name or target."
-                : "Create a rule for failures, calls, events, balance changes, or state changes."
-            }
-            action={
-              !query ? (
-                <Button primary className="pw-catalog-create-button" onClick={() => resetBuilder()}>
-                  <Plus size={17} /> Create alert
-                </Button>
-              ) : undefined
-            }
-          />
+                : "Create a rule for failures, calls, events, balance changes, or state changes."}
+            </p>
+          </div>
         ) : (
           <div className="pw-table">
             <div

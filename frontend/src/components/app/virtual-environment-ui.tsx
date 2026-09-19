@@ -25,7 +25,7 @@ const veStyles = `
   .ve-overlay { --bg: #121212; --panel: #181818; --panel-2: #1e1e1e; --border: #383c39; --text: #ffffff; --text-dim: #a1a1a1; --text-faint: #707070; --green: #a3ff5f; position: fixed; inset: 0; background: rgba(0,0,0,.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 10000; padding: 1rem; isolation: isolate; overscroll-behavior: contain; animation: veFade .2s ease; }
   body:has(.db-light) .ve-overlay { --bg: #f7f8f5; --panel: #ffffff; --panel-2: #eef1ec; --border: #c5cbc4; --text: #101310; --text-dim: #5e655e; --text-faint: #7e857e; --green: #70df35; }
   @keyframes veFade { from { opacity: 0; } to { opacity: 1; } }
-  .ve-modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: 100%; max-width: 570px; max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.6); overflow: hidden; animation: veScale .2s ease; }
+  .ve-modal { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; width: 100%; max-width: 570px; max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.6); overflow: hidden; animation: veScale .2s ease; }
   @keyframes veScale { from { transform: scale(.96) translateY(8px); } to { transform: scale(1) translateY(0); } }
   .ve-header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
   .ve-title { font-size: 1rem; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: .625rem; }

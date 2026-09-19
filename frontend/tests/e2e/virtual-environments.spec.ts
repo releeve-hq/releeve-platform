@@ -93,7 +93,7 @@ test.beforeEach(async ({ context, page }) => {
 });
 
 test("environment workspace exposes every persisted workflow without layout overlap", async ({ page }, testInfo) => {
-  await page.goto("/virtual-environments");
+  await page.goto("/projects/project-1/vnet");
   await expect(page.getByPlaceholder("Search environments")).toBeVisible();
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Tag selected environments" })).toHaveCount(0);
@@ -159,14 +159,14 @@ test("environment workspace exposes every persisted workflow without layout over
 
 test("workspace honors reduced motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/virtual-environments");
+  await page.goto("/projects/project-1/vnet");
   await page.getByText("Production mirror", { exact: true }).click();
   const transitionDuration = await page.locator(".ew-indicator").evaluate((element) => getComputedStyle(element).transitionDuration);
   expect(transitionDuration).toBe("0s");
 });
 
 test("RPC Builder opens examples, executes colorized JSON, and creates blank requests", async ({ page }) => {
-  await page.goto("/virtual-environments");
+  await page.goto("/projects/project-1/vnet");
   await page.getByText("Production mirror", { exact: true }).click();
   await page.getByRole("button", { name: "RPC Builder", exact: true }).click();
 

@@ -126,7 +126,7 @@ async fn onboard(app: &TestApp) -> (String, String) {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let token = common::token_from_mail(&app.mailer.drain()[0].body);
+    let token = common::token_from_mail(&app.drain_mail().await[0].body);
     let (status, _) = common::req(
         app.router(),
         Method::POST,
@@ -463,10 +463,13 @@ async fn upstream_problem_propagates_status_and_problem_json() {
 }
 
 #[tokio::test]
-async fn create_environment_and_branch_return_201() {
+async fn create_snapshot_fork_and_clone_return_201() {
     let server = MockServer::start().await;
     let env_id = Uuid::new_v4();
-    let branch_id = Uuid::new_v4();
+    let snapshot_id = Uuid::new_v4();
+    let virtual_ledger_id = Uuid::new_v4();
+    let fork_id = Uuid::new_v4();
+    let clone_id = Uuid::new_v4();
     Mock::given(method("POST"))
         .and(path("/v1/simulations"))
         .respond_with(
@@ -487,17 +490,36 @@ async fn create_environment_and_branch_return_201() {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/snapshots")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "id": snapshot_id,
+            "environment_id": env_id,
+            "name": "Before upgrade",
+            "virtual_ledger_sequence": 64_000_000,
+            "source_ledger_sequence": 64_000_000
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut forked = environment(fork_id, "Forked lab", 1, "frozen", false);
+    forked["creation_kind"] = json!("fork");
+    forked["source_environment_id"] = json!(env_id);
+    forked["source_virtual_ledger_id"] = json!(virtual_ledger_id);
+    Mock::given(method("POST"))
+        .and(path(format!("/v1/environments/{env_id}/fork")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(forked))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut cloned = environment(clone_id, "Cloned lab", 1, "frozen", false);
+    cloned["creation_kind"] = json!("clone");
+    cloned["source_environment_id"] = json!(env_id);
+    cloned["source_virtual_ledger_id"] = json!(virtual_ledger_id);
+    Mock::given(method("POST"))
         .and(path(format!(
-            "/v1/environments/{env_id}/revisions/{}/branch",
-            Uuid::nil()
+            "/v1/environments/{env_id}/virtual-ledgers/{virtual_ledger_id}/clone"
         )))
-        .respond_with(ResponseTemplate::new(201).set_body_json(environment(
-            branch_id,
-            "Investigation branch",
-            1,
-            "frozen",
-            false,
-        )))
+        .respond_with(ResponseTemplate::new(201).set_body_json(cloned))
         .expect(1)
         .mount(&server)
         .await;
@@ -519,20 +541,45 @@ async fn create_environment_and_branch_return_201() {
     assert_eq!(body["id"], env_id.to_string());
     assert_eq!(headers["content-type"], "application/json");
 
-    let (status, _, branch_body) = req_with(
+    let (status, _, snapshot_body) = req_with(
         &app,
         Method::POST,
-        &format!(
-            "/api/v1/{org}/{project}/environments/{env_id}/revisions/{}/branch",
-            Uuid::nil()
-        ),
-        &[("idempotency-key", "test-key-env-branch")],
-        Some(json!({ "name": "Investigation branch" })),
+        &format!("/api/v1/{org}/{project}/environments/{env_id}/snapshots"),
+        &[("idempotency-key", "test-key-env-snapshot")],
+        Some(json!({ "name": "Before upgrade" })),
         Some(&access),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "branch is 201");
-    assert_eq!(branch_body["id"], branch_id.to_string());
+    assert_eq!(status, StatusCode::CREATED, "snapshot is 201");
+    assert_eq!(snapshot_body["id"], snapshot_id.to_string());
+
+    let (status, _, fork_body) = req_with(
+        &app,
+        Method::POST,
+        &format!("/api/v1/{org}/{project}/environments/{env_id}/fork"),
+        &[("idempotency-key", "test-key-env-fork")],
+        Some(json!({ "name": "Forked lab" })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "fork is 201");
+    assert_eq!(fork_body["id"], fork_id.to_string());
+    assert!(fork_body["admin_secret"].as_str().is_some());
+
+    let (status, _, clone_body) = req_with(
+        &app,
+        Method::POST,
+        &format!(
+            "/api/v1/{org}/{project}/environments/{env_id}/virtual-ledgers/{virtual_ledger_id}/clone"
+        ),
+        &[("idempotency-key", "test-key-env-clone")],
+        Some(json!({ "name": "Cloned lab" })),
+        Some(&access),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "clone is 201");
+    assert_eq!(clone_body["id"], clone_id.to_string());
+    assert!(clone_body["admin_secret"].as_str().is_some());
 }
 
 async fn seed_env(app: &TestApp, access: &str, org: &str, project: &str, env_id: Uuid) {

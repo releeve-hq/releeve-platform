@@ -5,6 +5,34 @@
   --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
 }
 
+/* Fallback theme tokens for portaled overlays (ConfirmModal, toasts) that
+   render at document.body — outside .org-product-shell where the scoped
+   tokens live, which left them transparent on organization pages. Scoped
+   with :has so dashboard/marketing rendering is untouched (the shells
+   never co-exist). */
+body:has(.org-product-shell) {
+  --bg: #121212;
+  --panel: #181818;
+  --panel-2: #1e1e1e;
+  --border: #2b2b2b;
+  --text: #f5f5f5;
+  --text-dim: #a1a1a1;
+  --text-faint: #707070;
+  --red: #fb7185;
+  --green: #22c55e;
+  --blue: #60a5fa;
+}
+
+html[data-marketing-theme="light"] body:has(.org-product-shell) {
+  --bg: #f7f8f5;
+  --panel: #ffffff;
+  --panel-2: #eef1ec;
+  --border: #cfd4ce;
+  --text: #101310;
+  --text-dim: #5e655e;
+  --text-faint: #7e857e;
+}
+
 .explorer-entity-link {
   display: inline-flex;
   min-width: 0;

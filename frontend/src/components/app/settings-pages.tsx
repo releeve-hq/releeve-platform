@@ -29,7 +29,19 @@ export type Member = {
   email: string;
   username: string | null;
   permissions: string[];
+  role: string;
+  status: string;
   is_owner: boolean;
+  created_at: string;
+};
+
+export type OrgInvitation = {
+  id: string;
+  email: string;
+  permissions: string[];
+  role: string;
+  status: string;
+  created_at: string;
 };
 
 export type AccessToken = {
@@ -43,7 +55,7 @@ export type AccessToken = {
 export type CreatedToken = { id: string; name: string; token: string };
 export type Paged<T> = { data: T[] };
 export type PermissionName = "create_projects" | "update_projects" | "delete_projects" | "manage_members" | "manage_access_tokens" | "manage_billing" | "manage_fork_sessions" | "manage_alerts";
-export type InviteResponse = { kind: "member"; id: string; user_id: string; email: string; username: string | null; permissions: PermissionName[]; is_owner: boolean } | { kind: "invitation"; id: string; email: string; permissions: PermissionName[]; status: string; created_at: string };
+export type InviteResponse = { kind: "member"; id: string; user_id: string; email: string; username: string | null; permissions: PermissionName[]; role: string; status: string; is_owner: boolean; created_at: string } | { kind: "invitation"; id: string; email: string; permissions: PermissionName[]; role: string; status: string; created_at: string };
 export type InviteDraft = { email: string; role: string; permissions: PermissionName[] };
 
 type SettingsSection = {
@@ -78,6 +90,8 @@ export const styles = `
   .settings-button:disabled { opacity: .48; cursor: default; }
   .settings-button.primary { background: var(--text); border-color: var(--text); color: var(--bg); }
   .settings-button.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); background: color-mix(in srgb, var(--red) 7%, var(--panel)); }
+  .settings-button.solid-danger { background: #d92d20; border-color: #b42318; color: #fff; }
+  .settings-button.solid-danger:hover:not(:disabled) { background: #e04438; border-color: #e04438; color: #fff; }
   .settings-button.icon { width: 32px; min-height: 32px; padding: 0; }
   .settings-button svg { width: 14px; height: 14px; }
   .settings-index { position: sticky; top: 24px; border-left: 1px solid var(--border); padding: 4px 0 4px 24px; }
@@ -105,6 +119,11 @@ export const styles = `
   .settings-permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 12px; }
   .settings-permission { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--border); border-radius: 5px; padding: 10px; color: var(--text-dim); font-size: 12px; line-height: 1.4; }
   .settings-permission strong { display: block; color: var(--text); font-size: 12.5px; font-weight: 400; }
+  .settings-modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.66); }
+  .settings-modal { width: min(100%, 440px); padding: 24px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); box-shadow: 0 24px 80px rgba(0,0,0,.5); }
+  .settings-modal h2 { margin: 0; color: var(--text); font-size: 17px; font-weight: 650; overflow-wrap: anywhere; }
+  .settings-modal p { margin: 8px 0 20px; color: var(--text-dim); font-size: 13px; line-height: 1.55; }
+  .settings-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .settings-subhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
   .settings-subhead h3 { margin: 0; color: var(--text); font-size: 18px; font-weight: 400; }
   .pw-toast-container { position: fixed; top: 20px; left: 50%; z-index: 9999; display: flex; width: min(400px, 92vw); flex-direction: column; gap: 8px; pointer-events: none; transform: translateX(-50%); }
@@ -151,9 +170,8 @@ export const permissionOptions: Array<{ id: PermissionName; label: string; help:
 
 export const rolePermissions: Record<string, PermissionName[]> = {
   viewer: [],
-  developer: ["create_projects", "update_projects", "manage_fork_sessions", "manage_alerts"],
+  member: ["create_projects", "update_projects", "manage_fork_sessions", "manage_alerts"],
   admin: permissionOptions.map((permission) => permission.id).filter((permission) => permission !== "manage_billing"),
-  billing: ["manage_billing"],
 };
 
 export function formatDate(value?: string | null) {
@@ -170,9 +188,8 @@ export function roleFor(member: Member) {
   const permissions = member.permissions;
   if (member.is_owner) return "Owner";
   if (permissions.includes("manage_members") && permissions.includes("manage_billing")) return "Admin";
-  if (permissions.includes("manage_billing") && permissions.length === 1) return "Billing";
   if (permissions.length === 0) return "Viewer";
-  return "Developer";
+  return "Member";
 }
 
 export function SettingRow({ label, help, children }: { label: string; help: string; children: React.ReactNode }) {
@@ -192,6 +209,22 @@ export function ToastPopup({ message, onDone }: { message: string | null; onDone
       <div className="pw-toast pw-toast-success" key={message}>
         <div className="pw-toast-fill" onAnimationEnd={onDone} />
         <div className="pw-toast-content"><Check size={16} /><span>{message}</span></div>
+      </div>
+    </div>
+  ), document.body);
+}
+
+export function ConfirmModal({ title, body, confirmLabel, busy, busyLabel, onCancel, onConfirm }: { title: string; body: string; confirmLabel: string; busy: boolean; busyLabel: string; onCancel: () => void; onConfirm: () => void }) {
+  if (typeof document === "undefined") return null;
+  return createPortal((
+    <div className="settings-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <div className="settings-modal" role="dialog" aria-modal="true" aria-label={title}>
+        <h2>{title}</h2>
+        <p>{body}</p>
+        <div className="settings-modal-actions">
+          <button type="button" className="settings-button" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" className="settings-button solid-danger" onClick={onConfirm} disabled={busy}><Trash2 />{busy ? busyLabel : confirmLabel}</button>
+        </div>
       </div>
     </div>
   ), document.body);
@@ -322,7 +355,7 @@ export function OrganizationSettingsPage({ organizationSlug, canManageOwnership 
 
   async function inviteMember() {
     if (!organizationSlug || !inviteEmail.trim()) return;
-    setInviteDraft({ email: inviteEmail.trim().toLowerCase(), role: "developer", permissions: rolePermissions.developer });
+    setInviteDraft({ email: inviteEmail.trim().toLowerCase(), role: "member", permissions: rolePermissions.member });
   }
 
   async function submitInvite() {
@@ -330,7 +363,7 @@ export function OrganizationSettingsPage({ organizationSlug, canManageOwnership 
     setBusy("invite");
     setNotice(null);
     try {
-      const response = await api.post<InviteResponse>(`/api/v1/${encodeURIComponent(organizationSlug)}/members`, { email: inviteDraft.email, permissions: inviteDraft.permissions });
+      const response = await api.post<InviteResponse>(`/api/v1/${encodeURIComponent(organizationSlug)}/members`, { email: inviteDraft.email, role: inviteDraft.role });
       if (response.kind === "member") {
         const { kind, ...member } = response;
         setMembers((current) => [member, ...current]);
@@ -346,14 +379,6 @@ export function OrganizationSettingsPage({ organizationSlug, canManageOwnership 
 
   function setInviteRole(role: string) {
     setInviteDraft((current) => current ? { ...current, role, permissions: rolePermissions[role] ?? current.permissions } : current);
-  }
-
-  function toggleInvitePermission(permission: PermissionName) {
-    setInviteDraft((current) => {
-      if (!current) return current;
-      const exists = current.permissions.includes(permission);
-      return { ...current, role: "custom", permissions: exists ? current.permissions.filter((item) => item !== permission) : [...current.permissions, permission] };
-    });
   }
 
   async function removeMember(member: Member) {
@@ -437,17 +462,14 @@ export function OrganizationSettingsPage({ organizationSlug, canManageOwnership 
       id: "members", label: "Members and roles", content: <>
         {inviteDraft ? <>
           <div className="settings-subhead"><button className="settings-button" type="button" onClick={() => setInviteDraft(null)}><ArrowLeft />Back</button><h3>{inviteDraft.email}</h3></div>
-          <SettingRow label="Role" help="Choose a starting role, then fine tune individual permissions below.">
+          <SettingRow label="Role" help="Every role carries a fixed permission set.">
             <select className="settings-input" value={inviteDraft.role} onChange={(event) => setInviteRole(event.target.value)} aria-label="Invite role">
               <option value="viewer">Viewer</option>
-              <option value="developer">Developer</option>
+              <option value="member">Member</option>
               <option value="admin">Admin</option>
-              <option value="billing">Billing</option>
-              <option value="custom">Custom</option>
             </select>
           </SettingRow>
-          <SettingRow label="Permissions" help="These permissions are stored with the membership or pending invitation.">
-            <div className="settings-permission-grid">{permissionOptions.map((permission) => <label className="settings-permission" key={permission.id}><input type="checkbox" checked={inviteDraft.permissions.includes(permission.id)} onChange={() => toggleInvitePermission(permission.id)} /><span><strong>{permission.label}</strong>{permission.help}</span></label>)}</div>
+          <SettingRow label="Invite" help="Permissions come with the role and cannot be customized.">
             <div className="settings-actions"><button className="settings-button primary" type="button" disabled={busy === "invite"} onClick={submitInvite}><UserPlus />Send invite</button></div>
           </SettingRow>
         </> : <>
@@ -486,6 +508,7 @@ export function ProjectSettingsPage({ organizationSlug, projectSlug, fallbackPro
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const path = useMemo(() => organizationSlug && projectSlug ? `/api/v1/${encodeURIComponent(organizationSlug)}/projects/${encodeURIComponent(projectSlug)}` : null, [organizationSlug, projectSlug]);
 
@@ -510,9 +533,10 @@ export function ProjectSettingsPage({ organizationSlug, projectSlug, fallbackPro
   }
 
   async function deleteProject() {
-    if (!path || !project || !window.confirm(`Delete ${project.name}? All project data will be permanently removed.`)) return;
+    if (!path || !project) return;
     setBusy("delete");
     setNotice(null);
+    setConfirmDelete(false);
     try { await api.delete(path); onProjectDeleted?.(); }
     catch (error) { setNotice({ kind: "error", text: errorMessage(error) }); setBusy(null); }
   }
@@ -531,8 +555,8 @@ export function ProjectSettingsPage({ organizationSlug, projectSlug, fallbackPro
     { id: "notifications", label: "Notifications", content: <SettingRow label="Routing defaults" help="Choose which organization destinations receive this project’s alert deliveries."><div className="settings-empty">Alert rules continue to manage their own destinations. Project-wide routing defaults are not configured.</div></SettingRow> },
     { id: "data-retention", label: "Data and retention", content: <SettingRow label="Retention policy" help="Controls how long indexed transactions, traces, diagnostic events, and derived results are retained."><div className="settings-empty">This project currently follows the organization plan’s default retention policy.</div></SettingRow> },
     { id: "usage", label: "Project usage", content: <SettingRow label="Usage attribution" help="Project usage is reported here while subscriptions and payment remain organization-owned."><div className="settings-empty">No project usage aggregate has been reported for the current billing period.</div></SettingRow> },
-    { id: "danger-zone", label: "Danger zone", danger: true, content: <SettingRow label="Delete project" help="Permanently removes this project and its indexed and derived data."><button type="button" className="settings-button danger" disabled={busy === "delete"} onClick={deleteProject}><Trash2 />{busy === "delete" ? "Deleting..." : "Delete project"}</button></SettingRow> },
+    { id: "danger-zone", label: "Danger zone", danger: true, content: <SettingRow label="Delete project" help="Permanently removes this project and its indexed and derived data."><button type="button" className="settings-button solid-danger" disabled={busy === "delete"} onClick={() => setConfirmDelete(true)}><Trash2 />{busy === "delete" ? "Deleting..." : "Delete project"}</button></SettingRow> },
   ];
 
-  return <><ToastPopup message={toast} onDone={() => setToast(null)} /><IndexedSettings title="Project settings" sections={sections} /></>;
+  return <><ToastPopup message={toast} onDone={() => setToast(null)} />{confirmDelete && <ConfirmModal title={`Delete ${project?.name || projectSlug}?`} body="All project data will be permanently removed. This cannot be undone." confirmLabel="Delete project" busy={busy === "delete"} busyLabel="Deleting..." onCancel={() => setConfirmDelete(false)} onConfirm={() => void deleteProject()} />}<IndexedSettings title="Project settings" sections={sections} /></>;
 }

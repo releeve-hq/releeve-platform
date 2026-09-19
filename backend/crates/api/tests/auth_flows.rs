@@ -29,8 +29,8 @@ async fn signup_creates_user_personal_org_and_verification_email() {
     );
     assert_eq!(body["email"], email);
 
-    // A verification email was "sent" and carries a link.
-    let sent = app.mailer.drain();
+    // A verification email was queued and delivered, and carries a link.
+    let sent = app.drain_mail().await;
     assert_eq!(sent.len(), 1, "one verification email");
     assert!(sent[0].body.contains("/auth/verify?token="));
     let _token = token_from_mail(&sent[0].body);
@@ -59,7 +59,9 @@ async fn signup_creates_user_personal_org_and_verification_email() {
 }
 
 #[tokio::test]
-async fn signup_rolls_back_when_email_fails() {
+async fn signup_succeeds_when_email_delivery_fails() {
+    // Delivery failures must never fail signup: the account is created, the
+    // verification email waits in the outbox, and the worker retries it.
     let app = TestApp::new().await;
     app.fail_next_mail();
     let email = format!("fail{}@example.com", uuid::Uuid::new_v4().simple());
@@ -74,11 +76,11 @@ async fn signup_rolls_back_when_email_fails() {
     .await;
     assert_eq!(
         status,
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "mailer failure → 500"
+        StatusCode::OK,
+        "signup succeeds despite mail failure"
     );
 
-    // Account must not exist (org + user rolled back).
+    // The account exists and can sign in.
     let (lstatus, _) = req(
         app.router(),
         Method::POST,
@@ -87,7 +89,18 @@ async fn signup_rolls_back_when_email_fails() {
         None,
     )
     .await;
-    assert_eq!(lstatus, StatusCode::UNAUTHORIZED, "account rolled back");
+    assert_eq!(lstatus, StatusCode::OK, "account was created");
+
+    // The worker attempted delivery, failed, and left the row pending.
+    assert_eq!(app.drain_mail().await.len(), 0, "nothing delivered yet");
+    let row: (String, i32) =
+        sqlx::query_as("SELECT status, attempts FROM email_outbox WHERE recipient = $1")
+            .bind(&email)
+            .fetch_one(app.db())
+            .await
+            .expect("outbox row exists");
+    assert_eq!(row.0, "pending");
+    assert_eq!(row.1, 1, "one failed attempt recorded");
 }
 
 #[tokio::test]
@@ -104,7 +117,7 @@ async fn verify_then_authed_request_and_unverified_mutation_gate() {
         None,
     )
     .await;
-    let token = token_from_mail(&app.mailer.drain()[0].body);
+    let token = token_from_mail(&app.drain_mail().await[0].body);
 
     // Login before verify works (read-only), but mutations are gated.
     let (_, login) = req(
@@ -308,7 +321,7 @@ async fn forgot_and_reset_password_then_login_with_new_password() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["message"].as_str().unwrap().contains("on its way"));
 
-    let token = token_from_mail(&app.mailer.drain()[0].body);
+    let token = token_from_mail(&app.drain_mail().await[0].body);
     let (status, _) = req(
         app.router(),
         Method::POST,
@@ -354,7 +367,7 @@ async fn forgot_password_for_unknown_email_is_indistinguishable() {
     assert_eq!(status, StatusCode::OK, "no user enumeration");
     assert!(body["message"].as_str().unwrap().contains("on its way"));
     assert_eq!(
-        app.mailer.drain().len(),
+        app.drain_mail().await.len(),
         0,
         "no email sent for unknown user"
     );

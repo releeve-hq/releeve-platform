@@ -60,6 +60,71 @@ impl Permission {
     ];
 }
 
+/// A named organization role. Roles are the only way memberships and
+/// invitations receive permissions: every role maps to a fixed set, so
+/// callers can never invent custom combinations. The product roles are
+/// exactly owner, admin, member, and viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Role {
+    Owner,
+    Admin,
+    Member,
+    Viewer,
+}
+
+impl Role {
+    pub fn parse(name: &str) -> Option<Role> {
+        match name.trim().to_lowercase().as_str() {
+            "owner" => Some(Role::Owner),
+            "admin" => Some(Role::Admin),
+            "member" => Some(Role::Member),
+            "viewer" => Some(Role::Viewer),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Owner => "owner",
+            Role::Admin => "admin",
+            Role::Member => "member",
+            Role::Viewer => "viewer",
+        }
+    }
+
+    /// The fixed permission set a role grants: viewer gets nothing,
+    /// member gets build/simulate/monitor, admin gets everything except
+    /// billing, owner gets everything.
+    pub fn permissions(self) -> PermissionSet {
+        match self {
+            Role::Owner => PermissionSet::all(),
+            Role::Admin => PermissionSet::all().clear(Permission::ManageBilling),
+            Role::Member => PermissionSet::none()
+                .set(Permission::CreateProjects)
+                .set(Permission::UpdateProjects)
+                .set(Permission::ManageForkSessions)
+                .set(Permission::ManageAlerts),
+            Role::Viewer => PermissionSet::none(),
+        }
+    }
+
+    /// Best-effort display role for a stored permission set (matches the
+    /// frontend `roleFor` derivation). Legacy billing-only rows (from before
+    /// the billing role was removed) read as member.
+    pub fn for_permissions(is_owner: bool, set: PermissionSet) -> Role {
+        if is_owner || set == PermissionSet::all() {
+            return Role::Owner;
+        }
+        if set.contains(Permission::ManageMembers) && set.contains(Permission::ManageBilling) {
+            return Role::Admin;
+        }
+        if set == PermissionSet::none() {
+            return Role::Viewer;
+        }
+        Role::Member
+    }
+}
+
 /// A permission bitmask built from the raw SMALLINT stored on a membership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PermissionSet(pub i16);
@@ -164,6 +229,42 @@ mod tests {
         let set = PermissionSet::from(&[Permission::CreateProjects][..]);
         assert!(set.contains(Permission::CreateProjects));
         assert!(!set.contains(Permission::UpdateProjects));
+    }
+
+    #[test]
+    fn roles_map_to_fixed_permission_sets() {
+        assert_eq!(Role::parse("member"), Some(Role::Member));
+        assert_eq!(Role::parse(" Member "), Some(Role::Member));
+        assert_eq!(Role::parse("superadmin"), None);
+        assert_eq!(Role::parse("developer"), None, "developer is gone");
+        assert_eq!(Role::parse("billing"), None, "billing is gone");
+        assert_eq!(Role::Viewer.permissions(), PermissionSet::none());
+        assert_eq!(Role::Owner.permissions(), PermissionSet::all());
+        let member = Role::Member.permissions();
+        assert!(member.contains(Permission::CreateProjects));
+        assert!(member.contains(Permission::UpdateProjects));
+        assert!(member.contains(Permission::ManageForkSessions));
+        assert!(member.contains(Permission::ManageAlerts));
+        assert!(!member.contains(Permission::DeleteProjects));
+        assert!(!member.contains(Permission::ManageMembers));
+        assert!(!member.contains(Permission::ManageBilling));
+        let admin = Role::Admin.permissions();
+        assert!(!admin.contains(Permission::ManageBilling));
+        assert!(admin.contains(Permission::ManageMembers));
+        assert_eq!(Role::for_permissions(false, member), Role::Member);
+        assert_eq!(
+            Role::for_permissions(false, PermissionSet::none()),
+            Role::Viewer
+        );
+        assert_eq!(
+            Role::for_permissions(false, PermissionSet::all()),
+            Role::Owner
+        );
+        assert_eq!(
+            Role::for_permissions(false, PermissionSet::none().set(Permission::ManageBilling)),
+            Role::Member,
+            "legacy billing-only rows read as member"
+        );
     }
 
     #[test]

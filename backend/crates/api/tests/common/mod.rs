@@ -41,11 +41,17 @@ pub fn test_settings() -> Settings {
         jwt_refresh_ttl: 2592000,
         app_base_url: "http://localhost:3000".into(),
         api_base_url: "http://localhost:8080".into(),
+        cors_extra_origins: String::new(),
         smtp_host: String::new(),
         smtp_port: 587,
         smtp_username: String::new(),
         smtp_password: String::new(),
         smtp_from: "Releeve <no-reply@releeve.dev>".into(),
+        email_from: "Releeve <no-reply@releeve.xyz>".into(),
+        cloudflare_account_id: String::new(),
+        cloudflare_email_api_token: String::new(),
+        resend_api_key: String::new(),
+        email_worker_poll_secs: 5,
         oauth_github_client_id: String::new(),
         oauth_github_client_secret: String::new(),
         oauth_google_client_id: String::new(),
@@ -135,10 +141,20 @@ impl TestApp {
         self.mailer.should_fail();
     }
 
+    /// Run one email-outbox drain pass with the test sender and return
+    /// whatever was delivered. Handlers only enqueue, so mail tests call
+    /// this instead of reading the mailer directly.
+    pub async fn drain_mail(&self) -> Vec<api::mailer::Email> {
+        let sender: Arc<dyn api::mailer::Mailer> = self.mailer.clone();
+        api::email_queue::process_outbox_once(self.db(), &sender)
+            .await
+            .expect("outbox drains");
+        self.mailer.drain()
+    }
+
     pub fn db(&self) -> &sqlx::PgPool {
         &self.state.db
     }
-
     pub fn state(&self) -> AppState {
         self.state.clone()
     }
@@ -209,7 +225,8 @@ pub async fn verified_user(app: &TestApp) -> (String, String, serde_json::Value)
     .await;
     assert_eq!(status, StatusCode::OK, "signup succeeds");
 
-    let sent = app.mailer.drain();
+    // A verification email was queued and delivered, and carries a link.
+    let sent = app.drain_mail().await;
     let token = token_from_mail(&sent[0].body);
     let (status, _) = req(
         app.router(),

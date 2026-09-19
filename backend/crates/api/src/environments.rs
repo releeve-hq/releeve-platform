@@ -449,6 +449,30 @@ async fn enrich_environment(
     environment["rpc_slug"] = json!(row.4);
     environment["admin_secret"] = json!(admin_secret);
     environment["created_at"] = json!(row.6);
+    let lineage: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object(
+             'creation_kind',creation_kind,
+             'source_environment_id',source_environment_id,
+             'source_virtual_ledger_id',source_virtual_ledger_id,
+             'active_generation_id',active_generation_id,
+             'active_virtual_ledger_id',active_virtual_ledger_id,
+             'virtual_head_sequence',virtual_head_sequence,
+             'source_head_sequence',source_head_sequence,
+             'source_sync_state',source_sync_state,
+             'close_mode',close_mode,
+             'public_rpc_enabled',public_rpc_enabled,
+             'vnet_passphrase',vnet_passphrase,
+             'vnet_network_id',vnet_network_id)
+           FROM fork_environments WHERE id=$1 AND project_id=$2",
+    )
+    .bind(id)
+    .bind(project_id)
+    .fetch_one(pool)
+    .await
+    .map_err(Error::internal)?;
+    if let (Some(target), Some(fields)) = (environment.as_object_mut(), lineage.as_object()) {
+        target.extend(fields.clone());
+    }
     Ok(())
 }
 
@@ -630,6 +654,51 @@ async fn persist_environment(
             "fork_core_environment_identity_conflict".into(),
         ));
     }
+    sqlx::query(
+        "UPDATE fork_environments SET
+             creation_kind=COALESCE($3,creation_kind),
+             source_environment_id=COALESCE($4,source_environment_id),
+             source_virtual_ledger_id=COALESCE($5,source_virtual_ledger_id),
+             active_generation_id=COALESCE($6,active_generation_id),
+             active_virtual_ledger_id=COALESCE($7,active_virtual_ledger_id),
+             virtual_head_sequence=COALESCE($8,virtual_head_sequence),
+             source_head_sequence=COALESCE($9,source_head_sequence),
+             source_sync_state=COALESCE($10,source_sync_state),
+             close_mode=COALESCE($11,close_mode),
+             public_rpc_enabled=COALESCE($12,public_rpc_enabled),
+             vnet_passphrase=COALESCE($13,vnet_passphrase),
+             vnet_network_id=COALESCE($14,vnet_network_id)
+           WHERE id=$1 AND project_id=$2",
+    )
+    .bind(id)
+    .bind(project_id)
+    .bind(environment.get("creation_kind").and_then(Value::as_str))
+    .bind(environment_uuid(environment, "source_environment_id")?)
+    .bind(environment_uuid(environment, "source_virtual_ledger_id")?)
+    .bind(environment_uuid(environment, "active_generation_id")?)
+    .bind(environment_uuid(environment, "active_virtual_ledger_id")?)
+    .bind(
+        environment
+            .get("virtual_head_sequence")
+            .and_then(Value::as_i64),
+    )
+    .bind(
+        environment
+            .get("source_head_sequence")
+            .and_then(Value::as_i64),
+    )
+    .bind(environment.get("source_sync_state").and_then(Value::as_str))
+    .bind(environment.get("close_mode").and_then(Value::as_str))
+    .bind(
+        environment
+            .get("public_rpc_enabled")
+            .and_then(Value::as_bool),
+    )
+    .bind(environment.get("vnet_passphrase").and_then(Value::as_str))
+    .bind(environment.get("vnet_network_id").and_then(Value::as_str))
+    .execute(pool)
+    .await
+    .map_err(Error::internal)?;
     Ok(())
 }
 
@@ -2096,52 +2165,83 @@ pub async fn repair_network_coverage(
     Ok((axum::http::StatusCode::ACCEPTED, Json(value)))
 }
 
-pub async fn environment_revisions(
+pub async fn fork_environment(
     State(state): State<AppState>,
     AuthUser { user_id }: AuthUser,
     Path((org, project, environment_id)): Path<(String, String, Uuid)>,
-) -> Result<Json<Value>, Error> {
-    let auth = authorize(&state, user_id, &org, &project).await?;
-    Ok(Json(
-        client(&state)?
-            .environment_revisions(&actor(user_id, &auth), environment_id)
-            .await
-            .map_err(map_remote)?,
-    ))
-}
-
-pub async fn activate_environment_revision(
-    State(state): State<AppState>,
-    AuthUser { user_id }: AuthUser,
-    Path((org, project, environment_id, revision_id)): Path<(String, String, Uuid, Uuid)>,
-) -> Result<Json<Value>, Error> {
-    let auth = authorize(&state, user_id, &org, &project).await?;
-    let value = client(&state)?
-        .activate_environment_revision(&actor(user_id, &auth), environment_id, revision_id)
-        .await
-        .map_err(map_remote)?;
-    refresh_environment(&state, user_id, &auth, environment_id).await?;
-    Ok(Json(value))
-}
-
-pub async fn branch_environment_revision(
-    State(state): State<AppState>,
-    AuthUser { user_id }: AuthUser,
-    Path((org, project, environment_id, revision_id)): Path<(String, String, Uuid, Uuid)>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), Error> {
     let auth = authorize(&state, user_id, &org, &project).await?;
     let idempotency_key = required_idempotency_key(&headers)?;
-    let operation = format!("fork:{environment_id}:{revision_id}");
-    let digest = request_hash(&body)?;
+    let value = derive_environment(
+        &state,
+        user_id,
+        &auth,
+        &org,
+        &project,
+        environment_id,
+        None,
+        "fork",
+        idempotency_key,
+        &body,
+    )
+    .await?;
+    Ok((axum::http::StatusCode::CREATED, Json(value)))
+}
+
+pub async fn clone_environment(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id, virtual_ledger_id)): Path<(String, String, Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<(axum::http::StatusCode, Json<Value>), Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let idempotency_key = required_idempotency_key(&headers)?;
+    let value = derive_environment(
+        &state,
+        user_id,
+        &auth,
+        &org,
+        &project,
+        environment_id,
+        Some(virtual_ledger_id),
+        "clone",
+        idempotency_key,
+        &body,
+    )
+    .await?;
+    Ok((axum::http::StatusCode::CREATED, Json(value)))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn derive_environment(
+    state: &AppState,
+    user_id: Uuid,
+    auth: &ProjectAuth,
+    org: &str,
+    project: &str,
+    source_environment_id: Uuid,
+    virtual_ledger_id: Option<Uuid>,
+    operation: &str,
+    idempotency_key: &str,
+    body: &Value,
+) -> Result<Value, Error> {
+    ensure_environment(&state.db, auth.project_id, source_environment_id).await?;
+    let digest = request_hash(&json!({
+        "operation": operation,
+        "source_environment_id": source_environment_id,
+        "virtual_ledger_id": virtual_ledger_id,
+        "body": body,
+    }))?;
     if let Some((stored_hash, response)) = sqlx::query_as::<_, (String, Value)>(
         "SELECT request_hash,response FROM environment_mutations
           WHERE project_id=$1 AND idempotency_key=$2 AND operation=$3",
     )
     .bind(auth.project_id)
     .bind(idempotency_key)
-    .bind(&operation)
+    .bind(operation)
     .fetch_optional(&state.db)
     .await
     .map_err(Error::internal)?
@@ -2151,32 +2251,257 @@ pub async fn branch_environment_revision(
                 "Idempotency key was reused with different input".into(),
             ));
         }
-        return Ok((axum::http::StatusCode::CREATED, Json(response)));
+        return Ok(response);
     }
-    let environment = client(&state)?
-        .branch_environment_revision(
+
+    let mut environment = if let Some(virtual_ledger_id) = virtual_ledger_id {
+        client(state)?
+            .clone_environment(
+                &actor(user_id, auth),
+                source_environment_id,
+                virtual_ledger_id,
+                body,
+                idempotency_key,
+            )
+            .await
+            .map_err(map_remote)?
+    } else {
+        client(state)?
+            .fork_environment(
+                &actor(user_id, auth),
+                source_environment_id,
+                body,
+                idempotency_key,
+            )
+            .await
+            .map_err(map_remote)?
+    };
+    persist_environment(&state.db, auth.project_id, &environment).await?;
+    let target_environment_id = environment_uuid(&environment, "id")?
+        .ok_or_else(|| Error::ServiceUnavailable("fork_core_invalid_response".into()))?;
+    let candidate_secret = Uuid::new_v4().to_string();
+    sqlx::query(
+        "UPDATE fork_environments
+            SET public_explorer_enabled=false,rpc_slug=NULL,rpc_admin_secret_hash=$1,
+                rpc_admin_secret=$2,initialization_status='ready',initialization_progress=100
+          WHERE id=$3 AND project_id=$4 AND rpc_admin_secret_hash IS NULL",
+    )
+    .bind(secret_hash(&candidate_secret))
+    .bind(&candidate_secret)
+    .bind(target_environment_id)
+    .bind(auth.project_id)
+    .execute(&state.db)
+    .await
+    .map_err(Error::internal)?;
+    let admin_secret: String = sqlx::query_scalar(
+        "SELECT rpc_admin_secret FROM fork_environments WHERE id=$1 AND project_id=$2",
+    )
+    .bind(target_environment_id)
+    .bind(auth.project_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(Error::internal)?;
+    enrich_environment(&state.db, auth.project_id, &mut environment).await?;
+    let base = state.settings.api_base_url.trim_end_matches('/');
+    environment["rpc_url"] = json!(format!("{base}/v/{org}/{project}/{target_environment_id}"));
+    environment["admin_rpc_url"] = json!(format!(
+        "{base}/v/{org}/{project}/{target_environment_id}/{admin_secret}"
+    ));
+    environment["admin_secret"] = json!(admin_secret);
+
+    let inserted = sqlx::query(
+        "INSERT INTO environment_mutations(project_id,idempotency_key,operation,request_hash,response)
+         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    )
+    .bind(auth.project_id)
+    .bind(idempotency_key)
+    .bind(operation)
+    .bind(&digest)
+    .bind(&environment)
+    .execute(&state.db)
+    .await
+    .map_err(Error::internal)?;
+    if inserted.rows_affected() == 0 {
+        let (stored_hash, response): (String, Value) = sqlx::query_as(
+            "SELECT request_hash,response FROM environment_mutations
+              WHERE project_id=$1 AND idempotency_key=$2 AND operation=$3",
+        )
+        .bind(auth.project_id)
+        .bind(idempotency_key)
+        .bind(operation)
+        .fetch_one(&state.db)
+        .await
+        .map_err(Error::internal)?;
+        if stored_hash != digest {
+            return Err(Error::ConflictDetail(
+                "Idempotency key was reused with different input".into(),
+            ));
+        }
+        return Ok(response);
+    }
+    record_activity(
+        &state.db,
+        auth.project_id,
+        source_environment_id,
+        Some(user_id),
+        &format!("environment.{operation}_created"),
+        if operation == "fork" {
+            "Environment fork created"
+        } else {
+            "Historical environment clone created"
+        },
+        json!({
+            "target_environment_id": target_environment_id,
+            "source_virtual_ledger_id": virtual_ledger_id,
+        }),
+    )
+    .await?;
+    record_activity(
+        &state.db,
+        auth.project_id,
+        target_environment_id,
+        Some(user_id),
+        &format!("environment.created_from_{operation}"),
+        "Environment lineage established",
+        json!({
+            "source_environment_id": source_environment_id,
+            "source_virtual_ledger_id": environment.get("source_virtual_ledger_id"),
+        }),
+    )
+    .await?;
+    Ok(environment)
+}
+
+pub async fn environment_snapshots(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    Ok(Json(
+        client(&state)?
+            .environment_snapshots(&actor(user_id, &auth), environment_id)
+            .await
+            .map_err(map_remote)?,
+    ))
+}
+
+pub async fn create_environment_snapshot(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<(axum::http::StatusCode, Json<Value>), Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let idempotency_key = required_idempotency_key(&headers)?;
+    let value = client(&state)?
+        .create_environment_snapshot(
             &actor(user_id, &auth),
             environment_id,
-            revision_id,
             &body,
             idempotency_key,
         )
         .await
         .map_err(map_remote)?;
-    persist_environment(&state.db, auth.project_id, &environment).await?;
-    sqlx::query(
-        "INSERT INTO environment_mutations(project_id,idempotency_key,operation,request_hash,response)
-         VALUES($1,$2,$3,$4,$5)",
+    record_activity(
+        &state.db,
+        auth.project_id,
+        environment_id,
+        Some(user_id),
+        "snapshot.created",
+        "Snapshot created",
+        json!({"snapshot_id":value.get("id")}),
     )
-    .bind(auth.project_id)
-    .bind(idempotency_key)
-    .bind(operation)
-    .bind(digest)
-    .bind(&environment)
-    .execute(&state.db)
-    .await
-    .map_err(Error::internal)?;
-    Ok((axum::http::StatusCode::CREATED, Json(environment)))
+    .await?;
+    Ok((axum::http::StatusCode::CREATED, Json(value)))
+}
+
+pub async fn rename_environment_snapshot(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id, snapshot_id)): Path<(String, String, Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let idempotency_key = required_idempotency_key(&headers)?;
+    let value = client(&state)?
+        .rename_environment_snapshot(
+            &actor(user_id, &auth),
+            environment_id,
+            snapshot_id,
+            &body,
+            idempotency_key,
+        )
+        .await
+        .map_err(map_remote)?;
+    Ok(Json(value))
+}
+
+pub async fn delete_environment_snapshot(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id, snapshot_id)): Path<(String, String, Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<axum::http::StatusCode, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let idempotency_key = required_idempotency_key(&headers)?;
+    client(&state)?
+        .delete_environment_snapshot(
+            &actor(user_id, &auth),
+            environment_id,
+            snapshot_id,
+            idempotency_key,
+        )
+        .await
+        .map_err(map_remote)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+pub async fn revert_environment_snapshot(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id, snapshot_id)): Path<(String, String, Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    let idempotency_key = required_idempotency_key(&headers)?;
+    let value = client(&state)?
+        .revert_environment_snapshot(
+            &actor(user_id, &auth),
+            environment_id,
+            snapshot_id,
+            idempotency_key,
+        )
+        .await
+        .map_err(map_remote)?;
+    refresh_environment(&state, user_id, &auth, environment_id).await?;
+    record_activity(
+        &state.db,
+        auth.project_id,
+        environment_id,
+        Some(user_id),
+        "snapshot.reverted",
+        "Environment reverted to snapshot",
+        json!({"snapshot_id":snapshot_id,"generation_id":value.get("active_generation_id")}),
+    )
+    .await?;
+    Ok(Json(value))
+}
+
+pub async fn environment_lineage(
+    State(state): State<AppState>,
+    AuthUser { user_id }: AuthUser,
+    Path((org, project, environment_id)): Path<(String, String, Uuid)>,
+) -> Result<Json<Value>, Error> {
+    let auth = authorize(&state, user_id, &org, &project).await?;
+    Ok(Json(
+        client(&state)?
+            .environment_lineage(&actor(user_id, &auth), environment_id)
+            .await
+            .map_err(map_remote)?,
+    ))
 }
 
 pub async fn list_or_add_environment_overrides(

@@ -9,23 +9,12 @@ const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
 const MARKETING_ROUTES = ['/pricing', '/docs', '/terms', '/privacy'];
-const PUBLIC_APP_ROUTES = ['/virtual-explorer'];
+const PUBLIC_APP_ROUTES = ['/virtual-explorer', '/invite'];
 const APP_ROUTES = [
-  '/home',
-  '/dashboard',
   '/explorer',
-  '/simulator',
   '/simulation',
-  '/replays',
-  '/vnet',
-  '/virtual-environments',
-  '/activity',
-  '/alerts',
-  '/wallets',
-  '/accounts',
-  '/contracts',
+  '/projects',
   '/settings',
-  '/debugger',
   '/onboarding',
   '/organizations',
 ];
@@ -64,7 +53,10 @@ export default function ConditionalShell({ children }: { children: React.ReactNo
   useEffect(() => {
     if (isLoading) return;
     if (isAppRoute(pathname)) {
-      if (!isAuthenticated) router.replace(`/signin?next=${encodeURIComponent(pathname === '/dashboard' ? '/home' : pathname)}`);
+      if (!isAuthenticated) {
+        const next = pathname === "/home" || pathname === "/dashboard" ? "/organizations" : pathname;
+        router.replace(`/signin?next=${encodeURIComponent(next)}`);
+      }
       return;
     }
     if (!isAuthRoute(pathname) && !isPublicRoute(pathname) && !isAuthenticated) {

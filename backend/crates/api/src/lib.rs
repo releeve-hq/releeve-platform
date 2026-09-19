@@ -10,6 +10,7 @@
 
 pub mod auth;
 pub mod contract_spec;
+pub mod email_queue;
 pub mod environments;
 pub mod error;
 pub mod explorer;
@@ -476,19 +477,44 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
             "Queue sparse historical coverage repair",
         ),
         (
-            "/api/v1/{org}/{project}/environments/{environment_id}/revisions",
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots",
             Get,
-            "List immutable environment revisions",
+            "List immutable environment snapshots",
         ),
         (
-            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/activate",
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots",
             Post,
-            "Activate immutable environment revision",
+            "Create an immutable environment snapshot",
         ),
         (
-            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots/{snapshot_id}",
+            Patch,
+            "Rename an environment snapshot",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots/{snapshot_id}",
+            Delete,
+            "Delete an environment snapshot reference",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots/{snapshot_id}/revert",
             Post,
-            "Branch immutable environment revision",
+            "Revert an environment to a snapshot",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/lineage",
+            Get,
+            "Get virtual-ledger lineage",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/fork",
+            Post,
+            "Fork the current active virtual ledger",
+        ),
+        (
+            "/api/v1/{org}/{project}/environments/{environment_id}/virtual-ledgers/{virtual_ledger_id}/clone",
+            Post,
+            "Clone a selected historical virtual ledger",
         ),
         (
             "/api/v1/{org}/{project}/environments/{environment_id}/rpc-slug",
@@ -628,7 +654,9 @@ fn add_phase3_paths(openapi: &mut utoipa::openapi::OpenApi) {
     // Resource-creation proxied writes mirror Fork Core's 201 Created contract.
     for path in [
         "/api/v1/{org}/{project}/environments",
-        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+        "/api/v1/{org}/{project}/environments/{environment_id}/snapshots",
+        "/api/v1/{org}/{project}/environments/{environment_id}/fork",
+        "/api/v1/{org}/{project}/environments/{environment_id}/virtual-ledgers/{virtual_ledger_id}/clone",
     ] {
         if let Some(operation) = openapi
             .paths
@@ -711,10 +739,23 @@ pub struct ApiDoc;
 
 /// Build the application router. Owns no state; callers supply it.
 pub fn app(state: AppState) -> Router {
-    let allowed_origin = HeaderValue::from_str(&state.settings.app_base_url)
-        .expect("APP_BASE_URL must be a valid HTTP origin");
+    let mut origins = vec![
+        HeaderValue::from_str(&state.settings.app_base_url)
+            .expect("APP_BASE_URL must be a valid HTTP origin"),
+    ];
+    // Extra dev/preview origins (comma-separated). APP_BASE_URL alone would
+    // lock local development out as soon as it points at production.
+    for extra in state.settings.cors_extra_origins.split(',') {
+        let extra = extra.trim();
+        if extra.is_empty() {
+            continue;
+        }
+        origins.push(
+            HeaderValue::from_str(extra).expect("CORS_EXTRA_ORIGINS must hold valid HTTP origins"),
+        );
+    }
     let cors = CorsLayer::new()
-        .allow_origin(allowed_origin)
+        .allow_origin(origins)
         .allow_credentials(true)
         .allow_methods([
             Method::GET,
@@ -817,6 +858,17 @@ pub fn app(state: AppState) -> Router {
             "/api/v1/{org}/members",
             get(list_members).post(invite_member),
         )
+        .route("/api/v1/{org}/invitations", get(list_invitations))
+        .route("/api/v1/invitations/{invitation_id}", get(preview_invitation))
+        .route(
+            "/api/v1/{org}/invitations/{invitation_id}/accept",
+            post(accept_invitation),
+        )
+        .route(
+            "/api/v1/{org}/invitations/{invitation_id}",
+            delete(revoke_invitation),
+        )
+        .route("/api/v1/projects/{id}", get(lookup_project))
         .route(
             "/api/v1/{org}/members/{member_id}",
             patch(patch_member).delete(remove_member),
@@ -937,10 +989,7 @@ pub fn app(state: AppState) -> Router {
             "/api/v1/{org}/{project}/history/timelines/{timeline_id}/fork",
             post(fork_history_timeline),
         )
-        .route(
-            "/api/v1/{org}/{project}/replays",
-            post(create_replay),
-        )
+        .route("/api/v1/{org}/{project}/replays", post(create_replay))
         .route(
             "/api/v1/{org}/{project}/replays/{replay_id}",
             get(get_replay),
@@ -1056,10 +1105,7 @@ pub fn app(state: AppState) -> Router {
         // Tenderly-style dedicated RPC URLs: the path IS the RPC endpoint, and a
         // JSON-RPC POST to it is the call. Public (no token) vs admin (secret).
         // {environment_id} accepts the env UUID or its rpc_slug.
-        .route(
-            "/v/{org}/{project}/{environment_id}",
-            post(environment_rpc),
-        )
+        .route("/v/{org}/{project}/{environment_id}", post(environment_rpc))
         .route(
             "/v/{org}/{project}/{environment_id}/{admin_secret}",
             post(environment_rpc_admin),
@@ -1077,16 +1123,28 @@ pub fn app(state: AppState) -> Router {
             post(repair_network_coverage),
         )
         .route(
-            "/api/v1/{org}/{project}/environments/{environment_id}/revisions",
-            get(environment_revisions),
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots",
+            get(environment_snapshots).post(create_environment_snapshot),
         )
         .route(
-            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/activate",
-            post(activate_environment_revision),
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots/{snapshot_id}",
+            axum::routing::patch(rename_environment_snapshot).delete(delete_environment_snapshot),
         )
         .route(
-            "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
-            post(branch_environment_revision),
+            "/api/v1/{org}/{project}/environments/{environment_id}/snapshots/{snapshot_id}/revert",
+            post(revert_environment_snapshot),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/lineage",
+            get(environment_lineage),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/fork",
+            post(fork_environment),
+        )
+        .route(
+            "/api/v1/{org}/{project}/environments/{environment_id}/virtual-ledgers/{virtual_ledger_id}/clone",
+            post(clone_environment),
         )
         .route(
             "/api/v1/{org}/{project}/environments/{environment_id}/sync/start",

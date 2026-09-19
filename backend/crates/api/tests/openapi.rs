@@ -76,9 +76,12 @@ async fn openapi_exposes_platform_routes_and_bearer_security() {
         "/api/v1/{org}/{project}/environments",
         "/api/v1/{org}/{project}/networks/{network}/coverage",
         "/api/v1/{org}/{project}/networks/{network}/coverage/repair",
-        "/api/v1/{org}/{project}/environments/{environment_id}/revisions",
-        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/activate",
-        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+        "/api/v1/{org}/{project}/environments/{environment_id}/snapshots",
+        "/api/v1/{org}/{project}/environments/{environment_id}/snapshots/{snapshot_id}",
+        "/api/v1/{org}/{project}/environments/{environment_id}/snapshots/{snapshot_id}/revert",
+        "/api/v1/{org}/{project}/environments/{environment_id}/lineage",
+        "/api/v1/{org}/{project}/environments/{environment_id}/fork",
+        "/api/v1/{org}/{project}/environments/{environment_id}/virtual-ledgers/{virtual_ledger_id}/clone",
         "/api/v1/{org}/{project}/environments/{environment_id}/wallets",
         "/api/v1/{org}/{project}/environments/{environment_id}/wallets/{wallet_id}",
         "/api/v1/{org}/{project}/environments/{environment_id}/deployments",
@@ -153,7 +156,9 @@ async fn openapi_exposes_platform_routes_and_bearer_security() {
     );
     for path in [
         "/api/v1/{org}/{project}/environments",
-        "/api/v1/{org}/{project}/environments/{environment_id}/revisions/{revision_id}/branch",
+        "/api/v1/{org}/{project}/environments/{environment_id}/snapshots",
+        "/api/v1/{org}/{project}/environments/{environment_id}/fork",
+        "/api/v1/{org}/{project}/environments/{environment_id}/virtual-ledgers/{virtual_ledger_id}/clone",
     ] {
         let responses = &spec["paths"][path]["post"]["responses"];
         assert!(

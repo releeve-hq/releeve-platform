@@ -2277,7 +2277,7 @@ body:has(.db-light) .pw-modal-backdrop {
   max-height: calc(100vh - 64px);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 4px;
   background: var(--panel);
   box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
 }
@@ -4033,7 +4033,7 @@ button.pw-simulator-table-row:focus-visible {
 
 .pw-modal {
   width: min(470px, 100%);
-  border-radius: 10px;
+  border-radius: 4px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, .5);
 }
 
@@ -4218,6 +4218,10 @@ button.pw-simulator-table-row:focus-visible {
 }
 
 /* Catalog actions mirror the compact organization project controls. */
+.pw-page .pw-button.pw-verify-contract-button {
+  height: 32px;
+  min-height: 32px;
+}
 .pw-page .pw-button.pw-catalog-create-button {
   height: 32px;
   min-height: 32px;

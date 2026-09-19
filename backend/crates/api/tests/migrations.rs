@@ -55,6 +55,7 @@ async fn full_schema_applies_with_key_tables_and_indexes() {
         "refresh_tokens",
         "email_verification_tokens",
         "password_reset_tokens",
+        "email_outbox",
     ] {
         assert!(
             table_exists(&pg.pool, table).await,

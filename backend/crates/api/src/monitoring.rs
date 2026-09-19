@@ -1389,6 +1389,7 @@ pub async fn deliver_record(
                     to: to.to_owned(),
                     subject: "Releeve alert fired".into(),
                     body: serde_json::to_string_pretty(payload).unwrap_or_default(),
+                    html: None,
                 })
                 .await
                 .is_err()

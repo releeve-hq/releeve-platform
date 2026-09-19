@@ -4,10 +4,10 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Database, Network } from "lucide-react";
+import { ChevronsUpDown, Database, LifeBuoy, MessageSquare, Network } from "lucide-react";
 import { AddressLink, LedgerLink, TxHashLink } from "@/components/explorer/entity-links";
 import { GlobalExplorerSearch } from "@/components/explorer/global-explorer-search";
-import { explorerRoutes, truncateEntity, isContractAddress } from "@/lib/explorer-routes";
+import { explorerRoutes, truncateEntity, isContractAddress, storedProjectSection } from "@/lib/explorer-routes";
 import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -38,6 +38,8 @@ import {
 } from "@/lib/explorer-demo-data";
 import { ProjectSettingsPage } from "@/components/app/settings-pages";
 import { SharedProfileMenu } from "@/components/ui/shared-profile-menu";
+import { AppSidebar } from "@/components/ui/app-sidebar";
+import { FeedbackModal } from "@/components/ui/feedback-modal";
 import { ReleeveLogo } from "@/components/ui/releeve-logo";
 import { ReplayPage as ProjectReplayPage } from "@/components/app/replay-pages";
 
@@ -82,10 +84,23 @@ type Paged<T> = { data: T[] };
 type StoredWorkspace = {
   organization: string;
   project: string;
+  projectId: string;
   network: WorkspaceProject["network"];
 };
 
 const ACTIVE_WORKSPACE_KEY = "releeve-active-workspace";
+const ORGANIZATIONS_CACHE_KEY = "releeve-organizations-cache";
+
+function readCachedOrganizations(): WorkspaceOrganization[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = localStorage.getItem(ORGANIZATIONS_CACHE_KEY);
+    const parsed = stored ? JSON.parse(stored) as WorkspaceOrganization[] : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.slug === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 function readStoredWorkspace(): StoredWorkspace | null {
   if (typeof window === "undefined") return null;
@@ -248,44 +263,76 @@ const NAV: Array<{ key: PageKey; label: string }> = [
   { key: "alerts", label: "Alerts" },
   { key: "wallets", label: "Accounts" },
   { key: "contracts", label: "Contracts" },
-  { key: "docs", label: "Documentation" },
   { key: "settings", label: "Settings" },
 ];
 
 const ALL_NAV = NAV;
 
 const APP_ROUTE_BY_PAGE: Partial<Record<PageKey, string>> = {
-  home: "/home",
   explorer: "/explorer/mainnet",
-  simulator: "/simulator",
-  replays: "/replays/new",
-  virtualenv: "/vnet",
-  activity: "/activity",
-  alerts: "/alerts",
-  wallets: "/accounts",
-  contracts: "/contracts",
-  docs: "/docs",
-  settings: "/settings",
-  "organization-settings": "/settings/organization",
+  simulator: "/simulation/new",
+  settings: "/settings/organization",
 };
 
 const PAGE_BY_APP_ROUTE: Record<string, PageKey> = {
   "/": "home",
-  "/home": "home",
   "/explorer": "explorer",
-  "/simulator": "simulator",
   "/simulation/new": "simulator",
-  "/replays/new": "replays",
-  "/vnet": "virtualenv",
-  "/virtual-environments": "virtualenv",
-  "/activity": "activity",
-  "/alerts": "alerts",
-  "/wallets": "wallets",
-  "/accounts": "wallets",
-  "/contracts": "contracts",
-  "/settings": "settings",
-  "/settings/organization": "organization-settings",
 };
+
+/* ─── Project-scoped URLs: /projects/[id][/section] ─── */
+
+const PAGE_BY_PROJECT_SECTION: Record<string, PageKey> = {
+  "": "home",
+  simulator: "simulator",
+  accounts: "wallets",
+  contracts: "contracts",
+  alerts: "alerts",
+  activity: "activity",
+  replays: "replays",
+  vnet: "virtualenv",
+  debugger: "debugger",
+  settings: "settings",
+};
+
+const SECTION_BY_PAGE: Partial<Record<PageKey, string>> = {
+  home: "",
+  simulator: "simulator",
+  wallets: "accounts",
+  contracts: "contracts",
+  alerts: "alerts",
+  activity: "activity",
+  replays: "replays",
+  virtualenv: "vnet",
+  debugger: "debugger",
+  settings: "settings",
+};
+
+export type ProjectPath = {
+  projectId: string;
+  section: string;
+  rest: string[];
+};
+
+export function parseProjectPath(path: string): ProjectPath | null {
+  const parts = path.split("/").filter(Boolean);
+  if (parts[0] !== "projects" || parts.length < 2 || !parts[1]) return null;
+  try {
+    const [, id, section = "", ...rest] = parts;
+    return {
+      projectId: decodeURIComponent(id),
+      section: decodeURIComponent(section),
+      rest: rest.map((segment) => decodeURIComponent(segment)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function projectHref(projectId: string, section = "") {
+  const base = `/projects/${encodeURIComponent(projectId)}`;
+  return section ? `${base}/${section}` : base;
+}
 
 const CRUMBS: Record<PageKey, string> = {
   home: "Home",
@@ -389,76 +436,6 @@ function BarChart({ points, color, emptyLabel }: { points: ChartPoint[]; color: 
   );
 }
 
-/* ─── Notification panel ─── */
-function NotifPanel({ id, open, onClose }: { id: string; open: boolean; onClose: () => void }) {
-  const notifs = [
-    { unread: false, text: "Deployment failed for mustard-landing", when: "87d ago" },
-    { unread: true, text: "Deployment failed for synodfrontend", when: "87d ago" },
-    { unread: true, text: "Deployment failed for synodfrontend", when: "87d ago" },
-  ];
-  if (!open) return null;
-  return (
-    <div
-      id={id}
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        position: "absolute",
-        top: "calc(100% + 10px)",
-        right: 0,
-        width: 320,
-        maxWidth: "85vw",
-        background: "var(--panel)",
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-        boxShadow: "0 20px 50px rgba(0,0,0,.5)",
-        zIndex: 400,
-        overflow: "hidden",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 14px", borderBottom: "1px solid var(--border)" }}>
-        <span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Notifications</span>
-        <span style={{ fontSize: 11.5, color: "var(--blue)", cursor: "pointer" }} onClick={onClose}>
-          Mark all as read
-        </span>
-      </div>
-      <div className="db-notification-search" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Icon size={14}>
-          <circle cx="11" cy="11" r="7" />
-          <path d="M21 21l-4.3-4.3" />
-        </Icon>
-        <input
-          placeholder="Search notifications…"
-          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 12.5, fontFamily: "inherit" }}
-        />
-      </div>
-      <div style={{ maxHeight: 280, overflowY: "auto" }}>
-        {notifs.map((n, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              padding: "12px 14px",
-              borderBottom: i < notifs.length - 1 ? "1px solid var(--border)" : "none",
-              cursor: "pointer",
-              background: n.unread ? "rgba(47,111,237,0.12)" : "transparent",
-            }}
-          >
-            <svg viewBox="0 0 24 24" fill="var(--red)" width={15} height={15} style={{ flexShrink: 0, marginTop: 1 }}>
-              <path d="M12 2L1 21h22L12 2zm0 6a1 1 0 0 1 1 1v5a1 1 0 0 1-2 0V9a1 1 0 0 1 1-1zm0 9.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5z" />
-            </svg>
-            <div>
-              <span style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.4, fontWeight: n.unread ? 700 : 400 }}>{n.text}</span>
-              <span style={{ fontSize: 10.5, color: "var(--text-faint)", display: "block", marginTop: 3 }}>{n.when}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ─── Switch panel (workspace / project) ─── */
 function WorkspaceAvatar({ organization, size = 30, profileAvatarUrl }: { organization: WorkspaceOrganization; size?: number; profileAvatarUrl?: string }) {
   const label = organization.name || organization.slug || "Organization";
@@ -493,6 +470,7 @@ function WorkspaceSwitcher({
   profileAvatarUrl?: string;
 }) {
   const [query, setQuery] = useState("");
+  const router = useRouter();
   const needle = query.trim().toLowerCase();
   const matches = (organization: WorkspaceOrganization) => !needle || `${organization.name || ""} ${organization.slug}`.toLowerCase().includes(needle);
   const visibleOrganizations = organizations.filter(matches);
@@ -504,44 +482,58 @@ function WorkspaceSwitcher({
         position: "absolute",
         top: "calc(100% - 1px)",
         left: 0,
-        width: 280,
+        width: 240,
         maxWidth: "80vw",
         background: "var(--panel)",
         border: "1px solid var(--border)",
-        borderRadius: 7,
+        borderRadius: 10,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
         zIndex: 400,
         overflow: "hidden",
       }}
     >
       <div className="db-switcher-search" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Icon size={14}>
+        <Icon size={13}>
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </Icon>
-        <input className="db-switcher-search-field" aria-label="Find organization" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find organization" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
+        <input className="db-switcher-search-field" aria-label="Find organization" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search organizations" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 13, fontFamily: "inherit" }} />
       </div>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "16px 14px 8px" }}>Organizations</div>
-      {visibleOrganizations.length === 0 && <div style={{ padding: "2px 14px 14px", color: "var(--text-faint)", fontSize: 13 }}>No organization found.</div>}
+      <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0 0" }} />
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "12px 12px 6px" }}>Organizations</div>
+      {visibleOrganizations.length === 0 && <div style={{ padding: "2px 12px 12px", color: "var(--text-faint)", fontSize: 13 }}>No organization found.</div>}
+      <div className="db-switcher-list">
       {visibleOrganizations.map((organization) => (
         <button
           key={organization.id}
           type="button"
           onClick={() => { onSelect(organization); onClose(); }}
           className="db-switcher-option"
-          style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 10, padding: "10px", margin: "0 8px 8px", border: 0, borderRadius: 7, background: "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
+          data-active={organization.slug === activeOrganization}
+          style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 10, padding: "6px", margin: "0 8px 6px", border: 0, borderRadius: 7, background: organization.slug === activeOrganization ? "color-mix(in srgb, var(--panel) 55%, var(--text) 18%)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
         >
-          <WorkspaceAvatar organization={organization} size={34} profileAvatarUrl={profileAvatarUrl} />
-          <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{organization.name || organization.slug}</span>
+          <WorkspaceAvatar organization={organization} size={24} profileAvatarUrl={profileAvatarUrl} />
+          <span style={{ fontWeight: 650, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{organization.name || organization.slug}</span>
           <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999 }}>Free</span>
-          {organization.slug === activeOrganization && <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" style={{ marginLeft: "auto", flex: "0 0 16px" }}><circle cx="12" cy="12" r="10" fill="var(--green)" /><path d="m7.5 12 3 3 6-6" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>
       ))}
-      <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "12px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
-        <Icon size={15}>
-          <path d="M12 5v14M5 12h14" />
-        </Icon>{" "}
+      </div>
+      <button className="db-switcher-footer" type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "10px 12px", border: 0, borderTop: "1px solid var(--border)", fontFamily: "inherit", fontSize: 13, cursor: "pointer", textAlign: "left" }}>
+        <span className="db-footer-circle" style={{ width: 22, height: 22, borderRadius: "50%", border: "1px solid var(--text-faint)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon size={12}>
+            <path d="M12 5v14M5 12h14" />
+          </Icon>
+        </span>{" "}
         New organization
+      </button>
+      <button className="db-switcher-footer" type="button" onClick={() => { onClose(); router.push("/organizations"); }} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "10px 12px", border: 0, borderTop: "1px solid var(--border)", fontFamily: "inherit", fontSize: 13, cursor: "pointer", textAlign: "left" }}>
+        <Icon size={14}>
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+        </Icon>{" "}
+        All organizations
       </button>
     </div>
   );
@@ -570,37 +562,42 @@ function ProjectSwitcher({
         position: "absolute",
         top: "calc(100% - 1px)",
         left: 0,
-        width: 320,
+        width: 240,
         maxWidth: "80vw",
         background: "var(--panel)",
         border: "1px solid var(--border)",
-        borderRadius: 7,
+        borderRadius: 10,
         boxShadow: "0 20px 50px rgba(0,0,0,.5)",
         zIndex: 400,
         overflow: "hidden",
       }}
     >
       <div className="db-switcher-search" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Icon size={14}>
+        <Icon size={13}>
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
         </Icon>
-        <input className="db-switcher-search-field" aria-label="Find project" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 14, fontFamily: "inherit" }} />
+        <input className="db-switcher-search-field" aria-label="Find project" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects" style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text)", fontSize: 13, fontFamily: "inherit" }} />
       </div>
-      {visibleProjects.length === 0 && <div style={{ padding: "16px 14px", color: "var(--text-faint)", fontSize: 13 }}>No project found.</div>}
+      <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0 0" }} />
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-faint)", padding: "12px 12px 6px" }}>Projects</div>
+      {visibleProjects.length === 0 && <div style={{ padding: "2px 12px 12px", color: "var(--text-faint)", fontSize: 13 }}>No project found.</div>}
+      <div className="db-switcher-list db-switcher-list-tall">
       {visibleProjects.map((project) => (
-        <button className="db-switcher-option" key={project.id} type="button" onClick={() => onSelect(project)} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 9, padding: "12px 10px", margin: "8px", border: 0, borderRadius: 7, background: "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+        <button className="db-switcher-option" key={project.id} type="button" onClick={() => onSelect(project)} data-active={project.slug === activeProject} style={{ display: "flex", width: "calc(100% - 16px)", alignItems: "center", gap: 9, padding: "6px", margin: "0 8px 6px", border: 0, borderRadius: 7, background: project.slug === activeProject ? "color-mix(in srgb, var(--panel) 55%, var(--text) 18%)" : "transparent", color: "var(--text)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
           <span style={{ width: 24, height: 24, borderRadius: "50%", background: "#111", color: "#f2efec", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700 }}>{project.name.slice(0, 1).toUpperCase()}</span>
-          <span style={{ fontWeight: 650, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
+          <span style={{ fontWeight: 650, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{project.name}</span>
           <span style={{ color: "var(--text-faint)", fontSize: 11 }}><StellarNetworkLabel network={project.network} size={11} /></span>
-          {project.slug === activeProject && <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true" style={{ marginLeft: "auto", flex: "0 0 16px" }}><circle cx="12" cy="12" r="10" fill="var(--green)" /><path d="m7.5 12 3 3 6-6" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>
       ))}
+      </div>
       <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
-      <button type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "13px 14px", border: 0, background: "transparent", fontFamily: "inherit", fontSize: 14, color: "var(--text-dim)", cursor: "pointer", textAlign: "left" }}>
-        <Icon size={15}>
-          <path d="M12 5v14M5 12h14" />
-        </Icon>{" "}
+      <button className="db-switcher-footer" type="button" onClick={onCreate} style={{ display: "flex", width: "100%", alignItems: "center", gap: 9, padding: "10px 12px", border: 0, fontFamily: "inherit", fontSize: 13, cursor: "pointer", textAlign: "left" }}>
+        <span className="db-footer-circle" style={{ width: 22, height: 22, borderRadius: "50%", border: "1px solid var(--text-faint)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon size={12}>
+            <path d="M12 5v14M5 12h14" />
+          </Icon>
+        </span>{" "}
         New project
       </button>
     </div>
@@ -1035,7 +1032,363 @@ function EmptyFeedRow({ label }: { label: string }) {
   return <div style={{ padding: "17px 8px", color: "var(--text-faint)", fontSize: 12 }}>{label}</div>;
 }
 
-function HomePage() {
+/* ─── Home dashboard: real project data + hoverable charts ─── */
+type HomeScope = { organization: string | null; project: string | null; projectId: string | null; network: string };
+
+type HomeStats = {
+  loading: boolean;
+  processedTransactions: number;
+  contractsMonitored: number;
+  walletsMonitored: number;
+  successfulSeries: number[];
+  failedSeries: number[];
+  simulationTotal: number;
+  simulationSeries: number[];
+  activeVnets: number;
+  activeAlerts: number;
+  recentSimulations: Array<{ id: string; target: string; status: string; time: string }>;
+};
+
+const HOME_DAY_COUNT = 7;
+
+function homeDayLabels(): string[] {
+  const formatter = new Intl.DateTimeFormat("en-US", { weekday: "short" });
+  const labels: string[] = [];
+  for (let offset = HOME_DAY_COUNT - 1; offset >= 0; offset--) {
+    const day = new Date();
+    day.setDate(day.getDate() - offset);
+    labels.push(formatter.format(day));
+  }
+  return labels;
+}
+
+function bucketByDay(items: Array<{ at: number }>): number[] {
+  const buckets = new Array<number>(HOME_DAY_COUNT).fill(0);
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  for (const item of items) {
+    const dayIndex = HOME_DAY_COUNT - 1 - Math.floor((startOfToday.getTime() - item.at) / 86_400_000);
+    if (dayIndex >= 0 && dayIndex < HOME_DAY_COUNT) buckets[dayIndex] += 1;
+  }
+  return buckets;
+}
+
+function parseTimestamp(value: string | null | undefined): number {
+  if (!value) return Number.NaN;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Number.NaN : parsed;
+}
+
+function emptyHomeStats(): HomeStats {
+  return {
+    loading: true,
+    processedTransactions: 0,
+    contractsMonitored: 0,
+    walletsMonitored: 0,
+    successfulSeries: new Array(HOME_DAY_COUNT).fill(0),
+    failedSeries: new Array(HOME_DAY_COUNT).fill(0),
+    simulationTotal: 0,
+    simulationSeries: new Array(HOME_DAY_COUNT).fill(0),
+    activeVnets: 0,
+    activeAlerts: 0,
+    recentSimulations: [],
+  };
+}type LineChartSeries = { label: string; color: string; data: number[] };
+
+function HoverableLineChart({ days, series, width, height, small = false }: { days: string[]; series: LineChartSeries[]; width: number; height: number; small?: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<{ index: number; x: number; y: number } | null>(null);
+  const pad = small ? { top: 8, right: 6, bottom: 30, left: 30 } : { top: 12, right: 24, bottom: 32, left: 50 };
+  const chartW = width - pad.left - pad.right;
+  const chartH = height - pad.top - pad.bottom;
+  const peak = Math.max(1, ...series.flatMap((entry) => entry.data));
+  const yMax = peak <= 100 ? Math.max(25, Math.ceil(peak / 25) * 25) : Math.ceil(peak / 50) * 50;
+  const yTicks = small ? [0, Math.round(yMax / 2), yMax] : [0, yMax * 0.25, yMax * 0.5, yMax * 0.75, yMax];
+  const xAt = (index: number) => pad.left + (index / (days.length - 1)) * chartW;
+  const yAt = (value: number) => pad.top + chartH - (value / yMax) * chartH;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.strokeStyle = "#3a3a4e";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    for (let i = 0; i < days.length; i++) {
+      ctx.beginPath();
+      ctx.moveTo(xAt(i), pad.top);
+      ctx.lineTo(xAt(i), pad.top + chartH);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#8888a0";
+    ctx.font = `${small ? 12 : 13}px -apple-system, BlinkMacSystemFont, sans-serif`;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    for (const tick of yTicks) ctx.fillText(String(tick), pad.left - (small ? 10 : 12), yAt(tick));
+    ctx.strokeStyle = "#3a3a4e";
+    ctx.beginPath();
+    ctx.moveTo(pad.left - (small ? 6 : 0), pad.top + chartH);
+    ctx.lineTo(width - pad.right, pad.top + chartH);
+    ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    for (let i = 0; i < days.length; i++) ctx.fillText(days[i], xAt(i), pad.top + chartH + 10);
+    if (hover) {
+      ctx.strokeStyle = "#565670";
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(xAt(hover.index), pad.top);
+      ctx.lineTo(xAt(hover.index), pad.top + chartH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    for (const entry of series) {
+      ctx.strokeStyle = entry.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      entry.data.forEach((value, index) => {
+        if (index === 0) ctx.moveTo(xAt(index), yAt(value));
+        else ctx.lineTo(xAt(index), yAt(value));
+      });
+      ctx.stroke();
+      entry.data.forEach((value, index) => {
+        ctx.beginPath();
+        ctx.arc(xAt(index), yAt(value), hover?.index === index ? 6 : 4, 0, Math.PI * 2);
+        ctx.fillStyle = entry.color;
+        ctx.fill();
+      });
+    }
+  });
+
+  function handleMove(event: React.MouseEvent<HTMLDivElement>) {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const canvasX = ((event.clientX - rect.left) / rect.width) * width;
+    const raw = ((canvasX - pad.left) / chartW) * (days.length - 1);
+    const index = Math.max(0, Math.min(days.length - 1, Math.round(raw)));
+    const topValue = Math.max(...series.map((entry) => entry.data[index] ?? 0));
+    const displayedHeight = rect.width * (height / width);
+    setHover({
+      index,
+      x: (xAt(index) / width) * rect.width,
+      y: (yAt(topValue) / height) * displayedHeight,
+    });
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", width: "100%", minWidth: 0 }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+      <canvas ref={canvasRef} width={width} height={height} style={{ display: "block", width: "100%", height: "auto" }} />
+      {hover && (
+        <div
+          style={{
+            position: "absolute",
+            left: hover.x,
+            top: hover.y,
+            transform: "translate(-50%, -110%)",
+            background: "#0c0c0c",
+            color: "#fff",
+            borderRadius: 10,
+            padding: "10px 14px",
+            fontSize: 11.5,
+            whiteSpace: "nowrap",
+            boxShadow: "0 10px 28px rgba(0,0,0,.45)",
+            pointerEvents: "none",
+            zIndex: 20,
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 6 }}>{days[hover.index]}</div>
+          {series.map((entry) => (
+            <div key={entry.label} style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 2, background: entry.color, flexShrink: 0, display: "inline-block" }} />
+              <span style={{ color: "#b7b7b7" }}>{entry.label}</span>
+              <span style={{ fontWeight: 700, marginLeft: "auto" }}>{entry.data[hover.index]}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}function ProjectTransactionsCard({ stats, dayLabels }: { stats: HomeStats; dayLabels: string[] }) {
+  const router = useRouter();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", width: "100%", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
+        <span style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 20, flexShrink: 0 }} aria-hidden="true">
+          <span style={{ display: "block", width: 4, height: 10, background: "var(--text-faint)", borderRadius: 1 }} />
+          <span style={{ display: "block", width: 4, height: 16, background: "var(--text-faint)", borderRadius: 1 }} />
+          <span style={{ display: "block", width: 4, height: 20, background: "var(--text-faint)", borderRadius: 1 }} />
+        </span>
+        <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "var(--text)", letterSpacing: "-0.01em" }}>Project Transactions</h2>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, padding: "0 10px", gap: 12 }}>
+        <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 4, whiteSpace: "nowrap" }}>Processed Transactions</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", lineHeight: 1 }}>{stats.processedTransactions}</div>
+        </div>
+        <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 4, whiteSpace: "nowrap" }}>Contracts Monitored</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", lineHeight: 1 }}>{stats.contractsMonitored}</div>
+        </div>
+        <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 4, whiteSpace: "nowrap" }}>Wallets Monitored</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", lineHeight: 1 }}>{stats.walletsMonitored}</div>
+        </div>
+      </div>
+      <div style={{ position: "relative", marginBottom: 8, width: "100%", minWidth: 0 }}>
+        <HoverableLineChart
+          days={dayLabels}
+          series={[
+            { label: "Successful", color: "#4ecdc4", data: stats.successfulSeries },
+            { label: "Failed", color: "#e74c3c", data: stats.failedSeries },
+          ]}
+          width={1030}
+          height={320}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 24, marginTop: 6, paddingLeft: 10, flexWrap: "wrap" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-faint)" }}>
+          <span style={{ width: 16, height: 2, background: "#4ecdc4", position: "relative", display: "inline-block", flexShrink: 0 }}>
+            <span style={{ position: "absolute", width: 6, height: 6, borderRadius: "50%", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#4ecdc4", display: "block" }} />
+          </span>
+          Successful Transactions
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-faint)" }}>
+          <span style={{ width: 16, height: 2, background: "#e74c3c", position: "relative", display: "inline-block", flexShrink: 0 }}>
+            <span style={{ position: "absolute", width: 6, height: 6, borderRadius: "50%", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#e74c3c", display: "block" }} />
+          </span>
+          Failed Transactions
+        </span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2, paddingTop: 4, paddingBottom: 0, borderTop: "1px solid var(--border)", gap: 16, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, color: "var(--text-faint)", fontStyle: "italic", lineHeight: 1.3 }}>
+          You are tracking <em style={{ fontStyle: "italic", color: "var(--text)" }}>{stats.walletsMonitored} {stats.walletsMonitored === 1 ? "wallet" : "wallets"}</em> and <em style={{ fontStyle: "italic", color: "var(--text)" }}>{stats.contractsMonitored} {stats.contractsMonitored === 1 ? "contract" : "contracts"}</em>.
+        </span>
+        <span style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+          <button type="button" onClick={() => void router.push(storedProjectSection("contracts"))} style={{ padding: "6px 14px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", color: "#fff", background: "#7c5cfc", fontFamily: "inherit" }}>
+            Add Contracts
+          </button>
+          <button type="button" onClick={() => void router.push(storedProjectSection("accounts"))} style={{ padding: "6px 14px", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", color: "#fff", background: "#6c4ce0", fontFamily: "inherit" }}>
+            Add Wallets
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SimulationsCard({ stats, dayLabels }: { stats: HomeStats; dayLabels: string[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", width: "100%", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="var(--text)" strokeWidth={1.8} aria-hidden="true" style={{ flexShrink: 0, display: "block" }}>
+          <circle cx={12} cy={12} r={10} />
+          <path d="M10 8.5 L16 12 L10 15.5 Z" fill="var(--text)" stroke="none" />
+        </svg>
+        <h2 style={{ margin: 0, color: "var(--text)", fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em" }}>Simulations</h2>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <div style={{ color: "var(--text-faint)", fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Simulations run</div>
+        <div style={{ color: "var(--text)", fontSize: 26, fontWeight: 700, lineHeight: 1 }}>{stats.simulationTotal}</div>
+      </div>
+      <div style={{ marginTop: 16, width: "100%", minWidth: 0 }}>
+        <HoverableLineChart
+          days={dayLabels}
+          series={[{ label: "Simulations", color: "#2ab7a9", data: stats.simulationSeries }]}
+          width={508}
+          height={175}
+          small
+        />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+        <span style={{ position: "relative", width: 20, height: 2, background: "#2ab7a9", display: "inline-block", flexShrink: 0 }}>
+          <span style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: 8, height: 8, borderRadius: "50%", background: "#2ab7a9", display: "block" }} />
+        </span>
+        <span style={{ color: "var(--text-faint)", fontSize: 13 }}>Simulations</span>
+      </div>
+    </div>
+  );
+}function HomePage({ scope }: { scope: HomeScope }) {
+  const router = useRouter();
+  const projectUrl = (section: string) =>
+    scope.projectId ? projectHref(scope.projectId, section) : "/organizations";
+  const [stats, setStats] = useState<HomeStats>(emptyHomeStats);
+
+  useEffect(() => {
+    if (!scope.organization || !scope.project) return;
+    let cancelled = false;
+    const base = `/api/v1/${encodeURIComponent(scope.organization)}/${encodeURIComponent(scope.project)}`;
+    const load = async () => {
+      const [transactions, accounts, contracts, environments, alerts, simulations] = await Promise.allSettled([
+        api.get<{ data?: Array<{ status?: string | null; timestamp?: string | null }> }>(`${base}/transactions?limit=100`),
+        api.get<{ data?: unknown[] }>(`${base}/accounts?limit=100`),
+        api.get<{ data?: unknown[] }>(`${base}/contracts?limit=100`),
+        api.get<{ environments?: unknown[] }>(`${base}/environments`),
+        api.get<{ data?: Array<{ enabled?: boolean }> }>(`${base}/alerts?limit=100`),
+        api.get<{ simulations?: Array<{ id: string; status?: string | null; function_name?: string | null; target?: string | null; source?: string | null; created_at?: string | null }> }>(`${base}/simulations?limit=100`),
+      ]);
+      if (cancelled) return;
+      const unwrap = <T,>(result: PromiseSettledResult<T>, fallback: T): T => (result.status === "fulfilled" ? result.value : fallback);
+      const txRows = unwrap(transactions, { data: [] }).data ?? [];
+      const walletRows = unwrap(accounts, { data: [] }).data ?? [];
+      const contractRows = unwrap(contracts, { data: [] }).data ?? [];
+      const environmentRows = unwrap(environments, { environments: [] }).environments ?? [];
+      const alertRows = unwrap(alerts, { data: [] }).data ?? [];
+      const simulationRows = unwrap(simulations, { simulations: [] }).simulations ?? [];
+
+      const successfulPoints = txRows
+        .filter((tx) => (tx.status ?? "").toLowerCase() === "success")
+        .map((tx) => ({ at: parseTimestamp(tx.timestamp) }))
+        .filter((item) => !Number.isNaN(item.at));
+      const failedPoints = txRows
+        .filter((tx) => {
+          const status = (tx.status ?? "").toLowerCase();
+          return status !== "" && status !== "success";
+        })
+        .map((tx) => ({ at: parseTimestamp(tx.timestamp) }))
+        .filter((item) => !Number.isNaN(item.at));
+      const simulationPoints = simulationRows
+        .map((sim) => ({ at: parseTimestamp(sim.created_at) }))
+        .filter((item) => !Number.isNaN(item.at));
+
+      setStats({
+        loading: false,
+        processedTransactions: txRows.length,
+        contractsMonitored: contractRows.length,
+        walletsMonitored: walletRows.length,
+        successfulSeries: bucketByDay(successfulPoints),
+        failedSeries: bucketByDay(failedPoints),
+        simulationTotal: simulationRows.length,
+        simulationSeries: bucketByDay(simulationPoints),
+        activeVnets: environmentRows.length,
+        activeAlerts: alertRows.filter((rule) => rule.enabled !== false).length,
+        recentSimulations: simulationRows.slice(0, 3).map((sim) => ({
+          id: sim.id,
+          target: sim.function_name || sim.target || sim.source || "Simulation",
+          status: (sim.status ?? "unknown").toLowerCase(),
+          time: sim.created_at ? timeAgo(sim.created_at) : "—",
+        })),
+      });
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [scope.organization, scope.project]);
+
+  const dayLabels = homeDayLabels();
   return (
     <div className="db-overview">
       <section className="db-overview-intro">
@@ -1045,28 +1398,100 @@ function HomePage() {
       </section>
 
       <section className="db-overview-mosaic" aria-label="Workspace overview">
-        <article className="db-overview-mosaic-feature" />
+        <article className="db-overview-mosaic-feature" style={{ padding: "18px 20px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 12, minHeight: 0, display: "flex" }}>
+          <ProjectTransactionsCard stats={stats} dayLabels={dayLabels} />
+        </article>
         <div className="db-overview-mosaic-side">
-          <article className="db-overview-mosaic-ledger" />
+          <article className="db-overview-mosaic-ledger" style={{ padding: "14px 22px 16px", background: "var(--panel)", borderRadius: 10, minHeight: 0, display: "flex" }}>
+            <SimulationsCard stats={stats} dayLabels={dayLabels} />
+          </article>
           <div className="db-overview-outcomes">
-            <article className="db-overview-outcome db-overview-outcome-success" />
-            <article className="db-overview-outcome db-overview-outcome-failed" />
+            <article className="db-overview-outcome db-overview-outcome-success">
+              <span className="db-overview-outcome-mark" aria-hidden="true" />
+              <strong>{stats.activeVnets}</strong>
+              <span>Active VNETs</span>
+            </article>
+            <article className="db-overview-outcome db-overview-outcome-failed">
+              <span className="db-overview-outcome-mark" aria-hidden="true" />
+              <strong>{stats.activeAlerts}</strong>
+              <span>Active alerts</span>
+            </article>
           </div>
         </div>
       </section>
-      <section className="db-overview-strips" aria-hidden="true">
-        <article className="db-overview-strip db-overview-strip-wide" />
-        <article className="db-overview-strip db-overview-strip-narrow" />
+      <section className="db-overview-strips">
+        <article className="db-overview-strip db-overview-strip-wide">
+          <div className="db-overview-strip-head">
+            <h4>Recent simulations</h4>
+            <button type="button" className="db-overview-strip-link" onClick={() => void router.push(projectUrl("simulator"))}>View all</button>
+          </div>
+          <ul className="db-overview-sim-list">
+            {stats.recentSimulations.length ? stats.recentSimulations.map((sim) => (
+              <li key={sim.id}>
+                <span className={`db-overview-sim-dot ${sim.status.includes("success") || sim.status.includes("complete") ? "is-success" : sim.status.includes("fail") ? "is-failed" : "is-pending"}`} aria-hidden="true" />
+                <span className="db-overview-sim-target">{sim.target}</span>
+                <span className="db-overview-sim-id">{sim.id.slice(0, 12)}</span>
+                <span className="db-overview-sim-time">{sim.time}</span>
+              </li>
+            )) : <li><span className="db-overview-sim-target" style={{ color: "var(--text-faint)" }}>{stats.loading ? "Loading simulations..." : "No simulations yet — run your first one from the simulator."}</span></li>}
+          </ul>
+        </article>
+        <article className="db-overview-strip db-overview-strip-narrow db-overview-start-card">
+          <div className="db-overview-strip-head">
+            <h4>Get started</h4>
+            <span className="db-overview-strip-progress">1 of 3</span>
+          </div>
+          <ul className="db-overview-start-items">
+            <li className="done">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8a8a8a" strokeWidth="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <circle cx="12" cy="12" r="3.5" />
+              </svg>
+              Create your project
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8a8a8a" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <line x1="5" y1="20" x2="5" y2="16" />
+                <line x1="12" y1="20" x2="12" y2="8" />
+                <line x1="19" y1="20" x2="19" y2="12" />
+              </svg>
+              Run your first simulation
+            </li>
+            <li>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8a8a8a" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 3 L19 6 V11 C19 16 16 19.5 12 21 C8 19.5 5 16 5 11 V6 Z" />
+              </svg>
+              Fork mainnet state into a virtual environment
+            </li>
+          </ul>
+          <button type="button" className="db-overview-start-cta" onClick={() => void router.push(projectUrl("simulator"))}>
+            Run your first simulation
+          </button>
+        </article>
       </section>
       <section className="db-overview-capabilities">
-        <article />
-        <article />
-        <article />
+        <article>
+          <span className="db-overview-card-number">01</span>
+          <h3>Simulator</h3>
+          <p>Replay any Soroban invocation against live ledger state and inspect resources, events and state changes before you submit.</p>
+          <button type="button" onClick={() => void router.push(projectUrl("simulator"))}>Open simulator →</button>
+        </article>
+        <article>
+          <span className="db-overview-card-number">02</span>
+          <h3>Explorer</h3>
+          <p>Decoded transactions, call traces, before/after state and fund-flow graphs across mainnet and testnet.</p>
+          <button type="button" onClick={() => void router.push("/explorer/mainnet")}>Explore the chain →</button>
+        </article>
+        <article>
+          <span className="db-overview-card-number">03</span>
+          <h3>Virtual environments</h3>
+          <p>Sandboxed forks of real state with private RPC, virtual funding and instant deploys — nothing touches mainnet.</p>
+          <button type="button" onClick={() => void router.push(projectUrl("vnet"))}>Create environment →</button>
+        </article>
       </section>
     </div>
   );
 }
-
 function ExplorerPage({ network }: { network: "mainnet" | "testnet" | "futurenet" }) {
   const [ledgers, setLedgers] = useState<ExplorerFeedPage<ExplorerFeedLedger> | null>(null);
   const [transactions, setTransactions] = useState<ExplorerFeedPage<ExplorerFeedTransaction> | null>(null);
@@ -1553,6 +1978,8 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
   const pathname = usePathname();
   const { user } = useAuth();
   const pageForPath = useCallback((path: string): PageKey => {
+    const project = parseProjectPath(path);
+    if (project) return PAGE_BY_PROJECT_SECTION[project.section] ?? "home";
     if (path === "/explorer" || path.startsWith("/explorer/")) return "explorer";
     if (path.startsWith("/debugger/")) return "debugger";
     if (path.startsWith("/replays/")) return "replays";
@@ -1562,6 +1989,8 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     return PAGE_BY_APP_ROUTE[path] ?? "home";
   }, []);
   const [page, setPage] = useState<PageKey>(() => {
+    const project = parseProjectPath(pathname);
+    if (project) return PAGE_BY_PROJECT_SECTION[project.section] ?? "home";
     if (pathname === "/explorer" || pathname.startsWith("/explorer/")) return "explorer";
     if (pathname.startsWith("/debugger/")) return "debugger";
     if (pathname.startsWith("/replays/")) return "replays";
@@ -1576,11 +2005,9 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
   });
   const [navOpen, setNavOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState<"mobile" | "desktop" | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [wsOpen, setWsOpen] = useState(false);
   const [projOpen, setProjOpen] = useState(false);
-  const [sidebarHovered, setSidebarHovered] = useState(false);
-  const effectiveCollapsed = !sidebarHovered;
   const [network, setNetwork] = useState<"mainnet" | "testnet" | "futurenet">(() => {
     if (typeof window === "undefined") return "mainnet";
     try {
@@ -1594,10 +2021,11 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     return "mainnet";
   });
   const [netOpen, setNetOpen] = useState<"production" | "create" | null>(null);
-  const [organizations, setOrganizations] = useState<WorkspaceOrganization[]>([]);
+  const [organizations, setOrganizations] = useState<WorkspaceOrganization[]>(() => readCachedOrganizations());
   const [projects, setProjects] = useState<WorkspaceProject[]>([]);
   const [activeOrganization, setActiveOrganization] = useState<string | null>(() => readStoredWorkspace()?.organization ?? null);
   const [activeProject, setActiveProject] = useState<string | null>(() => readStoredWorkspace()?.project ?? null);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => readStoredWorkspace()?.projectId ?? null);
   const previousOrganizationRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -1621,6 +2049,7 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
   }, []);
 
   useEffect(() => {
+    if (parseProjectPath(window.location.pathname)) return;
     let cancelled = false;
     const stored = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
     let remembered: StoredWorkspace | null = null;
@@ -1643,12 +2072,67 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     return () => { cancelled = true; };
   }, []);
 
+  // Persist the last-known organization list so the correct names render
+  // instantly on reload/remount, before the fresh fetch resolves.
+  useEffect(() => {
+    if (!organizations.length) return;
+    try {
+      localStorage.setItem(ORGANIZATIONS_CACHE_KEY, JSON.stringify(organizations));
+    } catch { /* ignore quota errors */ }
+  }, [organizations]);
+
+  // Keep the dashboard's organization names in sync after a rename elsewhere
+  // (e.g. /organizations/[slug]/settings dispatches `releeve:organization-updated`
+  // on save). Merge-only: never clobbers the active selection or list order.
+  useEffect(() => {
+    const mergeOrganizations = (items: WorkspaceOrganization[]) => {
+      if (!items.length) return;
+      const fresh = new Map(items.map((item) => [item.slug, item]));
+      setOrganizations((current) => {
+        if (!current.length) return items;
+        let changed = false;
+        const next = current.map((item) => {
+          const update = fresh.get(item.slug);
+          if (!update || (update.name === item.name && update.avatar_url === item.avatar_url)) return item;
+          changed = true;
+          return { ...item, name: update.name, avatar_url: update.avatar_url };
+        });
+        return changed ? next : current;
+      });
+    };
+    const refresh = () => {
+      api.get<WorkspaceOrganization[]>("/api/v1/me/organizations").then(mergeOrganizations).catch(() => {});
+    };
+    const onOrganizationUpdated = (event: Event) => {
+      const updated = (event as CustomEvent<{ slug?: string; name?: string | null; avatar_url?: string | null }>).detail;
+      if (!updated?.slug) return;
+      setOrganizations((current) =>
+        current.map((item) =>
+          item.slug === updated.slug
+            ? { ...item, name: updated.name ?? item.name, avatar_url: updated.avatar_url ?? item.avatar_url }
+            : item,
+        ),
+      );
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("releeve:organization-updated", onOrganizationUpdated);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("releeve:organization-updated", onOrganizationUpdated);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
   useEffect(() => {
     if (!activeOrganization) {
       setProjects([]);
       setActiveProject(null);
       return;
     }
+    if (parseProjectPath(window.location.pathname)) return;
     // Only reset the scoped project when the organization actually changed.
     // On initial mount the persisted project is already restored synchronously,
     // so clearing it here would flash the "select a project" placeholder.
@@ -1670,13 +2154,14 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
         setProjects(items);
         const selected = items.find((item) => item.slug === remembered?.project) ?? items[0] ?? null;
         setActiveProject(selected?.slug ?? null);
+        setActiveProjectId(selected?.id ?? null);
         if (selected) {
           const nextNetwork =
             remembered?.network === "mainnet" || remembered?.network === "testnet" || remembered?.network === "futurenet"
               ? remembered.network
               : selected.network;
           setNetwork(nextNetwork);
-          saveWorkspace({ organization: activeOrganization, project: selected.slug, network: nextNetwork });
+          saveWorkspace({ organization: activeOrganization, project: selected.slug, projectId: selected.id, network: nextNetwork });
         }
       })
       .catch(() => {
@@ -1688,27 +2173,100 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     return () => { cancelled = true; };
   }, [activeOrganization, saveWorkspace]);
 
+  const adoptedProjectRef = useRef<string | null>(null);
+
+  /* Adopt the workspace named by a /projects/[id] URL. Project URLs are
+     canonical and self-sufficient: the ID resolves unambiguously through
+     the lookup endpoint and wins over remembered state, so shared links
+     and fresh tabs always land in the right workspace. */
+  useEffect(() => {
+    const parsed = parseProjectPath(pathname);
+    if (!parsed) return;
+    if (adoptedProjectRef.current === parsed.projectId) return;
+    adoptedProjectRef.current = parsed.projectId;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [orgs, project] = await Promise.all([
+          api.get<WorkspaceOrganization[]>("/api/v1/me/organizations"),
+          api.get<{
+            id: string;
+            slug: string;
+            name: string;
+            network: string;
+            organization_id: string;
+            organization_slug: string;
+          }>(`/api/v1/projects/${encodeURIComponent(parsed.projectId)}`),
+        ]);
+        if (cancelled) return;
+        const org = orgs.find((item) => item.slug === project.organization_slug);
+        if (!org) {
+          router.replace("/organizations");
+          return;
+        }
+        setOrganizations(orgs);
+        setActiveOrganization(org.slug);
+        previousOrganizationRef.current = org.slug;
+        const plist = await api
+          .get<Paged<WorkspaceProject>>(
+            `/api/v1/${encodeURIComponent(org.slug)}/projects?limit=100`,
+          )
+          .catch(() => null);
+        if (cancelled) return;
+        if (plist) setProjects(plist.data ?? []);
+        setActiveProject(project.slug);
+        setActiveProjectId(project.id);
+        const nextNetwork =
+          project.network === "mainnet" ||
+          project.network === "testnet" ||
+          project.network === "futurenet"
+            ? project.network
+            : "mainnet";
+        setNetwork(nextNetwork);
+        saveWorkspace({ organization: org.slug, project: project.slug, projectId: project.id, network: nextNetwork });
+      } catch {
+        if (!cancelled) router.replace("/organizations");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, router, saveWorkspace]);
+
   const selectOrganization = useCallback((organization: WorkspaceOrganization) => {
     setActiveOrganization(organization.slug);
     setActiveProject(null);
-  }, []);
+    setActiveProjectId(null);
+    setWsOpen(false);
+    // Persist immediately (a new tab opened mid-flight must resolve here),
+    // then hand off to the org page so a project gets picked deliberately
+    // instead of falling back to whatever is newest.
+    saveWorkspace({ organization: organization.slug, project: "", projectId: "", network });
+    router.push(`/organizations/${encodeURIComponent(organization.slug)}`);
+  }, [router, saveWorkspace, network]);
 
   const selectProject = useCallback((project: WorkspaceProject) => {
     if (!activeOrganization) return;
     setActiveProject(project.slug);
+    setActiveProjectId(project.id);
     setNetwork(project.network);
-    saveWorkspace({ organization: activeOrganization, project: project.slug, network: project.network });
+    saveWorkspace({ organization: activeOrganization, project: project.slug, projectId: project.id, network: project.network });
     setProjOpen(false);
   }, [activeOrganization, saveWorkspace]);
 
   const selectNetwork = useCallback((selected: "mainnet" | "testnet" | "futurenet") => {
     setNetwork(selected);
     if (activeOrganization && activeProject) {
-      saveWorkspace({ organization: activeOrganization, project: activeProject, network: selected });
+      saveWorkspace({ organization: activeOrganization, project: activeProject, projectId: activeProjectId ?? "", network: selected });
     }
-  }, [activeOrganization, activeProject, saveWorkspace]);
+    // On explorer routes the network lives in the URL (/explorer/[network]);
+    // navigate so the explorer actually switches networks.
+    if (pathname.startsWith("/explorer/")) {
+      router.push(`/explorer/${selected}`);
+    }
+  }, [activeOrganization, activeProject, activeProjectId, saveWorkspace, pathname, router]);
 
-  const projectScope = { organization: activeOrganization, project: activeProject, network };
+  const projectScope = { organization: activeOrganization, project: activeProject, projectId: activeProjectId, network };
 
   const navigate = useCallback((k: PageKey) => {
     if (k === "docs") {
@@ -1725,7 +2283,6 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
       setNavOpen(false);
       setWsOpen(false);
       setProjOpen(false);
-      setNotifOpen(null);
       setNetOpen(null);
       return;
     }
@@ -1735,23 +2292,32 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
       setNavOpen(false);
       setWsOpen(false);
       setProjOpen(false);
-      setNotifOpen(null);
       setNetOpen(null);
       return;
     }
-    const appRoute = APP_ROUTE_BY_PAGE[k];
-    if (appRoute && appRoute !== pathname) {
+    const section = SECTION_BY_PAGE[k];
+    if (section !== undefined && activeProjectId) {
+      const href = projectHref(activeProjectId, section);
       setPage(k);
-      router.push(appRoute);
+      if (href !== pathname) router.push(href);
+    } else if (section !== undefined) {
+      // No workspace yet — pick one first instead of landing nowhere.
+      setPage(k);
+      if (pathname !== "/organizations") router.push("/organizations");
     } else {
-      setPage(k);
+      const appRoute = APP_ROUTE_BY_PAGE[k];
+      if (appRoute && appRoute !== pathname) {
+        setPage(k);
+        router.push(appRoute);
+      } else {
+        setPage(k);
+      }
     }
     setNavOpen(false);
     setWsOpen(false);
     setProjOpen(false);
-    setNotifOpen(null);
     setNetOpen(null);
-  }, [network, pathname, router]);
+  }, [network, pathname, router, activeProjectId]);
 
   /* close all dropdowns on outside click */
   useEffect(() => {
@@ -1761,7 +2327,6 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
       }
       setWsOpen(false);
       setProjOpen(false);
-      setNotifOpen(null);
       setNetOpen(null);
     };
     document.addEventListener("click", handler);
@@ -1773,7 +2338,6 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSearchOpen(false);
-        setNotifOpen(null);
         setWsOpen(false);
         setProjOpen(false);
         setNetOpen(null);
@@ -1788,6 +2352,17 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
   }, []);
 
   const topNavKey = page === "settings" ? "settings" : page;
+  const projectParts = parseProjectPath(pathname);
+  const vnetEnvironmentId =
+    projectParts && projectParts.section === "vnet"
+      ? projectParts.rest[0]
+      : pathname.startsWith("/vnet/")
+        ? decodeURIComponent(pathname.split("/")[2] ?? "")
+        : undefined;
+  const debuggerAnalysisId =
+    projectParts && projectParts.section === "debugger"
+      ? (projectParts.rest[0] ?? "")
+      : pathname.split("/")[2] ?? "";
   const explorerNetwork = pathname.startsWith("/explorer/")
     ? decodeURIComponent(pathname.split("/")[2] || network)
     : network;
@@ -1808,6 +2383,7 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     .db-root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; font-size: 12.5px; background: var(--bg); color: var(--text); min-height: 100vh; }
     .db-overview { max-width: 1180px; margin: 0 auto; padding-bottom: 34px; }
     .db-overview-intro { display: flex; align-items: end; justify-content: space-between; gap: 28px; margin: 0 0 18px; }
+    .db-overview-intro h1 { font-weight: 400; }
     .db-overview-intro > div:first-child { max-width: 650px; }
     .db-overview-kicker { color: var(--orange); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
     .db-overview h1 { max-width: 650px; margin: 0 0 8px; font-size: clamp(15px, 1.8vw, 20px); font-weight: 600; line-height: 1.2; letter-spacing: -.015em; }
@@ -1828,8 +2404,8 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     .db-overview-mosaic-link:hover, .db-overview-mosaic-ledger a:hover { color: var(--orange); }
     .db-overview-feature-grid { position: absolute; right: -26px; bottom: -22px; display: grid; grid-template-columns: repeat(4, 68px); gap: 7px; transform: rotate(-16deg); opacity: .42; }
     .db-overview-feature-grid span { height: 68px; border: 1px solid color-mix(in srgb, var(--orange) 45%, transparent); background: color-mix(in srgb, var(--orange) 8%, transparent); }
-    .db-overview-mosaic-side { display: grid; grid-template-rows: minmax(205px, 1fr) minmax(120px, .58fr); gap: 12px; }
-    .db-overview-mosaic-ledger { min-height: 225px; display: flex; flex-direction: column; padding: 20px 22px; }
+    .db-overview-mosaic-side { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; }
+    .db-overview-mosaic-ledger { min-height: 0; display: flex; flex-direction: column; padding: 20px 22px; }
     .db-overview-live-label { display: inline-flex; align-items: center; gap: 7px; color: var(--green); }
     .db-overview-ledger-main { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin: auto 0 25px; }
     .db-overview-ledger-main div { display: flex; flex-direction: column; gap: 6px; }
@@ -1840,9 +2416,9 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     .db-overview-ledger-line span { flex: 1; min-width: 5px; height: 13px; background: color-mix(in srgb, var(--orange) 70%, var(--panel)); }
     .db-overview-ledger-line span:nth-child(2) { height: 22px; } .db-overview-ledger-line span:nth-child(3) { height: 18px; } .db-overview-ledger-line span:nth-child(4) { height: 31px; } .db-overview-ledger-line span:nth-child(5) { height: 25px; } .db-overview-ledger-line span:nth-child(6) { height: 39px; } .db-overview-ledger-line span:nth-child(7) { height: 29px; } .db-overview-ledger-line span:nth-child(8) { height: 43px; } .db-overview-ledger-line span:nth-child(9) { height: 33px; } .db-overview-ledger-line span:nth-child(10) { height: 40px; } .db-overview-ledger-line span:nth-child(11) { height: 27px; } .db-overview-ledger-line span:nth-child(12) { height: 46px; }
     .db-overview-outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .db-overview-outcome { min-height: 122px; display: flex; flex-direction: column; justify-content: end; padding: 17px; }
+    .db-overview-outcome { min-height: 84px; display: flex; flex-direction: column; justify-content: end; padding: 12px 16px 14px; }
     .db-overview-outcome-mark { position: absolute; top: 19px; left: 18px; width: 8px; height: 8px; border-radius: 50%; }
-    .db-overview-outcome strong { font-size: 29px; font-weight: 600; letter-spacing: -.04em; }
+    .db-overview-outcome strong { font-size: 24px; font-weight: 600; letter-spacing: -.04em; }
     .db-overview-outcome > span:last-child { margin-top: 5px; color: var(--text-faint); font-size: 10.5px; line-height: 1.35; }
     .db-overview-outcome-success strong { color: #00b889; } .db-overview-outcome-success .db-overview-outcome-mark { background: #00b889; }
     .db-overview-outcome-failed strong { color: #ff2f63; } .db-overview-outcome-failed .db-overview-outcome-mark { background: #ff2f63; }
@@ -1854,9 +2430,32 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     .db-overview-section-heading > p { max-width: 260px; margin: 0; color: var(--text-dim); line-height: 1.55; text-align: right; }
     .db-overview-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .db-overview-strips { display: flex; flex-direction: column; gap: 14px; margin: 28px 0 28px; }
-    .db-overview-strip { height: 120px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+    .db-overview-strip { height: auto; min-height: 120px; padding: 15px 18px 12px; display: flex; flex-direction: column; gap: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
     .db-overview-strip-wide { width: 100%; }
-    .db-overview-strip-narrow { align-self: flex-start; width: min(560px, 100%); }
+    .db-overview-strip-narrow { width: 100%; }
+    .db-overview-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .db-overview-strip-head h4 { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--text); }
+    .db-overview-strip-link { border: 0; padding: 0; background: transparent; color: var(--orange); font: 700 11px var(--font-mono), monospace; cursor: pointer; }
+    .db-overview-strip-link:hover { background: transparent; color: var(--text); }
+    .db-overview-strip-progress { color: var(--text-faint); font: 700 11px var(--font-mono), monospace; }
+    .db-overview-sim-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+    .db-overview-sim-list li { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); font-size: 11.5px; }
+    .db-overview-sim-list li:last-child { border-bottom: 0; }
+    .db-overview-sim-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .db-overview-sim-dot.is-success { background: #00b889; }
+    .db-overview-sim-dot.is-failed { background: #ff2f63; }
+    .db-overview-sim-dot.is-pending { background: var(--text-faint); }
+    .db-overview-sim-target { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .db-overview-sim-id { color: var(--text-faint); font: 500 10.5px var(--font-mono), monospace; }
+    .db-overview-sim-time { color: var(--text-faint); font-size: 10.5px; white-space: nowrap; }
+    .db-overview-start-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+    .db-overview-start-items li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--panel-2) 55%, transparent); color: var(--text-dim); font-size: 12.5px; }
+    .db-overview-start-items li + li { margin-top: 10px; }
+    .db-overview-start-items li.done { color: var(--text-faint); text-decoration: line-through; }
+    .db-overview-start-items li svg { flex-shrink: 0; display: block; }
+    .db-overview-start-cta { margin-top: 16px; width: 100%; padding: 12px; background: transparent; border: 1px solid #6c5ce7; border-radius: 8px; color: #8f83f3; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .db-overview-start-cta:hover { background: rgba(108, 92, 231, .08); }
+    .db-overview-capabilities h3 { margin: 12px 0 8px; font-size: 14px; }
     .db-overview-capabilities article { min-height: 208px; display: flex; flex-direction: column; align-items: flex-start; padding: 20px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); }
     .db-overview-card-number { color: var(--orange); font: 700 11px var(--font-mono), monospace; }
     .db-overview h3 { margin: 30px 0 8px; font-size: 15px; font-weight: 700; }
@@ -1877,18 +2476,27 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     .db-desktop-search:hover, .db-desktop-search:focus-visible { border-color: var(--text-faint) !important; }
     .db-desktop-search:focus-visible { outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
     .db-search-modal-backdrop { background: rgba(0, 0, 0, .66) !important; }
-    .db-search-modal { width: min(90%, 470px) !important; border-radius: 10px !important; background: var(--panel) !important; box-shadow: 0 24px 80px rgba(0, 0, 0, .5) !important; }
+    .db-search-modal { width: min(90%, 470px) !important; border-radius: 4px !important; background: var(--panel) !important; box-shadow: 0 24px 80px rgba(0, 0, 0, .5) !important; }
     .db-search-modal-input { margin: 20px 28px 0; min-height: 36px; padding: 0 11px !important; border: 1px solid var(--border) !important; border-radius: 6px; background: var(--panel-2); transition: border-color .15s ease, box-shadow .15s ease; }
     .db-search-modal-input:focus-within { border-color: var(--text-faint) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
     .db-search-modal-input input { font-size: 13px !important; }
-    .db-switcher-search { display: flex; min-height: 36px; align-items: center; gap: 8px; margin: 12px 14px !important; padding: 0 11px !important; border: 1px solid var(--border) !important; border-radius: 6px; background: var(--panel-2); transition: border-color .15s ease, box-shadow .15s ease; }
+    .db-switcher-search { display: flex; min-height: 30px; align-items: center; gap: 8px; margin: 8px 10px !important; padding: 0 9px !important; border: 1px solid var(--border) !important; border-radius: 6px; background: var(--panel-2); transition: border-color .15s ease, box-shadow .15s ease; }
     .db-switcher-search:focus-within { border-color: var(--text-faint) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
-    .db-switcher-search input { min-width: 0; min-height: 34px; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+    .db-switcher-search input { min-width: 0; min-height: 30px; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+    .db-switcher-footer { background: transparent; color: var(--text); }
+    .db-switcher-footer:hover { background: var(--panel-2); }
+    .db-switcher-footer .db-footer-circle { border-color: var(--text-faint); color: var(--text); }
+    .db-switcher-list { max-height: 108px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .db-switcher-list::-webkit-scrollbar { width: 4px; }
+    .db-switcher-list::-webkit-scrollbar-track { background: transparent; }
+    .db-switcher-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+    .db-switcher-list-tall { max-height: 150px; }
     .db-notification-search { min-height: 36px; margin: 10px 14px; padding: 0 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); color: var(--text-dim); transition: border-color .15s ease, box-shadow .15s ease; }
     .db-notification-search:focus-within { border-color: var(--text-faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent); }
     .db-notification-search input { min-width: 0; min-height: 34px; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
     .db-topbar { position: relative; z-index: 500; overflow: visible; }
-    .db-feedback { display: inline-flex; align-items: center; background: transparent; border: 0; padding: 6px 8px; border-radius: 6px; color: var(--text-dim); font-family: inherit; font-size: 12.5px; cursor: pointer; transition: background .15s ease, color .15s ease; }
+    .db-feedback { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; padding: 6px 8px; border-radius: 6px; color: var(--text-dim); font-family: inherit; font-size: 12.5px; cursor: pointer; transition: background .15s ease, color .15s ease; }
+    .db-feedback svg { width: 14px; height: 14px; }
     .db-feedback:hover { background: var(--panel); color: var(--text); }
     .db-switcher-option:hover, .db-network-option:hover { background: var(--panel-2) !important; }
     .pw-toast-container { position: fixed; top: 20px; left: 50%; z-index: 9999; display: flex; width: min(400px, 92vw); flex-direction: column; gap: 8px; pointer-events: none; transform: translateX(-50%); }
@@ -1899,9 +2507,13 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     .pw-toast-content span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     @keyframes pwToastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes pwToastFill { from { width: 0%; } to { width: 100%; } }
-    .db-nav-item:hover { background: var(--panel) !important; color: var(--text) !important; }
-    .db-nav-label { flex: 0 0 0; width: 0; overflow: hidden; white-space: nowrap; opacity: 0; font-size: 13px; font-weight: 700; transition: opacity 0.18s ease; }
-    .db-nav-label.visible { flex: 0 1 auto; width: auto; opacity: 1; }
+    .db-org-switch { border-radius: 6px; padding: 2px 8px; margin-left: -8px; background: transparent; transition: background .15s ease, color .15s ease; }
+    .db-org-switch:hover { background: color-mix(in srgb, var(--panel) 55%, var(--text) 18%); color: var(--text); }
+    .db-proj-switch { border-radius: 6px; padding: 2px 8px; background: transparent; transition: background .15s ease, color .15s ease; }
+    .db-proj-switch:hover { background: color-mix(in srgb, var(--panel) 55%, var(--text) 18%); color: var(--text); }
+    .db-caret-btn { display: flex; align-items: center; justify-content: center; width: 22px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; transition: background .15s ease; }
+    .db-caret-btn:hover { background: color-mix(in srgb, var(--panel) 55%, var(--text) 18%); }
+    .db-caret-btn svg { display: block; }
     .db-content {
       isolation: isolate;
       scrollbar-width: none;
@@ -1928,12 +2540,13 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
         display: block !important;
         border-right: 1px solid var(--border);
         padding-top: 10px;
-        width: ${effectiveCollapsed ? "64px" : "180px"};
+        width: 64px;
         transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
         overflow-y: auto;
         scrollbar-width: none;
         -ms-overflow-style: none;
       }
+      .db-sidebar:hover { width: 180px; }
       .db-sidebar::-webkit-scrollbar { display: none; }
       .db-content {
         position: absolute;
@@ -2148,6 +2761,7 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
     <>
       <style>{css}</style>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} onNavigate={navigate} />
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
 
       <div className={`db-root db-desktop-layout${light ? " db-light" : ""}`}>
         {/* ── Top toolbar ── */}
@@ -2207,49 +2821,19 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
 
           {/* Right controls */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-dim)" }}>
+            {/* Documentation */}
+            <button type="button" className="db-feedback" title="Documentation" aria-label="Documentation" onClick={() => navigate("docs")}>
+              <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", flexShrink: 0, width: 16, height: 16 }}>
+                <path d="M5 4h11a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V6a2 2 0 0 1 2-2z" />
+                <path d="M8 9h6M8 13h6" />
+              </svg>
+              Docs
+            </button>
             {/* Feedback */}
-            <button type="button" className="db-feedback">Feedback</button>
+            <button type="button" className="db-feedback" onClick={() => setFeedbackOpen(true)}><MessageSquare size={14} />Feedback</button>
 
-            {/* Notifications */}
-            <div style={{ position: "relative" }}>
-              <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setNotifOpen((v) => (v ? null : "desktop"));
-                  setWsOpen(false);
-                  setProjOpen(false);
-                }}
-                style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}
-              >
-                <div style={{ position: "relative", display: "flex" }}>
-                  <Icon size={16}>
-                    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-                    <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-                  </Icon>
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: -4,
-                      right: -5,
-                      background: "var(--red)",
-                      color: "#fff",
-                      fontSize: 8,
-                      fontWeight: 700,
-                      width: 12,
-                      height: 12,
-                      borderRadius: "50%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    2
-                  </span>
-                </div>
-                <span className="db-desktop-only">Notifications</span>
-              </div>
-              <NotifPanel id="notifPanel" open={notifOpen !== null} onClose={() => setNotifOpen(null)} />
-            </div>
+            {/* Support */}
+            <button type="button" className="db-feedback" onClick={() => setFeedbackOpen(true)}><LifeBuoy size={14} />Support</button>
 
             {/* Theme toggle */}
             <span onClick={() => setLight((v) => !v)} style={{ cursor: "pointer", display: "flex" }}>
@@ -2279,13 +2863,14 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <button
                   type="button"
+                  className="db-org-switch"
                   onClick={() => {
                     if (activeOrganization) router.push(`/organizations/${encodeURIComponent(activeOrganization)}`);
                   }}
-                  style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "none", border: "none", padding: 0, fontFamily: "inherit", color: "inherit" }}
+                  style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", border: "none", fontFamily: "inherit", color: "inherit" }}
                 >
                 <WorkspaceAvatar organization={organizations.find((organization) => organization.slug === activeOrganization) || { id: "active", slug: activeOrganization || "organization", name: activeOrganization, is_personal: true }} size={30} profileAvatarUrl={user?.avatar_url} />
-                <span style={{ fontWeight: 650, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 145 }}>
+                <span style={{ fontWeight: 400, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 145 }}>
                   {organizations.find((organization) => organization.slug === activeOrganization)?.name || activeOrganization || "Organization"}
                 </span>
                 <span style={{ background: "var(--free-badge-bg)", color: "var(--free-badge-text)", fontSize: 10.5, fontWeight: 700, padding: "2px 8px", borderRadius: 999, flexShrink: 0 }}>
@@ -2294,16 +2879,15 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
                 </button>
                 <button
                   type="button"
+                  className="db-caret-btn"
                   aria-label={wsOpen ? "Close organization menu" : "Open organization menu"}
                   aria-expanded={wsOpen}
                   onClick={() => {
                     setWsOpen((v) => !v);
                     setProjOpen(false);
-                    setNotifOpen(null);
                   }}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 18, height: 22, cursor: "pointer", background: "none", border: "none", padding: 0, color: "var(--text-faint)" }}
                 >
-                  <DropdownChevron open={wsOpen} />
+                  <ChevronsUpDown size={13} />
                 </button>
               </div>
               <WorkspaceSwitcher
@@ -2321,27 +2905,40 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
 
             {/* Project switcher */}
             <div data-dashboard-popover style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <button
                 type="button"
+                className="db-proj-switch"
                 aria-expanded={projOpen}
                 onClick={() => {
                   setProjOpen((v) => !v);
                   setWsOpen(false);
-                  setNotifOpen(null);
                 }}
-                style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", background: "none", border: "none", padding: 0, fontFamily: "inherit", color: "inherit" }}
+                style={{ display: "flex", alignItems: "center", cursor: "pointer", border: "none", fontFamily: "inherit", color: "inherit" }}
               >
-                <span style={{ color: "var(--text-dim)", fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>
+                <span style={{ color: "var(--text)", fontSize: 14, fontWeight: 400, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>
                   {projects.find((project) => project.slug === activeProject)?.name || activeProject || "Project"}
                 </span>
-                <span style={{ color: "var(--text-faint)", display: "flex" }}><DropdownChevron open={projOpen} /></span>
               </button>
+              <button
+                type="button"
+                className="db-caret-btn"
+                aria-label={projOpen ? "Close project menu" : "Open project menu"}
+                aria-expanded={projOpen}
+                onClick={() => {
+                  setProjOpen((v) => !v);
+                  setWsOpen(false);
+                }}
+              >
+                <ChevronsUpDown size={13} />
+              </button>
+              </div>
               <ProjectSwitcher
                 open={projOpen}
                 projects={projects}
                 activeProject={activeProject}
                 onSelect={selectProject}
-                onCreate={() => router.push("/onboarding")}
+                onCreate={() => router.push(activeOrganization ? `/organizations/${encodeURIComponent(activeOrganization)}?new=1` : "/onboarding")}
               />
             </div>
 
@@ -2349,7 +2946,7 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
             <span style={{ color: "var(--text-dim)", fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{CRUMBS[page]}</span>
           </div>
 
-          {page !== "home" && (
+          {page !== "explorer" && (
             <div className="db-crumb-search" style={{ flex: "1 1 420px", maxWidth: 560, minWidth: 260 }}>
               <GlobalExplorerSearch network={network} compact />
             </div>
@@ -2365,7 +2962,6 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
                   setNetOpen((v) => (v === "production" ? null : "production"));
                   setWsOpen(false);
                   setProjOpen(false);
-                  setNotifOpen(null);
                 }}
                 style={{
                   display: "flex",
@@ -2399,69 +2995,45 @@ export default function ReleeveApp({ children }: { children?: React.ReactNode })
         </div>
 
         <div className="db-body">
-        <div
+        <AppSidebar
           className="db-sidebar"
-          style={{ display: "none", background: "var(--bg)" }}
-          onMouseEnter={() => setSidebarHovered(true)}
-          onMouseLeave={() => setSidebarHovered(false)}
-        >
-          <div style={{ padding: "0 8px" }}>
-            {NAV.map((n) => (
-              <div
-                key={n.key}
-                className="db-nav-item"
-                onClick={() => navigate(n.key)}
-                title={effectiveCollapsed ? n.label : undefined}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: effectiveCollapsed ? "center" : "flex-start",
-                  gap: effectiveCollapsed ? 0 : 12,
-                  padding: effectiveCollapsed ? "9px 0" : "9px 12px",
-                  borderRadius: 4,
-                  margin: "2px 6px",
-                  color: topNavKey === n.key ? "var(--text)" : "var(--text-dim)",
-                  background: topNavKey === n.key ? "var(--panel)" : "transparent",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  cursor: "pointer",
-                  overflow: "hidden",
-                  transition:
-                    "background .15s ease, color .15s ease, justify-content 0.28s cubic-bezier(0.4, 0, 0.2, 1), gap 0.28s cubic-bezier(0.4, 0, 0.2, 1), padding 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
-                }}
+          style={{ display: "none" }}
+          items={NAV.map((n) => ({
+            key: n.key,
+            label: n.label,
+            icon: (
+              <svg
+                viewBox="0 0 24 24"
+                width={17}
+                height={17}
+                stroke="currentColor"
+                strokeWidth="1.6"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ flexShrink: 0 }}
               >
-                <svg
-                  viewBox="0 0 24 24"
-                  width={17}
-                  height={17}
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  fill="none"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ flexShrink: 0 }}
-                >
-                  {getNavIcon(n.key)}
-                </svg>
-                <span className={`db-nav-label${effectiveCollapsed ? "" : " visible"}`}>{n.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+                {getNavIcon(n.key)}
+              </svg>
+            ),
+          }))}
+          activeKey={topNavKey}
+          onSelect={(key) => navigate(key as PageKey)}
+        />
 
         {/* ── Main content ── */}
         <div className="db-content" style={{ padding: "8px 3px 0", overflowY: "auto", scrollbarWidth: "none" }}>
-          {page === "home" && <HomePage />}
+          {page === "home" && <HomePage scope={projectScope} />}
           {page === "explorer" && (pathname.split("/").filter(Boolean).length > 2 && children ? children : <ExplorerPage network={explorerNetwork as "mainnet" | "testnet" | "futurenet"} />)}
           {page === "wallets" && <ProjectWalletsPage scope={projectScope} />}
           {page === "contracts" && <ProjectContractsPage scope={projectScope} />}
           {page === "simulator" && <ProjectSimulatorPage scope={projectScope} newSimulation={pathname === "/simulation/new"} />}
           {page === "replays" && <ProjectReplayPage scope={projectScope} />}
-          {page === "debugger" && <ProjectDebuggerPage scope={projectScope} analysisId={pathname.split("/")[2] ?? ""} />}
+          {page === "debugger" && <ProjectDebuggerPage scope={projectScope} analysisId={debuggerAnalysisId} />}
           {page === "virtualenv" && (
             <ProjectVirtualEnvPage
               scope={projectScope}
-              environmentId={pathname.startsWith("/vnet/") ? decodeURIComponent(pathname.split("/")[2] ?? "") : undefined}
+              environmentId={vnetEnvironmentId}
             />
           )}
           {page === "activity" && <ActivityPage />}

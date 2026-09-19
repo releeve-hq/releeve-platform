@@ -43,6 +43,21 @@ export function OrgShell({ slug, children }: { slug: string; children: React.Rea
     const onOrganizationUpdated = (event: Event) => {
       const updated = (event as CustomEvent<Organization>).detail;
       if (updated?.slug === slug) setOrganization(updated);
+      // Mirror the update into the dashboard's cached org list so the new
+      // name renders instantly on the next dashboard mount (before refetch).
+      if (updated?.slug) {
+        try {
+          const stored = localStorage.getItem('releeve-organizations-cache');
+          const cached = stored ? JSON.parse(stored) as Organization[] : [];
+          if (Array.isArray(cached) && cached.some((item) => item?.slug === updated.slug)) {
+            localStorage.setItem('releeve-organizations-cache', JSON.stringify(
+              cached.map((item) => item?.slug === updated.slug
+                ? { ...item, name: updated.name ?? item.name, avatar_url: updated.avatar_url ?? item.avatar_url }
+                : item),
+            ));
+          }
+        } catch { /* ignore corrupt local state */ }
+      }
     };
     window.addEventListener('releeve:organization-updated', onOrganizationUpdated);
     return () => window.removeEventListener('releeve:organization-updated', onOrganizationUpdated);

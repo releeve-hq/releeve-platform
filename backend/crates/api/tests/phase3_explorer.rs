@@ -35,7 +35,7 @@ async fn onboard(app: &TestApp) -> (String, String) {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let token = common::token_from_mail(&app.mailer.drain()[0].body);
+    let token = common::token_from_mail(&app.drain_mail().await[0].body);
     let (status, _) = req(
         app.router(),
         Method::POST,

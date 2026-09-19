@@ -105,6 +105,11 @@ function projectPath(scope: ProjectScope, suffix: string) {
   if (!scope.organization || !scope.project) return null;
   return `/api/v1/${scope.organization}/${scope.project}${suffix}`;
 }
+/// Page URL inside the active project scope (/projects/:id/...).
+function scopedPageHref(scope: ProjectScope, section: string, rest = ""): string {
+  if (!scope.projectId) return "/organizations";
+  return `/projects/${encodeURIComponent(scope.projectId)}/${section}${rest}`;
+}
 
 function parseJson<T>(value: string, fallback: T): T {
   if (!value.trim()) return fallback;
@@ -201,7 +206,7 @@ export function NewReplayPage({ scope }: { scope: ProjectScope }) {
       const response = await api.post<{ id: string }>(path, body, {
         headers: { "Idempotency-Key": crypto.randomUUID() },
       });
-      router.push(`/replays/${response.id}`);
+      router.push(scopedPageHref(scope, "replays", `/${response.id}`));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : caught instanceof Error ? caught.message : "Replay could not be created.");
     } finally {
@@ -365,7 +370,7 @@ export function NewTimelinePage({ scope }: { scope: ProjectScope }) {
         target_contracts: selected.filter(target => target.type === "contract").map(target => target.address),
         target_accounts: selected.filter(target => target.type === "account").map(target => target.address),
       }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
-      router.push(`/replays/timeline/${response.id}`);
+      router.push(scopedPageHref(scope, "replays", `/timeline/${response.id}`));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : caught instanceof Error ? caught.message : "Timeline could not be created.");
     } finally {
@@ -401,7 +406,7 @@ export function NewTimelinePage({ scope }: { scope: ProjectScope }) {
       {targetError && <div className="rp-error">{targetError}</div>}
     </section>
     <section className="rp-card rp-fast-path"><div className="rp-load-story"><span><Database size={16} /><b>1</b><i>Index playback appears</i><small>No R2 wait and no canonical execution.</small></span><span><Zap size={16} /><b>2</b><i>Fork cache warms</i><small>Evidence, state and WASM load behind playback.</small></span><span><GitFork size={16} /><b>3</b><i>Pause and branch</i><small>Only the modified lane executes.</small></span></div></section>
-    <button type="button" className="rp-text-action" onClick={() => router.push("/replays/new?audit=1")}><RotateCcw size={13} />Open exact transaction audit</button>
+    <button type="button" className="rp-text-action" onClick={() => router.push(scopedPageHref(scope, "replays", "/new?audit=1"))}><RotateCcw size={13} />Open exact transaction audit</button>
     {error && <div className="rp-error">{error}</div>}
     <div className="rp-actions"><button className="rp-primary" disabled={busy || !coverage?.available || !targetWindow || selected.length === 0} onClick={() => void submit()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}Open interactive timeline</button></div>
   </div>;
@@ -453,7 +458,7 @@ export function ReplayDetailPage({ scope, replayId }: { scope: ProjectScope; rep
     setBusy(true);
     try {
       const response = await api.post<{ environment_id: string }>(`${resource}/promote`, { name }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
-      router.push(`/vnet/${response.environment_id}`);
+      router.push(scopedPageHref(scope, "vnet", `/${response.environment_id}`));
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Promotion failed."); }
     finally { setBusy(false); }
   };
@@ -470,7 +475,7 @@ export function ReplayDetailPage({ scope, replayId }: { scope: ProjectScope; rep
       const response = await api.post<{ analysis_id: string }>(`${resource}/analysis`, {
         transaction_hash: replayMode === "contract_window" || replayMode === "timeline_branch" ? analysisTransaction : undefined,
       }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
-      router.push(`/debugger/${response.analysis_id}`);
+      router.push(scopedPageHref(scope, "debugger", `/${response.analysis_id}`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "SourceLens analysis could not be created.");
     } finally {
@@ -482,7 +487,7 @@ export function ReplayDetailPage({ scope, replayId }: { scope: ProjectScope; rep
   if (!replay) return <div className="rp-page rp-loading">{error || "Loading replay evidence…"}</div>;
   return (
     <div className="rp-page">
-      <button className="rp-back" onClick={() => router.push("/replays/new")}><ArrowLeft size={14} />New replay</button>
+      <button className="rp-back" onClick={() => router.push(scopedPageHref(scope, "replays", "/new"))}><ArrowLeft size={14} />New replay</button>
       <div className="rp-heading"><div><h1>Replay evidence</h1><p className="rp-mono">{replay.id}</p></div><span className={`rp-status ${replay.status}`}>{activeStatuses.has(replay.status) && <LoaderCircle size={13} className="spin" />}{replay.status.replaceAll("_", " ")}</span></div>
       <section className="rp-progress-card"><div><span>{replay.stage.replaceAll("_", " ")}</span><strong>{replay.progress}%</strong></div><div className="rp-progress"><i style={{ width: `${replay.progress}%` }} /></div><div className="rp-counts"><span>{replay.selected_transactions} selected</span><span>{replay.dependency_transactions} dependencies</span><span>{parity?.passed === true ? "Canonical parity passed" : parity?.passed === false ? "Canonical parity failed" : "Parity pending"}</span></div></section>
       {error && <div className="rp-error">{error}</div>}
@@ -567,7 +572,7 @@ export function TimelineDetailPage({ scope, timelineId }: { scope: ProjectScope;
         replacements: parseJson<unknown[]>(replacements, []),
         capture_trace: captureTrace,
       }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
-      router.push(`/replays/${response.id}`);
+      router.push(scopedPageHref(scope, "replays", `/${response.id}`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Timeline could not be forked.");
     } finally {
@@ -582,7 +587,7 @@ export function TimelineDetailPage({ scope, timelineId }: { scope: ProjectScope;
   if (!timeline) return <div className="rp-page rp-loading">{error || "Opening canonical timeline…"}</div>;
 
   return <div className="rp-page rp-timeline-page">
-    <button className="rp-back" onClick={() => router.push("/replays/new")}><ArrowLeft size={14} />New timeline</button>
+    <button className="rp-back" onClick={() => router.push(scopedPageHref(scope, "replays", "/new"))}><ArrowLeft size={14} />New timeline</button>
     <div className="rp-heading"><div><h1>Watched timeline</h1><p>{timeline.start_ledger.toLocaleString()} → {timeline.end_ledger.toLocaleString()} · {events.length.toLocaleString()} relevant interactions</p></div><span className={`rp-status ${timeline.status}`}>{timelineLoadingStatuses.has(timeline.status) && <LoaderCircle size={13} className="spin" />}{timeline.stage.replaceAll("_", " ")}</span></div>
     <section className="rp-progress-card rp-cache-progress">
       <div><span>{timeline.status === "ready" ? "Fork cache ready" : timeline.stage.replaceAll("_", " ")}</span><strong>{timeline.progress}%</strong></div>
@@ -624,6 +629,17 @@ export function TimelineDetailPage({ scope, timelineId }: { scope: ProjectScope;
 export function ReplayPage({ scope }: { scope: ProjectScope }) {
   const pathname = usePathname();
   const search = useSearchParams();
+  const parts = pathname.split("/").filter(Boolean);
+  const projectParts = parts[0] === "projects" && parts.length >= 3 && parts[3] === "replays" ? parts.slice(4) : null;
+  if (projectParts) {
+    if (projectParts[0] === "timeline" && projectParts[1]) {
+      return <TimelineDetailPage scope={scope} timelineId={decodeURIComponent(projectParts[1])} />;
+    }
+    if (projectParts[0] && projectParts[0] !== "new") {
+      return <ReplayDetailPage scope={scope} replayId={decodeURIComponent(projectParts[0])} />;
+    }
+    return search.get("transaction") || search.get("audit") ? <NewReplayPage scope={scope} /> : <NewTimelinePage scope={scope} />;
+  }
   if (pathname.startsWith("/replays/timeline/")) {
     return <TimelineDetailPage scope={scope} timelineId={decodeURIComponent(pathname.split("/")[3] ?? "")} />;
   }

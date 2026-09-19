@@ -495,7 +495,7 @@ impl ForkCoreClient {
         .await
     }
 
-    pub async fn environment_revisions(
+    pub async fn environment_snapshots(
         &self,
         actor: &ServiceActor,
         environment_id: Uuid,
@@ -503,43 +503,128 @@ impl ForkCoreClient {
         self.request(
             actor,
             Method::GET,
-            &format!("/v1/environments/{environment_id}/revisions"),
+            &format!("/v1/environments/{environment_id}/snapshots"),
             None,
             None,
         )
         .await
     }
 
-    pub async fn activate_environment_revision(
+    pub async fn fork_environment(
         &self,
         actor: &ServiceActor,
         environment_id: Uuid,
-        revision_id: Uuid,
-    ) -> Result<Value> {
-        self.request(
-            actor,
-            Method::POST,
-            &format!("/v1/environments/{environment_id}/revisions/{revision_id}/activate"),
-            None,
-            None,
-        )
-        .await
-    }
-
-    pub async fn branch_environment_revision(
-        &self,
-        actor: &ServiceActor,
-        environment_id: Uuid,
-        revision_id: Uuid,
         body: &Value,
         idempotency_key: &str,
     ) -> Result<Value> {
         self.request(
             actor,
             Method::POST,
-            &format!("/v1/environments/{environment_id}/revisions/{revision_id}/branch"),
+            &format!("/v1/environments/{environment_id}/fork"),
             Some(body),
             Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn clone_environment(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        virtual_ledger_id: Uuid,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/virtual-ledgers/{virtual_ledger_id}/clone"),
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn create_environment_snapshot(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/snapshots"),
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn rename_environment_snapshot(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        snapshot_id: Uuid,
+        body: &Value,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::PATCH,
+            &format!("/v1/environments/{environment_id}/snapshots/{snapshot_id}"),
+            Some(body),
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn delete_environment_snapshot(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        snapshot_id: Uuid,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::DELETE,
+            &format!("/v1/environments/{environment_id}/snapshots/{snapshot_id}"),
+            None,
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn revert_environment_snapshot(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+        snapshot_id: Uuid,
+        idempotency_key: &str,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::POST,
+            &format!("/v1/environments/{environment_id}/snapshots/{snapshot_id}/revert"),
+            None,
+            Some(idempotency_key),
+        )
+        .await
+    }
+
+    pub async fn environment_lineage(
+        &self,
+        actor: &ServiceActor,
+        environment_id: Uuid,
+    ) -> Result<Value> {
+        self.request(
+            actor,
+            Method::GET,
+            &format!("/v1/environments/{environment_id}/lineage"),
+            None,
+            None,
         )
         .await
     }

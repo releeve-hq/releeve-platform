@@ -20,6 +20,9 @@ pub struct Settings {
     /// transactional emails.
     pub app_base_url: String,
     pub api_base_url: String,
+    /// Extra CORS origins (comma-separated) besides APP_BASE_URL, e.g. the
+    /// local dev frontend once APP_BASE_URL points at production.
+    pub cors_extra_origins: String,
 
     // Phase 1 — email (SMTP).
     pub smtp_host: String,
@@ -27,6 +30,20 @@ pub struct Settings {
     pub smtp_username: String,
     pub smtp_password: String,
     pub smtp_from: String,
+
+    // Transactional email (Cloudflare Email Service REST + outbox worker).
+    /// Visible From mailbox for transactional mail.
+    pub email_from: String,
+    /// Cloudflare account ID that owns the sending domain.
+    pub cloudflare_account_id: String,
+    /// API token with permission to send email. Empty → the worker logs
+    /// messages instead of delivering (dev default).
+    pub cloudflare_email_api_token: String,
+    /// Resend API token for outbound transactional mail. Takes precedence
+    /// over Cloudflare when both are configured.
+    pub resend_api_key: String,
+    /// Seconds between email-outbox drain passes.
+    pub email_worker_poll_secs: u64,
 
     // Phase 1 — OAuth.
     pub oauth_github_client_id: String,
@@ -129,11 +146,17 @@ impl Settings {
             .set_default("jwt_refresh_ttl", 2592000)?
             .set_default("app_base_url", "http://localhost:3000")?
             .set_default("api_base_url", "http://localhost:8080")?
+            .set_default("cors_extra_origins", "")?
             .set_default("smtp_host", "")?
             .set_default("smtp_port", 587)?
             .set_default("smtp_username", "")?
             .set_default("smtp_password", "")?
             .set_default("smtp_from", "Releeve <no-reply@releeve.dev>")?
+            .set_default("email_from", "Releeve <no-reply@releeve.xyz>")?
+            .set_default("cloudflare_account_id", "")?
+            .set_default("cloudflare_email_api_token", "")?
+            .set_default("resend_api_key", "")?
+            .set_default("email_worker_poll_secs", 5)?
             .set_default("oauth_github_client_id", "")?
             .set_default("oauth_github_client_secret", "")?
             .set_default("oauth_google_client_id", "")?

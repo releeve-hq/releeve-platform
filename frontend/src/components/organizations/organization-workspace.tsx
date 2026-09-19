@@ -6,12 +6,17 @@ import Link from 'next/link';
 import {
   Boxes,
   ArrowDownUp,
+  BookOpen,
   ChartNoAxesCombined,
   Check,
   ChevronDown,
+  ChevronsUpDown,
+  CreditCard,
   Grid2X2,
+  LifeBuoy,
   List,
   LoaderCircle,
+  MessageSquare,
   Moon,
   MoreVertical,
   Network,
@@ -25,6 +30,8 @@ import {
 } from 'lucide-react';
 import { ReleeveLogo } from '@/components/ui/releeve-logo';
 import { SharedProfileMenu } from '@/components/ui/shared-profile-menu';
+import { AppSidebar } from '@/components/ui/app-sidebar';
+import { FeedbackModal } from '@/components/ui/feedback-modal';
 import { api, ApiError } from '@/lib/api';
 
 export type Organization = {
@@ -61,6 +68,7 @@ function rememberWorkspace(organization: string, project: Project) {
   localStorage.setItem(ACTIVE_WORKSPACE_KEY, JSON.stringify({
     organization,
     project: project.slug,
+    projectId: project.id,
     network: project.network,
   }));
 }
@@ -83,7 +91,7 @@ function IconButton({ label, children, onClick, active }: { label: string; child
   return <button className={`org-icon-button${active ? ' active' : ''}`} type="button" aria-label={label} aria-pressed={active} title={label} onClick={onClick}>{children}</button>;
 }
 
-function CompactSelect({
+export function CompactSelect({
   value,
   options,
   onChange,
@@ -214,30 +222,45 @@ function OrganizationSwitcher({ organization }: { organization?: Organization | 
   }, [open]);
 
   const label = organization?.name || organization?.slug || 'Organization';
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const visibleOrganizations = organizations.filter((item) => !needle || `${item.name || ''} ${item.slug}`.toLowerCase().includes(needle));
 
   return (
     <div className="org-crumb-switcher" ref={rootRef}>
-      <button className="org-crumb-org" type="button" aria-label="Switch organization" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <button className="org-crumb-org org-crumb-org-static" type="button" aria-label={label}>
         <span className="org-header-avatar" aria-hidden="true"><Network size={17} strokeWidth={1.8} /></span>
         <span className="org-crumb-org-name">{label}</span>
         <span className="org-plan-pill">{organization?.plan_tier || 'Free'}</span>
-        <ChevronDown className={`org-crumb-chevron${open ? ' open' : ''}`} size={14} />
       </button>
+      <button className="org-crumb-caret" type="button" aria-label={open ? 'Close organization menu' : 'Open organization menu'} aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <ChevronsUpDown size={13} />
+      </button>
+      </div>
       {open && (
-        <div className="org-crumb-menu" role="menu" aria-label="Organizations">
-          <div className="org-crumb-menu-label">Organizations</div>
-          <div className="org-crumb-menu-list">
-            {organizations.length === 0 && <div className="org-crumb-menu-empty">Loading organizations...</div>}
-            {organizations.map((item) => (
-              <button className={`org-crumb-menu-item${item.slug === organization?.slug ? ' selected' : ''}`} type="button" role="menuitem" key={item.id} onClick={() => { setOpen(false); router.push(`/organizations/${encodeURIComponent(item.slug)}`); }}>
-                <span className="org-menu-avatar" aria-hidden="true"><Network size={16} strokeWidth={1.8} /></span>
-                <span className="org-menu-copy"><strong>{item.name || item.slug}</strong><small>{item.plan_tier ? `${item.plan_tier[0].toUpperCase()}${item.plan_tier.slice(1)} Plan` : 'Free Plan'}{item.is_personal ? ' - Personal' : ''}</small></span>
-                {item.slug === organization?.slug && <Check size={14} strokeWidth={2.5} />}
-              </button>
-            ))}
+        <div className="org-menu" role="menu" aria-label="Organizations">
+          <div className="org-menu-search">
+            <Search size={13} />
+            <input aria-label="Find organization" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search organizations" />
           </div>
-          <button className="org-crumb-menu-footer" type="button" onClick={() => { setOpen(false); router.push('/organizations'); }}>
-            <Grid2X2 size={15} />All organizations
+          <div style={{ borderTop: "1px solid var(--org-line)", margin: "2px 0 0" }} />
+          <div className="org-menu-label">Organizations</div>
+          {visibleOrganizations.length === 0 && <div className="org-menu-empty">No organization found.</div>}
+          <div className="org-menu-list">
+          {visibleOrganizations.map((item) => (
+            <button className="org-menu-item" type="button" role="menuitem" data-active={item.slug === organization?.slug} key={item.id} onClick={() => { setOpen(false); router.push(`/organizations/${encodeURIComponent(item.slug)}`); }} style={item.slug === organization?.slug ? { background: "color-mix(in srgb, var(--org-panel) 55%, var(--org-text) 18%)" } : undefined}>
+              <span className="org-menu-item-avatar" aria-hidden="true"><Network size={14} strokeWidth={1.8} /></span>
+              <span className="org-menu-item-name">{item.name || item.slug}</span>
+              <span className="org-plan-pill">{item.plan_tier || 'Free'}</span>
+            </button>
+          ))}
+          </div>
+          <button className="org-menu-footer" type="button" onClick={() => { setOpen(false); router.push('/organizations/new'); }}>
+            <span className="db-footer-circle org-menu-footer-circle"><Plus size={12} /></span>New organization
+          </button>
+          <button className="org-menu-footer" type="button" onClick={() => { setOpen(false); router.push('/organizations'); }}>
+            <Grid2X2 size={14} />All organizations
           </button>
         </div>
       )}
@@ -245,10 +268,123 @@ function OrganizationSwitcher({ organization }: { organization?: Organization | 
   );
 }
 
+const ORG_SEARCH_TABS: Array<{ key: OrgTab; label: string; href: string; icon: React.ReactNode }> = [
+  { key: 'projects', label: 'Projects', href: '', icon: <SquareStack size={16} strokeWidth={1.6} /> },
+  { key: 'members', label: 'Members', href: '/members', icon: <UsersRound size={16} strokeWidth={1.6} /> },
+  { key: 'usage', label: 'Usage', href: '/usage', icon: <ChartNoAxesCombined size={16} strokeWidth={1.6} /> },
+  { key: 'billing', label: 'Billing', href: '/billing', icon: <CreditCard size={16} strokeWidth={1.6} /> },
+  { key: 'settings', label: 'Settings', href: '/settings', icon: <Settings size={16} strokeWidth={1.6} /> },
+];
+
+function OrganizationSearchModal({ open, onClose, organization }: { open: boolean; onClose: () => void; organization?: Organization | null }) {
+  const router = useRouter();
+  const [query, setQuery] = useState('');
+  const [projects, setProjects] = useState<Project[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const base = organization ? `/organizations/${encodeURIComponent(organization.slug)}` : '/organizations';
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery('');
+    setProjects([]);
+    const focus = setTimeout(() => inputRef.current?.focus(), 60);
+    if (!organization) return () => clearTimeout(focus);
+    let cancelled = false;
+    api.get<Paged<Project>>(`/api/v1/${encodeURIComponent(organization.slug)}/projects?limit=100`)
+      .then((page) => { if (!cancelled) setProjects(page.data ?? []); })
+      .catch(() => { if (!cancelled) setProjects([]); });
+    return () => { cancelled = true; clearTimeout(focus); };
+  }, [open, organization]);
+
+  const needle = query.toLowerCase().trim();
+  const tabs = organization ? ORG_SEARCH_TABS.filter((tab) => tab.label.toLowerCase().includes(needle)) : [];
+  const matchingProjects = projects.filter((project) => `${project.name} ${project.slug}`.toLowerCase().includes(needle));
+  const showAllOrgs = 'all organizations'.includes(needle);
+
+  const go = (href: string, project?: Project) => {
+    if (project && organization) rememberWorkspace(organization.slug, project);
+    onClose();
+    router.push(href);
+  };
+
+  const goFirst = () => {
+    if (tabs[0] && organization) { go(`${base}${tabs[0].href}`); return; }
+    if (matchingProjects[0]) { go(`/projects/${encodeURIComponent(matchingProjects[0].id)}`, matchingProjects[0]); return; }
+    if (showAllOrgs) go('/organizations');
+  };
+
+  if (!open) return null;
+
+  const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 10px', borderRadius: 8, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 13 };
+  const highlight = (element: HTMLElement, on: boolean) => {
+    element.style.background = on ? 'var(--panel)' : '';
+    element.style.color = on ? 'var(--text)' : 'var(--text-dim)';
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '12vh' }}>
+      <div onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Search organization or project" style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 12, width: '90%', maxWidth: 460, maxHeight: '56vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 60px rgba(0,0,0,.5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+          <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block', flexShrink: 0, color: 'var(--text-faint)' }}>
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.3-4.3" />
+          </svg>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') goFirst(); }}
+            placeholder="Search organization or project"
+            aria-label="Search organization or project"
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit' }}
+          />
+        </div>
+        <div style={{ overflowY: 'auto', padding: 6 }}>
+          {tabs.map((tab) => (
+            <div key={tab.key} onClick={() => go(`${base}${tab.href}`)} onMouseEnter={(event) => highlight(event.currentTarget, true)} onMouseLeave={(event) => highlight(event.currentTarget, false)} style={rowStyle}>
+              {tab.icon}<span>{tab.label}</span>
+            </div>
+          ))}
+          {matchingProjects.map((project) => (
+            <div key={project.id} onClick={() => go(`/projects/${encodeURIComponent(project.id)}`, project)} onMouseEnter={(event) => highlight(event.currentTarget, true)} onMouseLeave={(event) => highlight(event.currentTarget, false)} style={rowStyle}>
+              <Boxes size={16} strokeWidth={1.6} /><span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</span>
+            </div>
+          ))}
+          {showAllOrgs && (
+            <div onClick={() => go('/organizations')} onMouseEnter={(event) => highlight(event.currentTarget, true)} onMouseLeave={(event) => highlight(event.currentTarget, false)} style={rowStyle}>
+              <Grid2X2 size={16} strokeWidth={1.6} /><span>All organizations</span>
+            </div>
+          )}
+          {!tabs.length && !matchingProjects.length && !showAllOrgs && (
+            <div style={{ padding: 22, textAlign: 'center', color: 'var(--text-faint)', fontSize: 12.5 }}>No results found</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OrganizationHeader({ title, organization, light, onToggleTheme, singleBar = false }: { title: string; organization?: Organization | null; light: boolean; onToggleTheme: () => void; singleBar?: boolean }) {
   const router = useRouter();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSearchOpen(false);
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
+
   return (
     <>
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <OrganizationSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} organization={organization} />
       <header className="org-commandbar">
         <div className="org-commandbar-title">
           <ReleeveLogo size={24} tone="auto" />
@@ -258,15 +394,20 @@ function OrganizationHeader({ title, organization, light, onToggleTheme, singleB
               <span className="org-commandbar-name">{title}</span>
             </>
           ) : (
-            <button className="org-commandbar-search" type="button" aria-label="Search organization or project">
-              <Search size={15} />
+            <button className="org-commandbar-search" type="button" aria-label="Search organization or project" onClick={() => setSearchOpen(true)}>
+              <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>
+                <circle cx="11" cy="11" r="7" />
+                <path d="M21 21l-4.3-4.3" />
+              </svg>
               <span>Search organization or project</span>
               <kbd>⌘K</kbd>
             </button>
           )}
         </div>
         <div className="org-commandbar-actions">
-          <button className="org-feedback" type="button">Feedback</button>
+          <button className="org-feedback" type="button" title="Documentation" aria-label="Documentation" onClick={() => router.push('/docs')}><BookOpen size={14} />Docs</button>
+          <button className="org-feedback" type="button" onClick={() => setFeedbackOpen(true)}><MessageSquare size={14} />Feedback</button>
+          <button className="org-feedback" type="button" onClick={() => setFeedbackOpen(true)}><LifeBuoy size={14} />Support</button>
           <button className="org-theme-toggle" type="button" aria-label={light ? 'Switch to dark theme' : 'Switch to light theme'} onClick={onToggleTheme}>{light ? <Moon size={16} strokeWidth={1.8} /> : <Sun size={16} strokeWidth={1.8} />}</button>
           <SharedProfileMenu organization={organization} onOpenSettings={organization ? () => router.push(`/organizations/${encodeURIComponent(organization.slug)}/settings`) : undefined} />
         </div>
@@ -288,13 +429,18 @@ function OrganizationSidebar({ active = 'projects', slug }: { active?: OrgTab; s
   const router = useRouter();
   const base = `/organizations/${encodeURIComponent(slug)}`;
   return (
-    <aside className="org-sidebar" aria-label="Organization navigation">
-      <button className={`org-sidebar-item${active === 'projects' ? ' active' : ''}`} type="button" title="Projects" aria-label="Projects" onClick={() => router.push(base)}><Boxes size={17} strokeWidth={1.6} /><span className="org-sidebar-label">Projects</span></button>
-      <button className={`org-sidebar-item${active === 'members' ? ' active' : ''}`} type="button" title="Members" aria-label="Members" onClick={() => router.push(`${base}/members`)}><UsersRound size={17} strokeWidth={1.6} /><span className="org-sidebar-label">Members</span></button>
-      <button className={`org-sidebar-item${active === 'usage' ? ' active' : ''}`} type="button" title="Usage" aria-label="Usage" onClick={() => router.push(`${base}/usage`)}><ChartNoAxesCombined size={17} strokeWidth={1.6} /><span className="org-sidebar-label">Usage</span></button>
-      <button className={`org-sidebar-item${active === 'billing' ? ' active' : ''}`} type="button" title="Billing" aria-label="Billing" onClick={() => router.push(`${base}/billing`)}><SquareStack size={17} strokeWidth={1.6} /><span className="org-sidebar-label">Billing</span></button>
-      <button className={`org-sidebar-item org-sidebar-bottom${active === 'settings' ? ' active' : ''}`} type="button" title="Organization settings" aria-label="Organization settings" onClick={() => router.push(`${base}/settings`)}><Settings size={17} strokeWidth={1.6} /><span className="org-sidebar-label">Settings</span></button>
-    </aside>
+    <AppSidebar
+      className="org-sidebar"
+      activeKey={active}
+      onSelect={(key) => router.push(key === 'projects' ? base : `${base}/${key}`)}
+      items={[
+        { key: 'projects', label: 'Projects', icon: <SquareStack size={17} strokeWidth={1.6} /> },
+        { key: 'members', label: 'Members', icon: <UsersRound size={17} strokeWidth={1.6} /> },
+        { key: 'usage', label: 'Usage', icon: <ChartNoAxesCombined size={17} strokeWidth={1.6} /> },
+        { key: 'billing', label: 'Billing', icon: <CreditCard size={17} strokeWidth={1.6} /> },
+        { key: 'settings', label: 'Settings', icon: <Settings size={17} strokeWidth={1.6} /> },
+      ]}
+    />
   );
 }
 
@@ -422,6 +568,17 @@ export function OrganizationProjectPage({ slug }: { slug: string }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [openProjectMenu, setOpenProjectMenu] = useState<string | null>(null);
 
+  // The signup flow lands here with ?new=1 to open the create-project modal.
+  // The flag is consumed on open so a refresh does not reopen the modal.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get('new')) return;
+    setModalOpen(true);
+    params.delete('new');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     api.get<Paged<Project>>(`/api/v1/${encodeURIComponent(slug)}/projects?limit=100`)
@@ -500,7 +657,7 @@ export function OrganizationProjectPage({ slug }: { slug: string }) {
               <div className="org-project-table-head"><span>PROJECT</span><span>CREATED</span><span>PROJECT ID</span><span /></div>
               {filtered.map((project) => {
                 const menuOpen = openProjectMenu === project.id;
-                const openProject = () => { rememberWorkspace(slug, project); router.push('/home'); };
+                const openProject = () => { rememberWorkspace(slug, project); router.push(`/projects/${encodeURIComponent(project.id)}`); };
                 return (
                   <div
                     className="org-project-row"
@@ -520,7 +677,7 @@ export function OrganizationProjectPage({ slug }: { slug: string }) {
                     <span className="org-project-id">{shortProjectId(project.id)}</span>
                     <span className="org-project-row-actions" data-project-menu onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                       <button className="org-project-menu-trigger" type="button" aria-label={`Project actions for ${project.name}`} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setOpenProjectMenu((current) => current === project.id ? null : project.id)}><MoreVertical size={17} /></button>
-                      {menuOpen && <div className="org-project-menu" role="menu"><button type="button" role="menuitem" onClick={() => { rememberWorkspace(slug, project); setOpenProjectMenu(null); router.push('/settings'); }}><Settings size={14} />Settings</button></div>}
+                      {menuOpen && <div className="org-project-menu" role="menu"><button type="button" role="menuitem" onClick={() => { rememberWorkspace(slug, project); setOpenProjectMenu(null); router.push(`/projects/${encodeURIComponent(project.id)}/settings`); }}><Settings size={14} />Settings</button></div>}
                     </span>
                   </div>
                 );
@@ -530,7 +687,7 @@ export function OrganizationProjectPage({ slug }: { slug: string }) {
         </section>
       </div>
     </main>
-    {modalOpen && organization && <CreateProjectModal organization={organization} onClose={() => setModalOpen(false)} onCreated={(project) => { setProjects((current) => [project, ...current]); setModalOpen(false); rememberWorkspace(slug, project); router.push('/home'); }} />}
+    {modalOpen && organization && <CreateProjectModal organization={organization} onClose={() => setModalOpen(false)} onCreated={(project) => { setProjects((current) => [project, ...current]); setModalOpen(false); rememberWorkspace(slug, project); router.push(`/projects/${encodeURIComponent(project.id)}`); }} />}
     </>
   );
 }
@@ -574,42 +731,55 @@ const organizationStyles = `
   .org-product-shell *, .org-product-shell *::before, .org-product-shell *::after { box-sizing: border-box; }
   .org-product-shell button, .org-product-shell input, .org-product-shell select { font: inherit; }
   .org-product-shell button { color: inherit; }
-  .org-commandbar { position: sticky; top: 0; z-index: 10; display: flex; height: 55px; min-height: 55px; align-items: center; justify-content: space-between; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--org-line); background: var(--org-bg); }
+  .org-commandbar { position: sticky; top: 0; z-index: 10; display: flex; height: 50px; min-height: 50px; align-items: center; justify-content: space-between; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--org-line); background: var(--org-bg); }
   .org-commandbar-title, .org-commandbar-actions, .org-commandbar-search, .org-crumb-org, .org-feedback { display: flex; align-items: center; }
-  .org-commandbar-title { flex: 1; min-width: 0; gap: 8px; }
+  .org-commandbar-title { flex: 0 1 360px; max-width: 360px; min-width: 0; gap: 10px; }
   .org-commandbar-slash { color: var(--org-faint); font-size: 16px; font-weight: 300; }
   .org-commandbar-name { color: var(--org-text); font-size: 14px; font-weight: 600; white-space: nowrap; }
-  .org-commandbar-search { flex: 1; max-width: 460px; min-height: 36px; height: 36px; gap: 9px; padding: 0 11px; border: 1px solid var(--org-line); border-radius: 6px; background: var(--org-panel-2); color: var(--org-faint); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
-  .org-commandbar-search:hover, .org-commandbar-search:focus-visible { border-color: var(--org-faint); }
-  .org-commandbar-search:focus-visible { outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--org-text) 10%, transparent); }
+  .org-commandbar-search { flex: 1; min-width: 0; height: 32px; min-height: 32px; gap: 9px; padding: 6px 10px; border: 1px solid #383c39; border-radius: 6px; background: #1e1e1e; color: #fff; font: inherit; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+  .org-product-shell.org-light .org-commandbar-search { border-color: #c5cbc4; background: #eef1ec; color: #101310; }
+  .org-commandbar-search span:first-of-type { color: #707070; }
+  .org-product-shell.org-light .org-commandbar-search span:first-of-type { color: #7e857e; }
+  .org-commandbar-search:hover, .org-commandbar-search:focus-visible { border-color: #707070; }
+  .org-product-shell.org-light .org-commandbar-search:hover, .org-product-shell.org-light .org-commandbar-search:focus-visible { border-color: #7e857e; }
+  .org-commandbar-search:focus-visible { outline: 0; box-shadow: 0 0 0 3px rgba(255,255,255,.1); }
+  .org-product-shell.org-light .org-commandbar-search:focus-visible { box-shadow: 0 0 0 3px rgba(16,19,16,.1); }
   .org-commandbar-search span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-  .org-commandbar-search kbd { flex: 0 0 auto; color: var(--org-faint); font-size: 10.5px; font-weight: 600; border: 1px solid var(--org-line); border-radius: 5px; padding: 2px 6px; }
-  .org-crumb-org { gap: 8px; border: 0; background: transparent; padding: 0; color: var(--org-text); font-size: 14px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+  .org-commandbar-search kbd { flex: 0 0 auto; color: #707070; font: inherit; font-size: 10.5px; font-weight: 600; border: 1px solid #383c39; border-radius: 5px; padding: 2px 6px; }
+  .org-product-shell.org-light .org-commandbar-search kbd { color: #7e857e; border-color: #c5cbc4; }
+  .org-commandbar-search svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .org-crumb-org { gap: 8px; border: 0; background: transparent; padding: 2px 8px; border-radius: 6px; color: var(--org-text); font-size: 14px; font-weight: 650; cursor: pointer; white-space: nowrap; transition: background .15s ease; }
+  .org-crumb-org:hover { background: color-mix(in srgb, var(--org-panel) 55%, var(--org-text) 18%); }
+  .org-crumb-org-static { cursor: default; }
+  .org-crumb-caret { display: flex; align-items: center; justify-content: center; width: 22px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--org-text); cursor: pointer; transition: background .15s ease; }
+  .org-crumb-caret:hover { background: color-mix(in srgb, var(--org-panel) 55%, var(--org-text) 18%); }
+  .org-crumb-caret svg { display: block; }
   .org-crumb-switcher { position: relative; display: inline-flex; }
   .org-crumb-org-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .org-crumb-chevron { flex: 0 0 auto; color: var(--org-faint); transition: transform 180ms ease; }
-  .org-crumb-chevron.open { transform: rotate(180deg); }
-  .org-crumb-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 600; width: 300px; max-width: 85vw; overflow: hidden; border: 1px solid var(--org-line); border-radius: 10px; background: var(--org-panel); box-shadow: 0 18px 42px rgb(0 0 0 / 48%); }
-  .org-crumb-menu-label { padding: 12px 14px 6px; color: var(--org-faint); font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
-  .org-crumb-menu-list { max-height: 320px; overflow-y: auto; padding: 4px 6px; }
-  .org-crumb-menu-item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--org-text); text-align: left; cursor: pointer; }
-  .org-crumb-menu-item:hover { background: var(--org-panel-2); }
-  .org-crumb-menu-item.selected { background: var(--org-panel-2); }
-  .org-crumb-menu-item.selected > svg { margin-left: auto; flex: 0 0 auto; color: var(--org-green); }
-  .org-crumb-menu-empty { padding: 16px 8px; color: var(--org-muted); font-size: 12.5px; text-align: center; }
-  .org-menu-avatar { display: inline-flex; width: 26px; height: 26px; flex: 0 0 26px; align-items: center; justify-content: center; color: var(--org-muted); }
-  .org-menu-copy { min-width: 0; flex: 1; }
-  .org-menu-copy strong, .org-menu-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .org-menu-copy strong { font-size: 13px; }
-  .org-menu-copy small { margin-top: 2px; color: var(--org-muted); font-size: 11.5px; }
-  .org-crumb-menu-footer { display: flex; width: 100%; align-items: center; gap: 8px; padding: 10px 14px; border: 0; border-top: 1px solid var(--org-line); background: transparent; color: var(--org-muted); font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; cursor: pointer; }
-  .org-crumb-menu-footer:hover { background: var(--org-panel-2); color: var(--org-text); }
-  .org-crumbbar { position: sticky; top: 55px; z-index: 9; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--org-line); background: var(--org-bg); }
+  .org-menu { position: absolute; top: calc(100% - 1px); left: 0; z-index: 600; width: 240px; max-width: 80vw; overflow: hidden; border: 1px solid var(--org-line); border-radius: 10px; background: var(--org-panel); box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+  .org-menu-search { display: flex; min-height: 30px; align-items: center; gap: 8px; margin: 8px 10px; padding: 0 9px; border: 1px solid var(--org-line); border-radius: 6px; background: var(--org-panel-2); color: var(--org-muted); }
+  .org-menu-search svg { width: 13px; height: 13px; flex-shrink: 0; }
+  .org-menu-search input { flex: 1; min-width: 0; min-height: 30px; border: 0; outline: 0; background: transparent; color: var(--org-text); font: inherit; font-size: 13px; }
+  .org-menu-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--org-faint); padding: 12px 12px 6px; }
+  .org-menu-empty { padding: 2px 12px 12px; color: var(--org-faint); font-size: 13px; }
+  .org-menu-list { max-height: 108px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--org-line) transparent; }
+  .org-menu-list::-webkit-scrollbar { width: 4px; }
+  .org-menu-list::-webkit-scrollbar-track { background: transparent; }
+  .org-menu-list::-webkit-scrollbar-thumb { background: var(--org-line); border-radius: 999px; }
+  .org-menu-item { display: flex; width: calc(100% - 16px); align-items: center; gap: 10px; padding: 6px; margin: 0 8px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--org-text); font: inherit; text-align: left; cursor: pointer; }
+  .org-menu-item:hover { background: var(--org-panel-2); }
+  .org-menu-item-avatar { display: inline-flex; width: 24px; height: 24px; flex: 0 0 24px; align-items: center; justify-content: center; color: var(--org-muted); }
+  .org-menu-item-name { font-weight: 650; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .org-menu-footer { display: flex; width: 100%; align-items: center; gap: 9px; padding: 10px 12px; border: 0; border-top: 1px solid var(--org-line); background: transparent; color: var(--org-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+  .org-menu-footer:hover { background: var(--org-panel-2); }
+  .org-menu-footer-circle { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--org-faint); color: var(--org-text); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .org-crumbbar { position: sticky; top: 50px; z-index: 9; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--org-line); background: var(--org-bg); }
   .org-header-avatar, .org-card-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--org-muted); }
   .org-header-avatar { width: 30px; height: 30px; }
   .org-plan-pill { display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid var(--org-line); border-radius: 999px; color: var(--org-muted); font-size: 10.5px; font-weight: 650; text-transform: uppercase; }
   .org-commandbar-actions { gap: 8px; color: var(--org-muted); font-size: 12.5px; }
-  .org-feedback { border: 0; background: transparent; padding: 6px; color: var(--org-muted); cursor: pointer; transition: background .15s ease, color .15s ease; }
+  .org-feedback { border: 0; background: transparent; padding: 6px 8px; color: var(--org-muted); font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background .15s ease, color .15s ease; }
+  .org-feedback svg { width: 14px; height: 14px; }
   .org-feedback:hover { background: var(--org-panel); border-radius: 6px; color: var(--org-text); }
   .org-theme-toggle { display: inline-flex; align-items: center; justify-content: center; padding: 6px; border: 0; background: transparent; color: var(--org-muted); cursor: pointer; transition: color .15s ease; }
   .org-theme-toggle:hover { color: var(--org-text); }
@@ -618,15 +788,8 @@ const organizationStyles = `
   .org-sidebar-item:hover { color: var(--org-text); background: var(--org-panel); }
   .org-account-dot { width: 20px; height: 20px; border: 2px solid currentColor; border-radius: 50%; position: relative; }
   .org-account-dot::after { content: ""; position: absolute; left: 3px; right: 3px; bottom: 2px; height: 6px; border: 1.5px solid currentColor; border-radius: 8px 8px 5px 5px; }
-  .org-sidebar { position: fixed; top: 107px; bottom: 0; left: 0; z-index: 5; display: flex; width: 64px; flex-direction: column; align-items: stretch; gap: 0; padding: 10px 8px 0; border-right: 1px solid var(--org-line); background: var(--org-bg); transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+  .org-sidebar { position: fixed; top: 100px; bottom: 0; left: 0; z-index: 5; width: 64px; border-right: 1px solid var(--org-line); padding-top: 10px; }
   .org-sidebar:hover { width: 180px; }
-  .org-sidebar-item { display: flex; width: 100%; align-items: center; justify-content: center; gap: 0; margin: 1px 0; padding: 10px 0; border: 0; border-radius: 8px; background: transparent; color: var(--org-muted); cursor: pointer; transition: justify-content 0.28s cubic-bezier(0.4, 0, 0.2, 1), gap 0.28s cubic-bezier(0.4, 0, 0.2, 1), padding 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
-  .org-sidebar:hover .org-sidebar-item { justify-content: flex-start; gap: 12px; padding: 10px 14px; }
-  .org-sidebar-item svg { flex: 0 0 auto; }
-  .org-sidebar-label { flex: 0 0 0; width: 0; overflow: hidden; white-space: nowrap; opacity: 0; font-size: 13px; font-weight: 700; transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease; }
-  .org-sidebar:hover .org-sidebar-label { flex: 0 1 auto; width: auto; opacity: 1; }
-  .org-sidebar-item.active { border: 0; background: var(--org-panel); color: var(--org-text); }
-  .org-sidebar-bottom { margin-top: auto; }
   .org-create-page { display: flex; justify-content: center; padding: 28px 20px 48px; isolation: isolate; }
   .org-create-card { width: min(100%, 700px); overflow: hidden; border: 1px solid var(--org-line); border-radius: 7px; background: var(--org-panel); }
   .org-create-intro { padding: 16px 18px 14px; border-bottom: 1px solid var(--org-line); }
@@ -685,6 +848,72 @@ const organizationStyles = `
   .org-project-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; margin-top: 20px; }
   .org-project-main { min-width: 0; }
   .org-project-toolbar { display: flex; align-items: center; gap: 10px; }
+  .org-members-page { margin-left: 64px; padding: 40px 32px 56px; }
+  .org-members-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+  .org-members-heading h1 { margin: 0; font-size: 20px; letter-spacing: -.02em; }
+  .org-members-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
+  .org-members-toolbar > .org-compact-select { width: 150px; flex: 0 0 150px; }
+  .org-members-toolbar > .org-primary-button { height: 36px; margin-left: auto; }
+  .org-members-table { margin-top: 20px; overflow: visible; border: 1px solid var(--org-line); border-radius: 8px; background: var(--org-panel); }
+  .org-members-table-head, .org-member-row { display: grid; grid-template-columns: minmax(220px, 1.7fr) 110px 110px 110px 130px 36px; align-items: center; column-gap: 20px; }
+  .org-members-table-head { min-height: 40px; padding: 0 16px; border-bottom: 1px solid var(--org-line); color: var(--org-muted); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; }
+  .org-member-row { position: relative; width: 100%; min-height: 56px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--org-line); background: transparent; color: var(--org-text); font: inherit; text-align: left; cursor: pointer; }
+  .org-member-row:last-child { border-bottom: 0; }
+  .org-member-row:hover { background: var(--org-panel-2); }
+  .org-member-row:hover .org-member-chevron { color: var(--org-text); }
+  .org-member-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .org-member-avatar { display: inline-flex; width: 28px; height: 28px; flex: 0 0 28px; align-items: center; justify-content: center; border-radius: 50%; background: var(--org-panel-2); color: var(--org-text); font-size: 12px; font-weight: 700; }
+  .org-member-avatar-lg { width: 40px; height: 40px; flex-basis: 40px; font-size: 16px; }
+  .org-member-identity strong, .org-member-identity small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .org-member-identity strong { font-size: 13px; }
+  .org-member-identity small { margin-top: 3px; color: var(--org-muted); font-family: var(--font-mono), monospace; font-size: 11.5px; }
+  .org-role-badge { display: inline-flex; padding: 3px 8px; border: 1px solid var(--org-line); border-radius: 999px; font-size: 10.5px; font-weight: 700; }
+  .org-status-badge { display: inline-flex; align-items: center; gap: 5px; color: #22c55e; font-size: 12px; font-weight: 600; }
+  .org-status-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .org-status-badge.is-pending { color: #e8a13c; }
+  .org-status-badge.is-suspended { color: #fb7185; }
+  .org-member-count, .org-member-joined { color: var(--org-muted); font-size: 12px; white-space: nowrap; }
+  .org-member-chevron { display: flex; justify-content: flex-end; color: var(--org-faint); }
+  .org-members-empty { padding: 28px 16px; color: var(--org-faint); font-size: 13px; text-align: center; }
+  .org-member-owner-fallback { cursor: default; }
+  .org-member-owner-fallback:hover { background: transparent; }
+  .org-invite-rows { display: grid; gap: 8px; margin-top: 4px; max-height: 128px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--org-line) transparent; padding-right: 2px; }
+  .org-invite-rows:has(.org-select-menu) { max-height: none; overflow-y: visible; }
+  .org-invite-rows::-webkit-scrollbar { width: 4px; }
+  .org-invite-rows::-webkit-scrollbar-track { background: transparent; }
+  .org-invite-rows::-webkit-scrollbar-thumb { background: var(--org-line); border-radius: 999px; }
+  .org-member-menu-cell { position: relative; display: flex; justify-content: flex-end; }
+  .org-member-menu-cell .org-project-menu svg { width: 13px; height: 13px; }
+  .org-invite-row { display: flex; gap: 8px; align-items: center; }
+  .org-invite-email { flex: 1; min-width: 0; height: 36px; padding: 0 11px; border: 1px solid var(--org-line); border-radius: 6px; outline: 0; background: var(--org-panel-2); color: var(--org-text); font: inherit; font-size: 13px; }
+  .org-invite-email::placeholder { color: var(--org-faint); }
+  .org-invite-email:focus { border-color: var(--org-faint); }
+  .org-invite-email.is-invalid { border-color: rgba(251,113,133,.65); }
+  .org-invite-row > .org-compact-select { width: 150px; flex: 0 0 150px; }
+  .org-invite-remove { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border: 1px solid var(--org-line); border-radius: 6px; background: transparent; color: var(--org-muted); cursor: pointer; }
+  .org-invite-remove:hover { color: var(--org-text); border-color: var(--org-faint); }
+  .org-invite-add { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; border: 0; background: transparent; color: var(--org-muted); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .org-invite-add:hover { color: var(--org-text); }
+  .org-edit-rows { display: grid; gap: 10px; margin-top: 18px; }
+  .org-edit-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .org-edit-row > span:first-child { color: var(--org-muted); font-size: 13px; }
+  .org-edit-row > .org-compact-select { width: 190px; flex: 0 0 190px; }
+  .org-modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .org-danger-button { border-color: rgba(251,113,133,.45) !important; color: #fda4af !important; }
+  .org-danger-button:hover { background: rgba(251,113,133,.1) !important; }
+  .org-member-detail-head { display: flex; align-items: center; gap: 12px; }
+  .org-member-detail-head h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+  .org-member-detail-head p { margin: 3px 0 0; color: var(--org-muted); font-size: 12.5px; }
+  .org-member-detail-badges { display: flex; gap: 8px; margin-top: 12px; }
+  .org-member-detail-section { margin-top: 18px; }
+  .org-member-detail-section h3 { margin: 0 0 8px; color: var(--org-muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .org-member-detail-section ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .org-member-detail-section li { font-size: 13px; text-transform: capitalize; }
+  .org-member-detail-section p { margin: 0; font-size: 13px; }
+  .org-member-detail-note { margin-top: 14px; color: var(--org-muted); font-size: 12.5px; line-height: 1.55; }
+  .org-member-detail-actions { flex-wrap: wrap; }
+  .org-member-detail-actions .org-secondary-button { display: inline-flex; align-items: center; gap: 6px; }
+  .org-member-detail-actions .org-secondary-button svg { width: 14px; height: 14px; }
   .org-project-search { width: 360px; }
   .org-project-toolbar > .org-compact-select { width: 122px; flex: 0 0 122px; }
   .org-project-sort .org-select-menu { min-width: 148px; }
@@ -697,7 +926,8 @@ const organizationStyles = `
   .org-project-table-head { min-height: 40px; padding: 0 16px; border-bottom: 1px solid var(--org-line); color: var(--org-muted); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; }
   .org-project-row { position: relative; width: 100%; min-height: 56px; padding: 0 16px; border: 0; border-bottom: 1px solid var(--org-line); background: transparent; color: var(--org-text); text-align: left; cursor: pointer; }
   .org-project-row:last-child { border-bottom: 0; }
-  .org-project-row:hover { background: var(--org-panel-2); }
+  .org-project-row:hover { background: var(--org-panel-2); border-bottom-color: transparent; }
+  .org-project-row:hover { border-color: var(--org-faint); background: var(--org-panel-2); }
   .org-project-name strong, .org-project-name small { display: block; }
   .org-project-name strong { font-size: 13px; }
   .org-project-name small { margin-top: 3px; color: var(--org-muted); font-family: var(--font-mono), monospace; font-size: 11.5px; }
@@ -721,8 +951,10 @@ const organizationStyles = `
   .org-project-empty svg { color: var(--org-muted); }
   .org-project-empty h2 { margin: 3px 0 0; color: var(--org-text); font-size: 16px; }
   .org-project-empty p { margin: 0 0 8px; font-size: 13px; }
-  .org-modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.66); }
-  .org-modal { position: relative; width: min(100%, 470px); padding: 28px; border: 1px solid var(--org-line); border-radius: 10px; background: var(--org-panel); box-shadow: 0 24px 80px rgba(0,0,0,.5); }
+  .org-modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.66); animation: org-modal-fade 180ms ease forwards; }
+  .org-modal { position: relative; width: min(100%, 470px); padding: 28px; border: 1px solid var(--org-line); border-radius: 4px; background: var(--org-panel); box-shadow: 0 24px 80px rgba(0,0,0,.5); animation: org-modal-in 220ms cubic-bezier(.2,.8,.3,1) forwards; }
+  @keyframes org-modal-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes org-modal-in { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: none; } }
   .org-modal-close { position: absolute; top: 18px; right: 18px; display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--org-muted); cursor: pointer; }
   .org-modal h2 { margin: 0; font-size: 18px; }
   .org-modal > p { margin: 8px 0 22px; color: var(--org-muted); line-height: 1.5; }
@@ -732,7 +964,7 @@ const organizationStyles = `
   .org-spin { animation: org-spin .8s linear infinite; }
   @keyframes org-spin { to { transform: rotate(360deg); } }
   @media (max-width: 1180px) { .org-project-layout { grid-template-columns: minmax(0, 1fr); } .org-project-toolbar { flex-wrap: wrap; } .org-project-search { flex: 1 1 300px; } .org-view-toggle { margin-left: 0; } }
-  @media (max-width: 850px) { .org-commandbar { height: 55px; min-height: 55px; padding: 0 16px; } .org-commandbar-actions { gap: 4px; } .org-feedback, .org-commandbar-search span, .org-commandbar-search kbd { display: none; } .org-commandbar-search { flex: 0 0 32px; width: 32px; max-width: 32px; justify-content: center; padding: 0; } .org-commandbar-search svg { margin: 0; } .org-sidebar { top: 107px; width: 56px; padding: 10px 6px 0; } .org-sidebar:hover { width: 170px; } .org-project-page { margin-left: 56px; padding: 32px 20px 48px; } .org-settings-content { margin-left: 56px; padding: 32px 20px 48px; } .org-project-layout { grid-template-columns: 1fr; margin-top: 20px; } .org-project-table-head, .org-project-row { grid-template-columns: minmax(160px, 1fr) .7fr 32px; column-gap: 12px; padding-inline: 14px; } .org-project-table-head span:nth-child(3), .org-project-table-head span:nth-child(4), .org-project-row > span:nth-child(3), .org-project-row > span:nth-child(4) { display: none; } }
+  @media (max-width: 850px) { .org-commandbar { height: 55px; min-height: 55px; padding: 0 16px; } .org-commandbar-actions { gap: 4px; } .org-feedback, .org-commandbar-search span, .org-commandbar-search kbd { display: none; } .org-commandbar-search { flex: 0 0 32px; width: 32px; max-width: 32px; justify-content: center; padding: 0; } .org-commandbar-search svg { margin: 0; } .org-sidebar { top: 100px; width: 56px; padding: 10px 6px 0; } .org-sidebar:hover { width: 170px; } .org-project-page { margin-left: 56px; padding: 32px 20px 48px; } .org-settings-content { margin-left: 56px; padding: 32px 20px 48px; } .org-project-layout { grid-template-columns: 1fr; margin-top: 20px; } .org-project-table-head, .org-project-row { grid-template-columns: minmax(160px, 1fr) .7fr 32px; column-gap: 12px; padding-inline: 14px; } .org-project-table-head span:nth-child(3), .org-project-table-head span:nth-child(4), .org-project-row > span:nth-child(3), .org-project-row > span:nth-child(4) { display: none; } }
   @media (max-width: 620px) { .org-create-page { padding: 24px 14px 50px; } .org-create-intro { padding: 22px 18px; } .org-create-intro h1 { font-size: 21px; } .org-create-intro p { font-size: 14px; } .org-create-row { grid-template-columns: 1fr; gap: 12px; padding: 20px 18px; } .org-create-row strong { font-size: 15px; } .org-create-row p { font-size: 14px; } .org-create-footer { padding: 14px 18px; } .org-list-page { padding: 40px 18px 48px; } .org-list-heading { align-items: flex-start; flex-direction: column; } .org-list-heading h1, .org-project-heading h1 { font-size: 18px; } .org-list-toolbar { margin-top: 20px; } .org-card-grid { grid-template-columns: 1fr; } .org-project-toolbar { align-items: stretch; flex-direction: column; } .org-project-search { flex: auto; width: 100%; } .org-filter-button, .org-project-toolbar > .org-primary-button { width: 100%; } .org-view-toggle { display: none; } }
   @media (max-width: 850px) {
     .org-project-table-head, .org-project-row { grid-template-columns: minmax(160px, 1fr) 1.2fr 1.3fr 32px; column-gap: 12px; padding-inline: 14px; }

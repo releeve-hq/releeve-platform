@@ -20,9 +20,10 @@ pub struct Onboarded {
     pub verification_link: String,
 }
 
-/// Create a user + an unnamed personal org + an owner membership atomically.
-/// When `email_verified` is false, an email-verification token is issued and
-/// its raw value returned (returned exactly once; only the hash is stored).
+/// Create a user + a personal org named after the email + an owner membership
+/// atomically. When `email_verified` is false, an email-verification token is
+/// issued and its raw value returned (returned exactly once; only the hash is
+/// stored).
 pub async fn create_user_with_personal_org(
     state: &AppState,
     email: &str,
@@ -60,8 +61,8 @@ pub async fn create_user_with_personal_org(
     .await
     .map_err(unique_or_conflict_err)?;
 
-    // 2. Personal (unnamed) org + owner membership.
-    let org_id = insert_personal_org(&mut tx, &user_id).await?;
+    // 2. Personal org (named after the account email) + owner membership.
+    let org_id = insert_personal_org(&mut tx, &user_id, &email).await?;
 
     // 3. Email-verification token unless pre-verified.
     let (verification_raw, verification_link) = if email_verified {
@@ -112,15 +113,25 @@ pub async fn rollback_account(state: &AppState, user_id: Uuid, org_id: Uuid) {
 async fn insert_personal_org<'c>(
     tx: &mut sqlx::Transaction<'c, sqlx::Postgres>,
     user_id: &Uuid,
+    email: &str,
 ) -> Result<Uuid, Error> {
+    // The signup email names the personal organization: the local part of the
+    // address (e.g. "alice" for alice@example.com), capped to 60 characters.
+    let org_name = email
+        .split('@')
+        .next()
+        .filter(|part| !part.is_empty())
+        .map(|part| part.chars().take(60).collect::<String>())
+        .unwrap_or_else(|| "Personal".to_string());
     let org_id = sqlx::query_scalar::<_, Uuid>(
         r#"
         INSERT INTO organizations (slug, name, is_personal, plan_tier, owner_user_id)
-        VALUES ($1, NULL, true, 'free', $2)
+        VALUES ($1, $2, true, 'free', $3)
         RETURNING id
         "#,
     )
     .bind(make_personal_slug(user_id))
+    .bind(&org_name)
     .bind(user_id)
     .fetch_one(&mut **tx)
     .await

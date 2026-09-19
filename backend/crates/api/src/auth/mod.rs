@@ -196,6 +196,14 @@ pub async fn signup(
         create_user_with_personal_org(&state, &email, &username, Some(&password_hash), false)
             .await?;
 
+    // Claim any pending org invitations for this email so invitees land in
+    // their orgs without a separate accept step. Never fails signup.
+    if let Err(e) =
+        crate::orgs::claim_invitations_for_email(&state.db, onboarded.user_id, &email).await
+    {
+        tracing::warn!(error = %e, "invitation auto-claim failed");
+    }
+
     let email_msg = crate::mailer::Email {
         to: email.clone(),
         subject: "Verify your Releeve email".into(),
@@ -203,9 +211,12 @@ pub async fn signup(
             "Welcome to Releeve. Confirm your email: {}",
             onboarded.verification_link
         ),
+        html: None,
     };
-    if let Err(e) = state.mailer.send(email_msg).await {
-        tracing::error!(error = %e, "verification email failed — rolling back signup");
+    // Queue for background delivery — a mail failure must never fail signup.
+    // Only an outbox outage (i.e. the database itself) rolls the account back.
+    if let Err(e) = crate::email_queue::enqueue(&state.db, email_msg).await {
+        tracing::error!(error = %e, "verification email could not be queued — rolling back signup");
         rollback_account(&state, onboarded.user_id, onboarded.org_id).await;
         return Err(e);
     }
@@ -375,14 +386,19 @@ pub async fn resend_verification(
         .await
         .map_err(Error::internal)?;
         let link = format!("{}/auth/verify?token={raw}", state.settings.app_base_url);
-        let _ = state
-            .mailer
-            .send(crate::mailer::Email {
+        if let Err(e) = crate::email_queue::enqueue(
+            &state.db,
+            crate::mailer::Email {
                 to: email,
                 subject: "Verify your Releeve email".into(),
                 body: link,
-            })
-            .await;
+                html: None,
+            },
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "verification email could not be queued");
+        }
     }
 
     Ok(Json(ResendResponse {
@@ -529,14 +545,19 @@ pub async fn forgot_password(
         .await
         .map_err(Error::internal)?;
         let link = format!("{}/reset-password?token={raw}", state.settings.app_base_url);
-        let _ = state
-            .mailer
-            .send(crate::mailer::Email {
+        if let Err(e) = crate::email_queue::enqueue(
+            &state.db,
+            crate::mailer::Email {
                 to: email,
                 subject: "Reset your Releeve password".into(),
                 body: link,
-            })
-            .await;
+                html: None,
+            },
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "password-reset email could not be queued");
+        }
     }
 
     Ok(Json(ForgotResponse {

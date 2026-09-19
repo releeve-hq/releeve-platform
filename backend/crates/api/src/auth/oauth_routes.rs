@@ -184,6 +184,12 @@ async fn resolve_identity(
 
     // 3) Auto-provision a verified user + personal org.
     let onboarded = create_user_with_personal_org(state, &identity.email, "", None, true).await?;
+    if let Err(e) =
+        crate::orgs::claim_invitations_for_email(&state.db, onboarded.user_id, &identity.email)
+            .await
+    {
+        tracing::warn!(error = %e, "invitation auto-claim failed");
+    }
     if let Err(e) = link_provider(&state.db, onboarded.user_id, provider, provider_id).await {
         rollback_account(state, onboarded.user_id, onboarded.org_id).await;
         return Err(e);
