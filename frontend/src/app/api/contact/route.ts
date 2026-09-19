@@ -17,6 +17,61 @@ function readField(body: Record<string, unknown>, field: ContactField) {
   return typeof value === "string" ? value.trim().slice(0, limits[field]) : "";
 }
 
+function addressFrom(value: string) {
+  const bracketed = value.match(/<([^>]+)>/)?.[1];
+  const address = (bracketed || value).trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) ? address : "";
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character] || character);
+}
+
+async function deliverEmail({ recipient, sender, replyTo, subject, text }: { recipient: string; sender: string; replyTo: string; subject: string; text: string }) {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (resendKey) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: sender, to: [recipient], reply_to: replyTo, subject, text }),
+    });
+    return { ok: response.ok, provider: "resend", status: response.status, detail: await response.text() };
+  }
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_EMAIL_API_TOKEN;
+  if (accountId && apiToken) {
+    const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/email/sending/send`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: sender,
+        to: recipient,
+        subject,
+        text,
+        html: `<pre style="font-family:Arial,sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`,
+      }),
+    });
+    const detail = await response.text();
+    let delivered = response.ok;
+    try {
+      const payload = JSON.parse(detail) as { success?: boolean; result?: { delivered?: unknown[] } };
+      delivered = response.ok && payload.success === true && Boolean(payload.result?.delivered?.length);
+    } catch {
+      delivered = false;
+    }
+    return { ok: delivered, provider: "cloudflare", status: response.status, detail };
+  }
+
+  return null;
+}
+
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
   try {
@@ -40,12 +95,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Please complete every field with a valid email address." }, { status: 400 });
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const recipient = process.env.CONTACT_EMAIL_TO;
   const sender = process.env.EMAIL_FROM || "Releeve <no-reply@releeve.xyz>";
+  const recipient = process.env.CONTACT_EMAIL_TO || addressFrom(sender);
 
-  if (!apiKey || !recipient) {
-    console.error("Contact form delivery is not configured. Set RESEND_API_KEY and CONTACT_EMAIL_TO.");
+  if (!recipient) {
+    console.error("Contact form recipient is not configured. Set CONTACT_EMAIL_TO or a valid EMAIL_FROM.");
     return NextResponse.json({ error: "Messaging is temporarily unavailable. Please try again shortly." }, { status: 503 });
   }
 
@@ -58,24 +112,13 @@ export async function POST(request: Request) {
   ].join("\n");
 
   try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: sender,
-        to: [recipient],
-        reply_to: email,
-        subject: `[Releeve website] ${subject}`,
-        text,
-      }),
-    });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      console.error("Contact form delivery failed", response.status, detail.slice(0, 500));
+    const delivery = await deliverEmail({ recipient, sender, replyTo: email, subject: `[Releeve website] ${subject}`, text });
+    if (!delivery) {
+      console.error("Contact form delivery is not configured. Set RESEND_API_KEY or the Cloudflare email credentials.");
+      return NextResponse.json({ error: "Messaging is temporarily unavailable. Please try again shortly." }, { status: 503 });
+    }
+    if (!delivery.ok) {
+      console.error("Contact form delivery failed", delivery.provider, delivery.status, delivery.detail.slice(0, 500));
       return NextResponse.json({ error: "We could not send your message. Please try again." }, { status: 502 });
     }
 

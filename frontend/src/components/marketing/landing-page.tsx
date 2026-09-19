@@ -9,10 +9,13 @@ import {
   Clock3,
   Code2,
   Database,
+  GitBranch,
+  KeyRound,
   Network,
   SlidersHorizontal,
   UserRound,
   Wallet,
+  Webhook,
 } from "lucide-react";
 import { EnvironmentPreview, ExplorerPreview, HeroVirtualNetworkPreview, MonitoringPreview } from "./product-previews";
 
@@ -57,6 +60,36 @@ const suiteAlertRows = [
 ];
 
 const platformWords = ["networks", "contracts", "alerts", "releases", "teams", "operations"];
+
+const platformCapabilities = [
+  {
+    kicker: "Delivery / 01",
+    title: "Webhooks",
+    desc: "Send signed operational events to the tools your team already watches, with every retry and delivery attempt visible.",
+    icon: Webhook,
+    accent: "var(--m-blue)",
+    details: ["HMAC signed", "Retry aware", "Delivery history"],
+    scene: <WebhookScene />,
+  },
+  {
+    kicker: "Lifecycle / 02",
+    title: "Network controls",
+    desc: "Move a virtual network through its lifecycle without losing the state or evidence that made the scenario useful.",
+    icon: GitBranch,
+    accent: "var(--m-signal)",
+    details: ["Branch", "Follow live state", "Roll back"],
+    scene: <EnvironmentsScene />,
+  },
+  {
+    kicker: "Access / 03",
+    title: "Project tokens",
+    desc: "Give local tools and automation only the project access they need, then rotate or revoke it at any time.",
+    icon: KeyRound,
+    accent: "var(--m-amber)",
+    details: ["Scoped", "Rotatable", "Revocable"],
+    scene: <AccessTokensScene />,
+  },
+];
 
 export function LandingPage() {
   return (
@@ -187,9 +220,9 @@ export function LandingPage() {
           <EnvironmentPreview />
           <FeatureCopy
             index="VIRTUAL NETWORKS"
-            title="Create the network conditions you need."
-            body="Fork real Stellar state into a persistent Virtual Network, create the conditions you care about, and replay Soroban invocations without moving production funds."
-            points={["Balance, contract storage, TTL, ledger, and timestamp overrides", "Scoped account impersonation without secret keys", "Branch, reset, roll back, or follow live untouched state while preserving intentional changes"]}
+            title="A controlled Stellar network, built from real state."
+            body="A Virtual Network starts as a fork of mainnet or testnet and stays available as a workspace for the conditions your team needs. Shape the state, act as the accounts involved, and replay Soroban invocations without secret keys or production funds."
+            points={["Set balances, contract storage, TTL, ledger sequence, and timestamps", "Inspect calls, events, state changes, return values, and structured failures", "Branch, reset, roll back, or follow untouched live state while preserving intentional changes"]}
           />
         </div>
       </section>
@@ -232,18 +265,14 @@ export function LandingPage() {
             </div>
           </div>
           <div className="platform-cards">
-            <PlatformCard kicker="State" title="Virtual network API" desc="Fork real ledger state, apply controlled overrides, and replay Soroban invocations through one programmable surface.">
+            <PlatformCard kicker="State / Virtual networks" title="One programmable surface for controlled Stellar state" desc="Fork mainnet or testnet, shape balances, storage, TTL, ledger time, and account identity, then replay Soroban invocations and inspect the resulting evidence through one API.">
               <div className="platform-visual"><VirtualNetworkApiScene /></div>
             </PlatformCard>
-            <PlatformCard kicker="Delivery" title="Webhooks" desc="Route signed operational events to your team and inspect every delivery attempt.">
-              <div className="platform-visual"><WebhookScene /></div>
-            </PlatformCard>
-            <PlatformCard kicker="Lifecycle" title="Network controls" desc="Branch, follow live state, reset safely, and return to named rollback points without losing the original fork.">
-              <div className="platform-visual"><EnvironmentsScene /></div>
-            </PlatformCard>
-            <PlatformCard kicker="Access" title="Project tokens" desc="Issue scoped API credentials per organization for local tools, automation, and CI.">
-              <div className="platform-visual"><AccessTokensScene /></div>
-            </PlatformCard>
+            <div className="platform-capability-grid">
+              {platformCapabilities.map((capability) => (
+                <CapabilityCard key={capability.title} {...capability} />
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -460,13 +489,30 @@ function FeatureCopy({ index, title, body, points }: { index: string; title: str
 
 function PlatformCard({ kicker, title, desc, children }: { kicker: string; title: string; desc: string; children: React.ReactNode }) {
   return (
-    <article className="platform-card">
+    <article className="platform-card platform-card-featured">
       <div className="platform-card-head">
         <span className="platform-card-kicker">{kicker}</span>
         <div className="platform-card-title"><h3>{title}</h3></div>
         <p>{desc}</p>
       </div>
       {children}
+    </article>
+  );
+}
+
+function CapabilityCard({ kicker, title, desc, icon: Icon, accent, details, scene }: { kicker: string; title: string; desc: string; icon: typeof Webhook; accent: string; details: string[]; scene: React.ReactNode }) {
+  return (
+    <article className="platform-capability-card" style={{ "--card-accent": accent } as CSSProperties}>
+      <div className="platform-capability-head">
+        <span className="platform-capability-icon"><Icon size={18} /></span>
+        <span className="platform-card-kicker">{kicker}</span>
+      </div>
+      <h3>{title}</h3>
+      <p>{desc}</p>
+      <div className="platform-capability-details">
+        {details.map((detail) => <span key={detail}>{detail}</span>)}
+      </div>
+      <div className="platform-capability-visual">{scene}</div>
     </article>
   );
 }
@@ -518,7 +564,7 @@ function VirtualNetworkApiScene() {
 
 function WebhookScene() {
   return (
-    <svg className="platform-scene" viewBox="0 0 360 330" preserveAspectRatio="xMidYMid slice" aria-hidden="true" style={{ "--acc": "var(--m-blue)" } as CSSProperties}>
+    <svg className="platform-scene" viewBox="0 0 360 330" preserveAspectRatio="xMidYMid meet" aria-hidden="true" style={{ "--acc": "var(--m-blue)" } as CSSProperties}>
       <text x="20" y="24" className="sc-label">EVENT SOURCES</text>
       <rect className="sc-chip" x="20" y="34" width="118" height="20" rx="6" />
       <circle cx="34" cy="44" r="3" fill="var(--m-blue)" />
@@ -566,7 +612,7 @@ function WebhookScene() {
 
 function EnvironmentsScene() {
   return (
-    <svg className="platform-scene" viewBox="0 0 360 356" preserveAspectRatio="xMidYMid slice" aria-hidden="true" style={{ "--acc": "var(--m-blue)" } as CSSProperties}>
+    <svg className="platform-scene" viewBox="0 0 360 356" preserveAspectRatio="xMidYMid meet" aria-hidden="true" style={{ "--acc": "var(--m-blue)" } as CSSProperties}>
       <text x="24" y="26" className="sc-label">VIRTUAL NETWORKS</text>
       <rect className="sc-panel" x="24" y="38" width="312" height="92" rx="10" />
       <rect x="42" y="56" width="12" height="12" rx="3" fill="var(--m-signal)" />
@@ -586,7 +632,7 @@ function EnvironmentsScene() {
       <path className="sc-stroke-soft sc-flow" d="M180 130 V258" />
       <circle className="sc-mote" r="3" style={{ "--d": "2.2s", offsetPath: "path('M180 130 V258')" } as CSSProperties} />
       <rect className="sc-panel" x="24" y="262" width="312" height="66" rx="10" strokeDasharray="4 4" />
-      <text x="42" y="288" className="sc-panel-head">sim-deposit</text>
+      <text x="42" y="288" className="sc-panel-head">whale-deposit</text>
       <text x="42" y="306" className="sc-label">snapshot @ 2,390,021 · branched</text>
       <rect className="sc-badge-signal" x="270" y="276" width="54" height="16" rx="4" />
       <text className="sc-label" x="297" y="287" textAnchor="middle" fill="var(--m-blue)">+ Branch</text>
@@ -597,12 +643,12 @@ function EnvironmentsScene() {
 
 function AccessTokensScene() {
   const rows = [
-    { name: "ci-release", token: "rleeve_8f2a••••••••••9c1d", scopes: ["sims", "envs", "alerts"], created: "12 Jan 2026" },
-    { name: "explorer-readonly", token: "rleeve_71c0••••••••••4ab2", scopes: ["explorer", "sims"], created: "03 Jan 2026" },
+    { name: "ci-release", token: "rleeve_8f2a••••••••••9c1d", scopes: ["replay", "network", "alerts"], created: "12 Jan 2026" },
+    { name: "ops-readonly", token: "rleeve_71c0••••••••••4ab2", scopes: ["read", "events"], created: "03 Jan 2026" },
     { name: "billing-worker", token: "rleeve_e5a9••••••••••07d4", scopes: ["webhooks", "alerts"], created: "21 Dec 2025" },
   ];
   return (
-    <svg className="platform-scene" viewBox="0 0 760 356" preserveAspectRatio="xMidYMid slice" aria-hidden="true" style={{ "--acc": "var(--m-amber)" } as CSSProperties}>
+    <svg className="platform-scene" viewBox="0 0 760 356" preserveAspectRatio="xMidYMid meet" aria-hidden="true" style={{ "--acc": "var(--m-amber)" } as CSSProperties}>
       <text x="24" y="26" className="sc-label">ACCESS TOKENS</text>
       {rows.map((row, index) => {
         const y = 40 + index * 56;

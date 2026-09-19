@@ -654,10 +654,9 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   83.33%, 95.33% { transform: translateY(-71.43%); }
   100% { transform: translateY(-85.71%); }
 }
-.platform-cards { display: grid; margin-top: 46px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.platform-cards { display: grid; margin-top: 46px; gap: 18px; }
 .platform-card {
   display: flex;
-  min-height: 410px;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--m-line);
@@ -665,16 +664,17 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   background: linear-gradient(180deg, var(--m-bg), color-mix(in srgb, var(--m-panel) 64%, var(--m-bg)));
   box-shadow: 0 16px 40px color-mix(in srgb, #000 12%, transparent);
 }
-.platform-card-head { display: flex; min-height: 164px; padding: 24px 26px 0; flex-direction: column; gap: 9px; }
+.platform-card-featured { display: grid; min-height: 410px; grid-template-columns: minmax(300px, .78fr) minmax(0, 1.35fr); }
+.platform-card-head { display: flex; min-height: 164px; padding: 38px; flex-direction: column; justify-content: center; gap: 13px; }
 .platform-card-kicker { color: var(--m-signal); font-family: var(--font-mono), monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .platform-card-title { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.platform-card-title h3 { margin: 0; font-size: 20px; font-weight: 540; letter-spacing: 0; }
-.platform-card-head > p { max-width: 420px; margin: 0; color: var(--m-muted); font-size: 13px; line-height: 1.6; }
+.platform-card-title h3 { max-width: 440px; margin: 0; font-size: clamp(25px, 2.4vw, 36px); font-weight: 540; line-height: 1.12; letter-spacing: -.02em; }
+.platform-card-head > p { max-width: 460px; margin: 0; color: var(--m-muted); font-size: 13px; line-height: 1.7; }
 .platform-visual {
   position: relative;
   display: flex;
-  min-height: 210px;
-  margin: 20px;
+  min-height: 350px;
+  margin: 20px 20px 20px 0;
   flex: 1;
   overflow: hidden;
   border: 1px solid var(--m-line-soft);
@@ -682,6 +682,29 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   background: var(--m-panel);
 }
 .platform-scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+.platform-capability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.platform-capability-card {
+  --card-accent: var(--m-signal);
+  position: relative;
+  display: flex;
+  min-height: 430px;
+  padding: 26px 26px 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--m-line);
+  border-radius: 10px;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--card-accent) 7%, var(--m-panel)), var(--m-bg) 48%);
+  box-shadow: 0 14px 34px color-mix(in srgb, #000 10%, transparent);
+}
+.platform-capability-card::before { position: absolute; top: 0; right: 0; left: 0; height: 2px; background: linear-gradient(90deg, var(--card-accent), transparent 75%); content: ""; }
+.platform-capability-head { display: flex; align-items: center; gap: 11px; }
+.platform-capability-head .platform-card-kicker { color: color-mix(in srgb, var(--card-accent) 80%, var(--m-ink)); }
+.platform-capability-icon { display: inline-flex; width: 36px; height: 36px; flex: 0 0 auto; align-items: center; justify-content: center; border: 1px solid color-mix(in srgb, var(--card-accent) 34%, var(--m-line)); border-radius: 8px; background: color-mix(in srgb, var(--card-accent) 10%, transparent); color: var(--card-accent); }
+.platform-capability-card h3 { margin: 25px 0 0; font-size: 23px; font-weight: 550; letter-spacing: -.015em; }
+.platform-capability-card > p { min-height: 66px; margin: 12px 0 0; color: var(--m-muted); font-size: 12px; line-height: 1.65; }
+.platform-capability-details { display: flex; margin-top: 20px; flex-wrap: wrap; gap: 7px; }
+.platform-capability-details span { display: inline-flex; min-height: 24px; padding: 0 9px; align-items: center; border: 1px solid color-mix(in srgb, var(--card-accent) 22%, var(--m-line)); border-radius: 999px; background: color-mix(in srgb, var(--card-accent) 6%, transparent); color: var(--m-muted); font-family: var(--font-mono), monospace; font-size: 8px; letter-spacing: .03em; }
+.platform-capability-visual { position: relative; min-height: 190px; margin: 24px -8px 0; flex: 1; overflow: hidden; border: 1px solid var(--m-line-soft); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--m-panel); }
 .sc-panel { fill: var(--m-bg); stroke: color-mix(in srgb, var(--m-ink) 22%, transparent); }
 .sc-panel-head { fill: var(--m-ink); font-family: var(--font-mono), monospace; font-size: 11px; font-weight: 600; }
 .sc-label { fill: var(--m-muted); font-family: var(--font-mono), monospace; font-size: 9px; }
@@ -996,7 +1019,10 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   .marketing-feature-reverse .feature-copy { order: 1; }
   .feature-copy { max-width: 680px; }
   .platform-section { padding: 90px 44px; }
-  .platform-cards { grid-template-columns: 1fr; }
+  .platform-card-featured { grid-template-columns: 1fr; }
+  .platform-card-featured .platform-visual { min-height: 310px; margin: 0 20px 20px; }
+  .platform-capability-grid { grid-template-columns: 1fr; }
+  .platform-capability-card { min-height: 390px; }
   .scenario-section { padding: 90px 28px; }
   .marketing-final-cta { margin-bottom: 28px; padding: 48px 44px; flex-direction: column; align-items: flex-start; }
   .marketing-footer-grid { grid-template-columns: 1.5fr repeat(3, 1fr); padding-inline: 32px; gap: 28px; }
@@ -1065,6 +1091,9 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   .monitor-flow > svg { margin: 0 auto; transform: rotate(90deg); }
   .monitor-block { min-height: 115px; }
   .platform-section { padding: 75px 20px; }
+  .platform-card-head { padding: 28px 24px; }
+  .platform-card-featured .platform-visual { min-height: 260px; margin-inline: 12px; }
+  .platform-capability-card { min-height: 410px; padding-inline: 22px; }
   .code-window pre { padding: 20px; font-size: 9px; }
   .scenario-section { padding: 75px 14px; }
   .scenario-rail { gap: 18px; padding-inline: 14px; }
