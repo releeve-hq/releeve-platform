@@ -8,12 +8,9 @@ import {
   BookOpen,
   Braces,
   ChevronDown,
-  ExternalLink,
   Menu,
-  Play,
   Radar,
   Rocket,
-  ScanSearch,
   Search,
   X,
 } from "lucide-react";
@@ -24,10 +21,8 @@ import { getDocsQuery, setDocsQuery, subscribeDocsQuery } from "./docs-search-st
 type MenuKey = "platform" | "developers";
 
 const platformLinks = [
-  { href: "/#simulation", label: "Simulator", detail: "Replay Soroban calls on forked state", icon: Play },
   { href: "/#environments", label: "Virtual networks", detail: "Persist snapshots and controlled overrides", icon: Blocks },
   { href: "/#monitoring", label: "Monitoring", detail: "Watch calls, events, balances, and state", icon: BellRing },
-  { href: "/explorer/testnet", label: "Explorer", detail: "Inspect decoded Stellar activity", icon: ScanSearch },
 ];
 
 const developerLinks = [
@@ -77,13 +72,6 @@ export function MarketingNavigation() {
 
   return (
     <header ref={headerRef} className="marketing-header">
-      {!pathname.startsWith("/docs") && (
-        <Link className="marketing-announcement" href="/#simulation">
-          <span>Fork real Stellar state. Test the scenario before mainnet does.</span>
-          <ExternalLink aria-hidden="true" size={13} />
-        </Link>
-      )}
-
       <div className="marketing-nav-frame">
         <nav className="marketing-nav" aria-label="Primary navigation">
           <Link className="marketing-brand" href="/" aria-label="Releeve home">
@@ -110,8 +98,6 @@ export function MarketingNavigation() {
                   openMenu={openMenu}
                   setOpenMenu={setOpenMenu}
                 />
-                <Link className="marketing-nav-link" href="/pricing">Pricing</Link>
-                <Link className="marketing-nav-link" href="/docs">Documentation</Link>
               </>
             )}
           </div>
@@ -155,8 +141,6 @@ export function MarketingNavigation() {
                 active={mobileSection}
                 setActive={setMobileSection}
               />
-              <Link className="marketing-mobile-link" href="/pricing">Pricing</Link>
-              <Link className="marketing-mobile-link" href="/docs">Documentation</Link>
             </>
           )}
           <div className="marketing-mobile-actions">

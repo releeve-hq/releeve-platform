@@ -86,22 +86,6 @@ html[data-marketing-theme="light"] .marketing-site {
   display: contents;
 }
 
-.marketing-announcement {
-  display: flex;
-  min-height: 35px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 6px 48px;
-  border-bottom: 1px solid var(--m-line);
-  background: var(--m-panel-2);
-  color: var(--m-muted) !important;
-  font-size: 12px;
-  text-align: center;
-  transition: color 150ms ease;
-}
-.marketing-announcement:hover { color: var(--m-ink) !important; }
-
 .marketing-nav-frame {
   position: sticky;
   top: 0;
@@ -977,7 +961,7 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   .marketing-nav-links,
   .marketing-nav-actions { display: none; }
   .marketing-mobile-trigger { display: inline-flex; width: 38px; height: 38px; margin-left: auto; align-items: center; justify-content: center; border: 1px solid var(--m-line); border-radius: 4px; background: transparent; cursor: pointer; }
-  .marketing-mobile-menu { position: fixed; inset: 96px 14px 14px; z-index: 110; display: flex; padding: 22px; flex-direction: column; overflow-y: auto; border: 1px solid var(--m-line); border-radius: 6px; background: var(--m-bg); box-shadow: 0 24px 70px rgba(0,0,0,.5); }
+  .marketing-mobile-menu { position: fixed; inset: 74px 14px 14px; z-index: 110; display: flex; padding: 22px; flex-direction: column; overflow-y: auto; border: 1px solid var(--m-line); border-radius: 6px; background: var(--m-bg); box-shadow: 0 24px 70px rgba(0,0,0,.5); }
   .marketing-mobile-group > button,
   .marketing-mobile-link { display: flex; width: 100%; min-height: 52px; padding: 0; align-items: center; justify-content: space-between; border: 0; border-bottom: 1px solid var(--m-line); background: transparent; color: var(--m-ink); font-size: 18px; font-weight: 580; text-align: left; }
   .marketing-mobile-menu .marketing-nav-search-wrap { width: 100%; margin-bottom: 14px; }
@@ -1017,7 +1001,6 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
 }
 
 @media (max-width: 680px) {
-  .marketing-announcement { padding-inline: 18px; font-size: 10px; }
   .marketing-nav-frame { top: 0; }
   .marketing-hero { padding: 64px 20px 36px; }
   .marketing-hero::before { left: 50%; }
