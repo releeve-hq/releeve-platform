@@ -19,7 +19,7 @@ export function DocGuidePage({ guide }: { guide: DocGuide }) {
       ))}
       <div className="doc-bottom-nav">
         <Link href="/docs"><ArrowLeft size={14} /> Documentation home</Link>
-        <Link href="/signup">Create account <ArrowRight size={14} /></Link>
+        <Link href="/signup">Talk to us <ArrowRight size={14} /></Link>
       </div>
     </article>
   );

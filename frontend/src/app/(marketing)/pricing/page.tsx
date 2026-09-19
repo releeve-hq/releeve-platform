@@ -40,7 +40,7 @@ export default function PricingPage() {
           <article key={plan.name} data-current={plan.current}>
             <div className="pricing-plan-head"><span>{plan.state}</span><h2>{plan.name}</h2><p>{plan.description}</p></div>
             <div className="pricing-plan-price">{plan.current ? "Free preview" : "Price not set"}<small>{plan.current ? "available now" : "planned tier"}</small></div>
-            {plan.current ? <Link className="marketing-button marketing-button-primary" href="/signup">Create account <ArrowRight size={14} /></Link> : <span className="pricing-planned-button">Planned tier</span>}
+            {plan.current ? <Link className="marketing-button marketing-button-primary" href="/signup">Talk to us <ArrowRight size={14} /></Link> : <span className="pricing-planned-button">Planned tier</span>}
           </article>
         ))}
       </section>
@@ -57,7 +57,7 @@ export default function PricingPage() {
 
       <section className="marketing-final-cta marketing-frame">
         <div><p>No card. No checkout.</p><h2>Use the preview to test the workflow properly.</h2></div>
-        <div className="marketing-final-actions"><Link className="marketing-button marketing-button-ink" href="/signup">Create account <ArrowRight size={15} /></Link><Link className="marketing-button marketing-button-signal-outline" href="/docs/quickstart">Quickstart</Link></div>
+        <div className="marketing-final-actions"><Link className="marketing-button marketing-button-ink" href="/signup">Talk to us <ArrowRight size={15} /></Link><Link className="marketing-button marketing-button-signal-outline" href="/docs/quickstart">Quickstart</Link></div>
       </section>
     </>
   );

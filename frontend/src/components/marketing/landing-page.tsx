@@ -2,7 +2,6 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
-  BellRing,
   Blocks,
   Braces,
   Check,
@@ -11,13 +10,11 @@ import {
   Code2,
   Database,
   Network,
-  Radar,
   SlidersHorizontal,
-  TerminalSquare,
   UserRound,
   Wallet,
 } from "lucide-react";
-import { EnvironmentPreview, ExplorerPreview, HeroSimulationPreview, MonitoringPreview } from "./product-previews";
+import { EnvironmentPreview, ExplorerPreview, HeroVirtualNetworkPreview, MonitoringPreview } from "./product-previews";
 
 const foundation = [
   { icon: Network, label: "Stellar native" },
@@ -27,7 +24,7 @@ const foundation = [
 ];
 
 const scenarios = [
-  { title: "AMMs", body: "Simulate swaps and liquidity changes against real pool reserves before upgrading the WASM or routing user funds.", accent: "var(--m-signal)", scene: <ProtocolScene /> },
+  { title: "AMMs", body: "Rehearse swaps and liquidity changes against real pool reserves before upgrading the WASM or routing user funds.", accent: "var(--m-signal)", scene: <ProtocolScene /> },
   { title: "Lending protocols", body: "Replay whale-scale deposits and liquidation paths against real collateral before production scale finds your limits.", accent: "var(--m-blue)", scene: <WhaleScene /> },
   { title: "Payments & stablecoins", body: "Verify authorization paths and compliance checks with impersonated signers — no keys collected, no funds moved.", accent: "var(--m-amber)", scene: <AuthScene /> },
   { title: "Oracles & data feeds", body: "Confirm a new feed WASM fits the Soroban resource budget before it goes live, then watch it in production.", accent: "var(--m-red)", scene: <MeterScene /> },
@@ -59,7 +56,7 @@ const suiteAlertRows = [
   { name: "whale-move", status: "Armed", tone: "var(--m-blue)" },
 ];
 
-const platformWords = ["simulations", "environments", "contracts", "alerts", "releases", "teams"];
+const platformWords = ["networks", "contracts", "alerts", "releases", "teams", "operations"];
 
 export function LandingPage() {
   return (
@@ -68,14 +65,13 @@ export function LandingPage() {
         <div className="marketing-hero-copy">
           <h1>Stellar Operations Platform</h1>
           <div className="marketing-hero-support">
-            <p>Releeve give teams the ability to model and observe every onchain scenario and action against the conditions they will actually face in a live network, before real money is on the line.</p>
+            <p>Releeve gives teams the ability to model and observe every onchain scenario and action against the conditions they will actually face in a live network, before real money is on the line.</p>
             <div className="marketing-hero-actions">
-              <Link className="marketing-button marketing-button-contrast" href="/signup">Create account <ArrowRight size={15} /></Link>
-              <Link className="marketing-button marketing-button-secondary" href="/explorer/testnet">Explore testnet</Link>
+              <Link className="marketing-button marketing-button-contrast" href="/signup">Talk to us <ArrowRight size={15} /></Link>
             </div>
           </div>
         </div>
-        <HeroSimulationPreview />
+        <HeroVirtualNetworkPreview />
       </section>
 
       <section className="foundation-rail" aria-label="Technical foundations">
@@ -87,15 +83,15 @@ export function LandingPage() {
       <section className="marketing-suite marketing-section-band">
         <div className="marketing-frame">
           <div className="marketing-section-heading centered">
-            <h2>Simulate the change. Inspect the effect. Monitor what ships.</h2>
-            <p>Releeve lets teams simulate onchain actions using the same evidence they use to investigate real activity.</p>
+            <h2>Fork the network. Shape the conditions. Monitor what ships.</h2>
+            <p>Build persistent virtual networks from real Stellar state, then use the same evidence to understand every replay and production event.</p>
           </div>
           <div className="suite-grid">
             <article className="suite-card">
               <div className="suite-copy">
                 <span className="suite-badge">1</span>
-                <h3>Simulate</h3>
-                <p>Replay a Soroban invocation on forked state with controlled overrides and signer impersonation.</p>
+                <h3>Create the conditions</h3>
+                <p>Create a virtual network from real ledger state, then control balances, storage, TTL, ledger time, and account identity.</p>
               </div>
               <div className="suite-illustration">
                 <div className="suite-chips">
@@ -115,7 +111,7 @@ export function LandingPage() {
               <div className="suite-copy">
                 <span className="suite-badge">2</span>
                 <h3>Coordinate</h3>
-                <p>Give engineers, reviewers, and operators one shared context for accounts, contracts, simulations, and alerts.</p>
+                <p>Give engineers, reviewers, and operators one shared context for accounts, contracts, virtual networks, and alerts.</p>
               </div>
               <div className="suite-illustration suite-stack">
                 <div className="suite-entity">
@@ -186,42 +182,26 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section id="simulation" className="marketing-feature marketing-frame">
-        <FeatureCopy
-          index="02 / SIMULATION"
-          icon={<TerminalSquare size={17} />}
-          title="Know the outcome before execution."
-          body="Fork real Stellar state, create the conditions you care about, impersonate accounts safely, and replay Soroban invocations without any hassle. See the result before users, funds, or production systems have to."
-          points={["Balance, contract storage, TTL, ledger, and timestamp overrides", "Scoped account impersonation without secret keys", "Calls, events, state changes, return values, and structured failures"]}
-          link="/docs/simulations"
-          linkLabel="Read simulation guide"
-        />
-        <HeroSimulationPreview />
-      </section>
-
       <section id="environments" className="marketing-feature marketing-feature-reverse marketing-section-band">
         <div className="marketing-frame marketing-feature-inner">
           <EnvironmentPreview />
           <FeatureCopy
-            index="03 / VIRTUAL NETWORKS"
-            icon={<Blocks size={17} />}
-            title="Keep a controlled version of the network."
-            body="A Virtual Network gives your team a controlled version of Stellar where you can keep building, testing, breaking, resetting, and testing again."
-            points={["Named environments from mainnet, testnet, or futurenet state."
-, "Persisted overrides and simulation history", "Synchronize untouched state while keeping the state your scenario intentionally changed."]}
+            index="VIRTUAL NETWORKS"
+            title="Create the network conditions you need."
+            body="Fork real Stellar state into a persistent Virtual Network, create the conditions you care about, and replay Soroban invocations without moving production funds."
+            points={["Balance, contract storage, TTL, ledger, and timestamp overrides", "Scoped account impersonation without secret keys", "Branch, reset, roll back, or follow live untouched state while preserving intentional changes"]}
             link="/docs/virtual-environments"
-            linkLabel="Explore environments"
+            linkLabel="Explore virtual networks"
           />
         </div>
       </section>
 
       <section id="explorer" className="marketing-feature marketing-frame">
         <FeatureCopy
-          index="04 / TEAM CONTEXT"
-          icon={<Radar size={17} />}
+          index="TEAM CONTEXT"
           title="Keep every team on the same page."
-          body="Releeve gives engineers, reviewers, and operators a shared workspace around the accounts, contracts, environments, simulations, and alerts that matter to your system."
-          points={["Keep sensitive simulations, environments, tracked entities, and operational evidence inside your organization.", "Shared labels so every organization speaks the same language across important entities", "Real-time notifications that connect alerts, decoded evidence, and follow-up work"]}
+          body="Releeve gives engineers, reviewers, and operators a shared workspace around the accounts, contracts, virtual networks, replays, and alerts that matter to your system."
+          points={["Keep sensitive network forks, tracked entities, and operational evidence inside your organization", "Shared labels so every organization speaks the same language across important entities", "Real-time notifications that connect alerts, decoded evidence, and follow-up work"]}
           link="/explorer/testnet"
           linkLabel="Explore shared context"
         />
@@ -232,10 +212,9 @@ export function LandingPage() {
         <div className="marketing-frame marketing-feature-inner">
           <MonitoringPreview />
           <FeatureCopy
-            index="05 / MONITORING"
-            icon={<BellRing size={17} />}
+            index="MONITORING"
             title="Define the condition once. Know when it happens."
-            body="Compose monitoring rules around the entities and behaviors that matter, from failed invocations and missing oracle updates to contract storage changes and broken invariants.  Releeve watches Stellar for it continuously and delivers the surrounding execution context when the condition is met."
+            body="Define the behavior that matters. Releeve watches Stellar continuously and delivers the execution context when it happens."
             points={["Targets: address, network, project, or tag", "Composable expressions with all/any match logic", "Email, Slack, Telegram, Discord, Sentry, PagerDuty, and signed webhooks"]}
             link="/docs/monitoring"
             linkLabel="Read monitoring guide"
@@ -253,29 +232,25 @@ export function LandingPage() {
                 <span>{platformWords[0]}</span>
               </span>
             </span></h2>
-            <p>Every simulation, environment, contract, and alert — scoped to your project, governed by permissions, and programmable through one API.</p>
+            <p>Every virtual network, contract, replay, and alert — scoped to your project, governed by permissions, and programmable through one API.</p>
             <div className="platform-actions">
-              <Link className="platform-button platform-button-primary" href="/signup">Create account <ArrowRight size={15} /></Link>
+              <Link className="platform-button platform-button-primary" href="/signup">Talk to us <ArrowRight size={15} /></Link>
               <Link className="platform-button platform-button-secondary" href="/docs">View docs</Link>
             </div>
           </div>
           <div className="platform-cards">
-            <div className="platform-row platform-row-a">
-              <PlatformCard title="Simulation API" desc="Replay a Soroban invocation against a real ledger snapshot with overrides and impersonation — the same evidence in review and in CI." href="/docs/simulations">
-                <div className="platform-visual"><SimulationApiScene /></div>
-              </PlatformCard>
-              <PlatformCard title="Webhooks" desc="Validate HMAC-signed payloads and inspect every delivery attempt." href="/docs/monitoring">
-                <div className="platform-visual"><WebhookScene /></div>
-              </PlatformCard>
-            </div>
-            <div className="platform-row platform-row-b">
-              <PlatformCard title="Virtual networks" desc="Frozen snapshots, follow-latest sync, branching, and non-destructive rollback." href="/docs/virtual-environments">
-                <div className="platform-visual"><EnvironmentsScene /></div>
-              </PlatformCard>
-              <PlatformCard title="Access tokens" desc="Issue API credentials per organization and use them in local tools or CI." href="/docs/api-reference">
-                <div className="platform-visual"><AccessTokensScene /></div>
-              </PlatformCard>
-            </div>
+            <PlatformCard kicker="State" title="Virtual network API" desc="Fork real ledger state, apply controlled overrides, and replay Soroban invocations through one programmable surface." href="/docs/virtual-environments">
+              <div className="platform-visual"><VirtualNetworkApiScene /></div>
+            </PlatformCard>
+            <PlatformCard kicker="Delivery" title="Webhooks" desc="Route signed operational events to your team and inspect every delivery attempt." href="/docs/monitoring">
+              <div className="platform-visual"><WebhookScene /></div>
+            </PlatformCard>
+            <PlatformCard kicker="Lifecycle" title="Network controls" desc="Branch, follow live state, reset safely, and return to named rollback points without losing the original fork." href="/docs/virtual-environments">
+              <div className="platform-visual"><EnvironmentsScene /></div>
+            </PlatformCard>
+            <PlatformCard kicker="Access" title="Project tokens" desc="Issue scoped API credentials per organization for local tools, automation, and CI." href="/docs/api-reference">
+              <div className="platform-visual"><AccessTokensScene /></div>
+            </PlatformCard>
           </div>
         </div>
       </section>
@@ -296,18 +271,13 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section className="pricing-teaser marketing-frame">
-        <div><h2>Start with the full workflow, then grow into the plan your team needs.</h2></div>
-        <div><p>Preview access gives teams room to evaluate simulations, explorer workflows, monitoring, and environments before final plan packaging is published.</p><Link href="/pricing">Compare planned tiers <ArrowRight size={14} /></Link></div>
-      </section>
-
       <section className="marketing-final-cta marketing-frame">
         <div>
           <p>Build against the state that actually exists.</p>
           <h2>Production state should be a test input, not a surprise.</h2>
         </div>
         <div className="marketing-final-actions">
-          <Link className="marketing-button marketing-button-ink" href="/signup">Create account <ArrowRight size={15} /></Link>
+          <Link className="marketing-button marketing-button-ink" href="/signup">Talk to us <ArrowRight size={15} /></Link>
           <Link className="marketing-button marketing-button-signal-outline" href="/docs/quickstart">Read the quickstart</Link>
         </div>
       </section>
@@ -341,7 +311,7 @@ function ProtocolScene() {
       <text className="sc-lbl sc-acc" x="134" y="50">POOL UPGRADE</text>
       <text className="sc-lbl" x="166" y="214">FORK</text>
       <rect x="14" y="224" width="132" height="18" fill="none" stroke="color-mix(in srgb, var(--m-ink) 22%, transparent)" />
-      <text className="sc-lbl" x="22" y="236">AMM · SIMULATED SWAP</text>
+      <text className="sc-lbl" x="22" y="236">AMM · REHEARSED SWAP</text>
     </svg>
   );
 }
@@ -485,11 +455,10 @@ function AlertScene() {
   );
 }
 
-function FeatureCopy({ index, icon, title, body, points, link, linkLabel }: { index: string; icon: React.ReactNode; title: string; body: string; points: string[]; link: string; linkLabel: string }) {
+function FeatureCopy({ index, title, body, points, link, linkLabel }: { index: string; title: string; body: string; points: string[]; link: string; linkLabel: string }) {
   return (
     <div className="feature-copy">
       <p className="marketing-section-index">{index}</p>
-      <span className="feature-icon">{icon}</span>
       <h2>{title}</h2>
       <p>{body}</p>
       <ul>{points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul>
@@ -498,10 +467,11 @@ function FeatureCopy({ index, icon, title, body, points, link, linkLabel }: { in
   );
 }
 
-function PlatformCard({ title, desc, href, children }: { title: string; desc: string; href: string; children: React.ReactNode }) {
+function PlatformCard({ kicker, title, desc, href, children }: { kicker: string; title: string; desc: string; href: string; children: React.ReactNode }) {
   return (
     <Link className="platform-card" href={href}>
       <div className="platform-card-head">
+        <span className="platform-card-kicker">{kicker}</span>
         <div className="platform-card-title"><h3>{title}</h3><ArrowRight className="platform-card-arrow" size={16} /></div>
         <p>{desc}</p>
       </div>
@@ -512,9 +482,9 @@ function PlatformCard({ title, desc, href, children }: { title: string; desc: st
 
 type CodeLine = { text: string; fill: string } | { segs: [string, string][] };
 
-const simulationCodeLines: CodeLine[] = [
+const networkCodeLines: CodeLine[] = [
   { text: "curl --request POST \\", fill: "#9aa2ae" },
-  { text: "  --url $RELEEVE_API/simulations \\", fill: "#9aa2ae" },
+  { text: "  --url $RELEEVE_API/environments/$ENV_ID/transactions \\", fill: "#9aa2ae" },
   { text: "  --header \"Content-Type: application/json\" \\", fill: "#9aa2ae" },
   { text: "  --data '{", fill: "#9aa2ae" },
   { segs: [["    ", "#9aa2ae"], ["\"contract_id\"", "var(--m-blue)"], [": ", "#9aa2ae"], ["\"CBZV...POOL\"", "var(--m-signal)"], [",", "#9aa2ae"]] },
@@ -524,7 +494,7 @@ const simulationCodeLines: CodeLine[] = [
   { text: "  }'", fill: "#9aa2ae" },
 ];
 
-function SimulationApiScene() {
+function VirtualNetworkApiScene() {
   return (
     <svg className="platform-scene" viewBox="0 0 760 330" preserveAspectRatio="xMidYMid slice" aria-hidden="true" style={{ "--acc": "var(--m-signal)" } as CSSProperties}>
       <defs>
@@ -540,7 +510,7 @@ function SimulationApiScene() {
       <rect x="24" y="16" width="356" height="298" fill="url(#spiral-p)" mask="url(#spiral-mask)" />
       <rect x="396" y="16" width="348" height="298" rx="16" fill="var(--m-panel)" stroke="color-mix(in srgb, var(--m-ink) 22%, transparent)" />
       <rect x="412" y="32" width="316" height="266" rx="12" fill="var(--m-panel-2)" stroke="color-mix(in srgb, var(--m-ink) 14%, transparent)" />
-      {simulationCodeLines.map((line, index) => {
+      {networkCodeLines.map((line, index) => {
         const y = 62 + index * 22;
         if ("segs" in line) {
           return (

@@ -7,7 +7,6 @@ const columns = [
   {
     title: "Platform",
     links: [
-      ["Simulator", "/#simulation"],
       ["Virtual networks", "/#environments"],
       ["Monitoring", "/#monitoring"],
       ["Public explorer", "/explorer/testnet"],
@@ -41,8 +40,8 @@ export function MarketingFooter() {
             <span className="marketing-logo-mark"><ReleeveLogo size={23} tone="auto" /></span>
             <span>Releeve</span>
           </Link>
-          <p>Simulation, observability, and embedded investigation tools built for Stellar and Soroban teams.</p>
-          <Link className="marketing-footer-cta" href="/signup">Start building <ArrowUpRight size={14} /></Link>
+          <p>Virtual networks, observability, and operational investigation tools built for Stellar and Soroban teams.</p>
+          <Link className="marketing-footer-cta" href="/signup">Talk to us <ArrowUpRight size={14} /></Link>
         </div>
         {columns.map((column) => (
           <div className="marketing-footer-column" key={column.title}>

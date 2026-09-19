@@ -27,7 +27,7 @@ const platformLinks = [
 
 const developerLinks = [
   { href: "/docs", label: "Documentation", detail: "Guides for the complete platform", icon: BookOpen },
-  { href: "/docs/quickstart", label: "Quickstart", detail: "Run your first simulation", icon: Rocket },
+  { href: "/docs/quickstart", label: "Quickstart", detail: "Create your first virtual network", icon: Rocket },
   { href: "/docs/api-reference", label: "API reference", detail: "Routes, payloads, and OpenAPI", icon: Braces },
   { href: "/explorer/testnet", label: "Public explorer", detail: "Search testnet without an account", icon: Radar },
 ];
@@ -103,9 +103,8 @@ export function MarketingNavigation() {
           </div>
 
           <div className="marketing-nav-actions">
-            <Link className="marketing-signin" href="/signin">Sign in</Link>
             <Link className="marketing-button marketing-button-contrast marketing-nav-cta" href="/signup">
-              Create account
+              Request early access
             </Link>
           </div>
 
@@ -144,8 +143,7 @@ export function MarketingNavigation() {
             </>
           )}
           <div className="marketing-mobile-actions">
-            <Link className="marketing-button marketing-button-secondary" href="/signin">Sign in</Link>
-            <Link className="marketing-button marketing-button-contrast" href="/signup">Create account</Link>
+            <Link className="marketing-button marketing-button-contrast" href="/signup">Request early access</Link>
           </div>
         </div>
       )}

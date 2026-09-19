@@ -15,7 +15,6 @@ import {
   RotateCcw,
   ShieldCheck,
   SlidersHorizontal,
-  TerminalSquare,
   UserRound,
   Webhook,
   Zap,
@@ -26,23 +25,23 @@ type ResultTab = "calls" | "state" | "events" | "resources";
 
 const resultTabs: ResultTab[] = ["calls", "state", "events", "resources"];
 
-export function HeroSimulationPreview() {
+export function HeroVirtualNetworkPreview() {
   const [forked, setForked] = useState(true);
   const [tab, setTab] = useState<ResultTab>("calls");
 
   return (
-    <div className="product-window hero-product-window" aria-label="Example simulation preview">
+    <div className="product-window hero-product-window" aria-label="Example virtual network preview">
       <div className="product-window-bar">
-        <div className="product-window-title"><TerminalSquare size={15} /> Whale deposit stress test</div>
-        <span className="product-example-label">Example simulation</span>
+        <div className="product-window-title"><Blocks size={15} /> Whale deposit network fork</div>
+        <span className="product-example-label">Virtual network</span>
       </div>
       <div className="simulation-toolbar">
-        <div className="marketing-segmented" aria-label="Simulation state">
+        <div className="marketing-segmented" aria-label="Virtual network state">
           <button type="button" data-active={!forked} onClick={() => setForked(false)}>Original</button>
           <button type="button" data-active={forked} onClick={() => setForked(true)}>Forked</button>
         </div>
         <div className="simulation-ledger"><Database size={14} /> Mainnet ledger 58,743,921</div>
-        <button className="simulation-run" type="button" onClick={() => setForked(true)}><Play size={13} fill="currentColor" /> Run</button>
+        <button className="simulation-run" type="button" onClick={() => setForked(true)}><Play size={13} fill="currentColor" /> Replay</button>
       </div>
 
       <div className="simulation-layout">
@@ -59,7 +58,7 @@ export function HeroSimulationPreview() {
             <div><span className="status-dot status-success" /> Success</div>
             <span>186 ms</span>
           </div>
-          <div className="product-tabs" role="tablist" aria-label="Simulation output">
+          <div className="product-tabs" role="tablist" aria-label="Replay evidence">
             {resultTabs.map((item) => (
               <button
                 role="tab"
@@ -156,7 +155,7 @@ export function EnvironmentPreview() {
       <div className="environment-stats">
         <Metric label="Base ledger" value="58,743,921" />
         <Metric label="Overrides" value="4" />
-        <Metric label="Simulations" value="18" />
+        <Metric label="Replays" value="18" />
         <Metric label="Protocol" value="23" />
       </div>
       <div className="environment-body">
