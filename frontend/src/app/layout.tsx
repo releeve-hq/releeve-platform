@@ -12,22 +12,22 @@ const alliance = localFont({ src: "./fonts/alliance.otf", variable: "--font-alli
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
   title: {
-    default: "Releeve | Simulation infrastructure for Stellar",
+    default: "Releeve | Stellar Operations Platform",
     template: "%s",
   },
-  description: "Fork real Stellar ledger state, simulate Soroban transactions, inspect execution evidence, and monitor what ships.",
+  description: "Model and observe onchain activity against real Stellar network conditions before real money is on the line.",
   applicationName: "Releeve",
   openGraph: {
     type: "website",
     siteName: "Releeve",
-    title: "Releeve | Simulation infrastructure for Stellar",
-    description: "State-fork simulation, monitoring, and investigation infrastructure for Stellar and Soroban teams.",
-    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "Releeve simulation infrastructure for Stellar" }],
+    title: "Releeve | Stellar Operations Platform",
+    description: "Virtual networks, observability, and operational investigation for Stellar and Soroban teams.",
+    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "Releeve Stellar Operations Platform" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Releeve | Simulation infrastructure for Stellar",
-    description: "State-fork simulation, monitoring, and investigation infrastructure for Stellar and Soroban teams.",
+    title: "Releeve | Stellar Operations Platform",
+    description: "Virtual networks, observability, and operational investigation for Stellar and Soroban teams.",
     images: ["/opengraph-image"],
   },
 };

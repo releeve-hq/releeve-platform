@@ -9,22 +9,19 @@ const columns = [
     links: [
       ["Virtual networks", "/#environments"],
       ["Monitoring", "/#monitoring"],
-      ["Public explorer", "/explorer/testnet"],
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      ["Documentation", "/docs"],
-      ["Quickstart", "/docs/quickstart"],
-      ["API reference", "/docs/api-reference"],
-      ["Explorer guide", "/docs/explorer"],
+      ["Team context", "/#explorer"],
     ],
   },
   {
     title: "Company",
     links: [
-      ["Pricing", "/pricing"],
+      ["About us", "/#about"],
+      ["Talk to us", "/contact"],
+    ],
+  },
+  {
+    title: "Legal",
+    links: [
       ["Privacy", "/privacy"],
       ["Terms", "/terms"],
     ],
@@ -41,7 +38,7 @@ export function MarketingFooter() {
             <span>Releeve</span>
           </Link>
           <p>Virtual networks, observability, and operational investigation tools built for Stellar and Soroban teams.</p>
-          <Link className="marketing-footer-cta" href="/signup">Talk to us <ArrowUpRight size={14} /></Link>
+          <Link className="marketing-footer-cta" href="/contact">Talk to us <ArrowUpRight size={14} /></Link>
         </div>
         {columns.map((column) => (
           <div className="marketing-footer-column" key={column.title}>

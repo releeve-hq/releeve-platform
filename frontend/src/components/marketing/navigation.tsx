@@ -5,12 +5,8 @@ import { usePathname } from "next/navigation";
 import {
   BellRing,
   Blocks,
-  BookOpen,
-  Braces,
   ChevronDown,
   Menu,
-  Radar,
-  Rocket,
   Search,
   X,
 } from "lucide-react";
@@ -18,18 +14,11 @@ import { useEffect, useRef, useState } from "react";
 import { ReleeveLogo } from "@/components/ui/releeve-logo";
 import { getDocsQuery, setDocsQuery, subscribeDocsQuery } from "./docs-search-store";
 
-type MenuKey = "platform" | "developers";
+type MenuKey = "platform";
 
 const platformLinks = [
   { href: "/#environments", label: "Virtual networks", detail: "Persist snapshots and controlled overrides", icon: Blocks },
   { href: "/#monitoring", label: "Monitoring", detail: "Watch calls, events, balances, and state", icon: BellRing },
-];
-
-const developerLinks = [
-  { href: "/docs", label: "Documentation", detail: "Guides for the complete platform", icon: BookOpen },
-  { href: "/docs/quickstart", label: "Quickstart", detail: "Create your first virtual network", icon: Rocket },
-  { href: "/docs/api-reference", label: "API reference", detail: "Routes, payloads, and OpenAPI", icon: Braces },
-  { href: "/explorer/testnet", label: "Public explorer", detail: "Search testnet without an account", icon: Radar },
 ];
 
 export function MarketingNavigation() {
@@ -91,19 +80,13 @@ export function MarketingNavigation() {
                   openMenu={openMenu}
                   setOpenMenu={setOpenMenu}
                 />
-                <NavDropdown
-                  label="Resources"
-                  menuKey="developers"
-                  links={developerLinks}
-                  openMenu={openMenu}
-                  setOpenMenu={setOpenMenu}
-                />
+                <Link className="marketing-nav-link" href="/#about">About Us</Link>
               </>
             )}
           </div>
 
           <div className="marketing-nav-actions">
-            <Link className="marketing-button marketing-button-contrast marketing-nav-cta" href="/signup">
+            <Link className="marketing-button marketing-button-contrast marketing-nav-cta" href="/contact">
               Request early access
             </Link>
           </div>
@@ -133,17 +116,11 @@ export function MarketingNavigation() {
                 active={mobileSection}
                 setActive={setMobileSection}
               />
-              <MobileGroup
-                label="Resources"
-                menuKey="developers"
-                links={developerLinks}
-                active={mobileSection}
-                setActive={setMobileSection}
-              />
+              <Link className="marketing-mobile-link" href="/#about">About Us</Link>
             </>
           )}
           <div className="marketing-mobile-actions">
-            <Link className="marketing-button marketing-button-contrast" href="/signup">Request early access</Link>
+            <Link className="marketing-button marketing-button-contrast" href="/contact">Request early access</Link>
           </div>
         </div>
       )}

@@ -40,7 +40,8 @@ html[data-marketing-theme="light"] .marketing-site {
 
 .marketing-site a { color: inherit; text-decoration: none; }
 .marketing-site button,
-.marketing-site input { font: inherit; }
+.marketing-site input,
+.marketing-site textarea { font: inherit; }
 .marketing-site button { color: inherit; }
 .marketing-site :focus-visible { outline: 2px solid var(--m-signal); outline-offset: 3px; }
 .marketing-site mark {
@@ -359,11 +360,11 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
 }
 .marketing-hero-support {
   display: grid;
-  max-width: 860px;
+  max-width: 800px;
   margin-top: 34px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 590px) auto;
   align-items: start;
-  gap: 48px;
+  gap: 22px;
 }
 .marketing-hero-support > p { max-width: 590px; margin: 0; color: var(--m-muted); font-size: 14px; line-height: 1.7; }
 .marketing-hero-actions { display: flex; gap: 10px; }
@@ -469,7 +470,7 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
 
 .marketing-section-index { margin: 0; color: var(--m-dim); font-family: var(--font-mono), monospace; font-size: 10px; font-weight: 600; text-transform: uppercase; }
 
-.marketing-suite { position: relative; padding: 112px 0; }
+.marketing-suite { position: relative; padding: 112px 0; scroll-margin-top: 76px; }
 .marketing-suite::before { position: absolute; top: -16px; right: 0; left: 0; border-top: 1px solid var(--m-line); content: ""; }
 .marketing-suite .marketing-frame { border: 0; }
 .marketing-section-heading { max-width: 720px; }
@@ -523,7 +524,7 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
 .suite-row-status[data-live="true"] { color: var(--m-amber); }
 .suite-wave { display: block; margin-top: 10px; }
 
-.marketing-feature { display: grid; min-height: 770px; padding: 110px 70px; grid-template-columns: minmax(300px, .75fr) minmax(560px, 1.4fr); align-items: center; gap: 75px; }
+.marketing-feature { display: grid; min-height: 770px; padding: 110px 70px; grid-template-columns: minmax(300px, .75fr) minmax(560px, 1.4fr); align-items: center; gap: 75px; scroll-margin-top: 76px; }
 .marketing-feature > .product-window { width: 100%; }
 .marketing-feature-reverse { display: block; padding: 0; }
 .marketing-feature-inner { display: grid; min-height: 770px; padding: 110px 70px; grid-template-columns: minmax(560px, 1.4fr) minmax(300px, .75fr); align-items: center; gap: 75px; }
@@ -663,15 +664,11 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   border-radius: 10px;
   background: linear-gradient(180deg, var(--m-bg), color-mix(in srgb, var(--m-panel) 64%, var(--m-bg)));
   box-shadow: 0 16px 40px color-mix(in srgb, #000 12%, transparent);
-  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
 }
-.platform-card:hover { border-color: color-mix(in srgb, var(--m-signal) 45%, var(--m-line)); box-shadow: 0 22px 52px color-mix(in srgb, #000 18%, transparent); transform: translateY(-2px); }
 .platform-card-head { display: flex; min-height: 164px; padding: 24px 26px 0; flex-direction: column; gap: 9px; }
 .platform-card-kicker { color: var(--m-signal); font-family: var(--font-mono), monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .platform-card-title { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .platform-card-title h3 { margin: 0; font-size: 20px; font-weight: 540; letter-spacing: 0; }
-.platform-card-arrow { box-sizing: content-box; flex: 0 0 auto; padding: 7px; border: 1px solid var(--m-line); border-radius: 50%; color: var(--m-dim); transition: transform .2s ease, color .2s ease, border-color .2s ease; }
-.platform-card:hover .platform-card-arrow { border-color: color-mix(in srgb, var(--m-signal) 45%, var(--m-line)); color: var(--m-signal); transform: translateX(3px); }
 .platform-card-head > p { max-width: 420px; margin: 0; color: var(--m-muted); font-size: 13px; line-height: 1.6; }
 .platform-visual {
   position: relative;
@@ -772,6 +769,42 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
 }
 .subpage-hero h1 { max-width: 950px; margin: 0; font-size: clamp(48px, 6vw, 82px); font-weight: 520; line-height: 1.04; }
 .subpage-hero > p:last-child { max-width: 700px; margin: 38px 0 0; color: var(--m-muted); font-size: 16px; line-height: 1.75; }
+
+.contact-page {
+  display: grid;
+  min-height: calc(100dvh - 60px);
+  padding: 104px 72px 120px;
+  grid-template-columns: minmax(0, .9fr) minmax(440px, 1.1fr);
+  align-items: start;
+  gap: clamp(64px, 9vw, 130px);
+  background-image: linear-gradient(var(--m-line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--m-line-soft) 1px, transparent 1px);
+  background-size: 100% 25%, 25% 100%;
+}
+.contact-intro { position: sticky; top: 116px; }
+.contact-intro h1 { max-width: 610px; margin: 24px 0 0; font-size: clamp(42px, 5vw, 68px); font-weight: 520; line-height: 1.05; }
+.contact-intro > p:not(.marketing-eyebrow) { max-width: 570px; margin: 30px 0 0; color: var(--m-muted); font-size: 15px; line-height: 1.75; }
+.contact-expectation { max-width: 570px; margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--m-line); }
+.contact-expectation > span { color: var(--m-dim); font-family: var(--font-mono), monospace; font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.contact-expectation p { margin: 12px 0 0; color: var(--m-muted); font-size: 12px; line-height: 1.65; }
+.contact-form-shell { padding: 34px; border: 1px solid var(--m-line); border-radius: 10px; background: color-mix(in srgb, var(--m-panel) 94%, transparent); box-shadow: 0 24px 60px color-mix(in srgb, #000 18%, transparent); }
+.contact-form { display: grid; gap: 20px; }
+.contact-name-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.contact-field { display: grid; gap: 9px; }
+.contact-field > span { color: var(--m-muted); font-size: 11px; font-weight: 650; }
+.contact-field input,
+.contact-field textarea { width: 100%; border: 1px solid var(--m-line); border-radius: 5px; outline: 0; background: var(--m-bg); color: var(--m-ink); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.contact-field input { height: 46px; padding: 0 13px; }
+.contact-field textarea { min-height: 168px; padding: 13px; resize: vertical; line-height: 1.55; }
+.contact-field input:focus,
+.contact-field textarea:focus { border-color: color-mix(in srgb, var(--m-signal) 70%, var(--m-line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--m-signal) 12%, transparent); }
+.contact-field textarea::placeholder { color: var(--m-dim); }
+.contact-honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.contact-form-footer { display: flex; min-height: 44px; margin-top: 4px; align-items: center; gap: 18px; }
+.contact-submit { min-width: 152px; border: 0; cursor: pointer; }
+.contact-submit:disabled { cursor: wait; opacity: .65; transform: none; }
+.contact-form-status { display: flex; margin: 0; align-items: center; gap: 7px; color: var(--m-muted); font-size: 11px; line-height: 1.5; }
+.contact-form-status svg { flex: 0 0 auto; color: var(--m-signal); }
+.contact-form-status.is-error { color: var(--m-red); }
 
 .pricing-hero { min-height: 520px; }
 .pricing-plans { display: grid; padding: 80px 60px 0; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--m-line); }
@@ -968,6 +1001,8 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   .marketing-final-cta { margin-bottom: 28px; padding: 48px 44px; flex-direction: column; align-items: flex-start; }
   .marketing-footer-grid { grid-template-columns: 1.5fr repeat(3, 1fr); padding-inline: 32px; gap: 28px; }
   .subpage-hero { min-height: 480px; padding: 95px 44px 70px; }
+  .contact-page { padding: 88px 44px 96px; grid-template-columns: 1fr; gap: 54px; }
+  .contact-intro { position: static; }
   .pricing-plans { padding-inline: 30px; }
   .pricing-comparison { padding-inline: 30px; overflow-x: auto; }
   .pricing-comparison-head,
@@ -1044,6 +1079,12 @@ button.marketing-nav-search:focus-visible { outline: 0; border-color: color-mix(
   .subpage-hero { min-height: 430px; padding: 70px 20px 55px; }
   .subpage-hero h1 { font-size: 44px; }
   .subpage-hero > p:last-child { font-size: 14px; }
+  .contact-page { width: calc(100% - 28px); padding: 64px 20px 72px; }
+  .contact-intro h1 { font-size: 42px; }
+  .contact-form-shell { padding: 24px 18px; }
+  .contact-name-row { grid-template-columns: 1fr; }
+  .contact-form-footer { align-items: stretch; flex-direction: column; }
+  .contact-submit { width: 100%; }
   .pricing-plans { padding: 50px 14px 0; grid-template-columns: 1fr; }
   .pricing-plans article { min-height: 390px; }
   .pricing-comparison { padding: 50px 14px 70px; }

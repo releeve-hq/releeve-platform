@@ -8,7 +8,7 @@ import ReleeveApp from '@/components/app/releeve-app';
 const AUTH_ROUTES = ['/signin', '/signup', '/forgot-password', '/reset-password'];
 const AUTH_PREFIX_ROUTES = ['/auth', '/temp'];
 const PUBLIC_ROUTES: string[] = ['/'];
-const MARKETING_ROUTES = ['/pricing', '/docs', '/terms', '/privacy'];
+const MARKETING_ROUTES = ['/pricing', '/docs', '/terms', '/privacy', '/contact'];
 const PUBLIC_APP_ROUTES = ['/virtual-explorer', '/invite'];
 const APP_ROUTES = [
   '/explorer',

@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Releeve simulation infrastructure for Stellar";
+export const alt = "Releeve Stellar Operations Platform";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -15,10 +15,10 @@ export default function OpenGraphImage() {
         Releeve
       </div>
       <div style={{ display: "flex", position: "relative", flexDirection: "column", maxWidth: 980 }}>
-        <div style={{ display: "flex", marginBottom: 24, alignItems: "center", gap: 10, color: "#a3ff5f", fontSize: 18, textTransform: "uppercase" }}><span style={{ width: 9, height: 9, background: "#a3ff5f" }} /> State-fork execution for Soroban</div>
-        <div style={{ fontSize: 72, lineHeight: 1.04, fontWeight: 540 }}>Simulation infrastructure for Stellar developers.</div>
+        <div style={{ display: "flex", marginBottom: 24, alignItems: "center", gap: 10, color: "#a3ff5f", fontSize: 18, textTransform: "uppercase" }}><span style={{ width: 9, height: 9, background: "#a3ff5f" }} /> Built for Stellar and Soroban teams</div>
+        <div style={{ fontSize: 72, lineHeight: 1.04, fontWeight: 540 }}>Stellar Operations Platform.</div>
       </div>
-      <div style={{ display: "flex", position: "relative", justifyContent: "space-between", color: "#929891", fontSize: 18 }}><span>Simulate. Inspect. Monitor.</span><span>releeve.dev</span></div>
+      <div style={{ display: "flex", position: "relative", justifyContent: "space-between", color: "#929891", fontSize: 18 }}><span>Fork. Shape. Monitor.</span><span>releeve.xyz</span></div>
     </div>,
     size,
   );

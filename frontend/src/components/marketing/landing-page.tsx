@@ -67,7 +67,7 @@ export function LandingPage() {
           <div className="marketing-hero-support">
             <p>Releeve gives teams the ability to model and observe every onchain scenario and action against the conditions they will actually face in a live network, before real money is on the line.</p>
             <div className="marketing-hero-actions">
-              <Link className="marketing-button marketing-button-contrast" href="/signup">Talk to us <ArrowRight size={15} /></Link>
+              <Link className="marketing-button marketing-button-contrast" href="/contact">Talk to us <ArrowRight size={15} /></Link>
             </div>
           </div>
         </div>
@@ -80,7 +80,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section className="marketing-suite marketing-section-band">
+      <section id="about" className="marketing-suite marketing-section-band">
         <div className="marketing-frame">
           <div className="marketing-section-heading centered">
             <h2>Fork the network. Shape the conditions. Monitor what ships.</h2>
@@ -190,8 +190,6 @@ export function LandingPage() {
             title="Create the network conditions you need."
             body="Fork real Stellar state into a persistent Virtual Network, create the conditions you care about, and replay Soroban invocations without moving production funds."
             points={["Balance, contract storage, TTL, ledger, and timestamp overrides", "Scoped account impersonation without secret keys", "Branch, reset, roll back, or follow live untouched state while preserving intentional changes"]}
-            link="/docs/virtual-environments"
-            linkLabel="Explore virtual networks"
           />
         </div>
       </section>
@@ -202,8 +200,6 @@ export function LandingPage() {
           title="Keep every team on the same page."
           body="Releeve gives engineers, reviewers, and operators a shared workspace around the accounts, contracts, virtual networks, replays, and alerts that matter to your system."
           points={["Keep sensitive network forks, tracked entities, and operational evidence inside your organization", "Shared labels so every organization speaks the same language across important entities", "Real-time notifications that connect alerts, decoded evidence, and follow-up work"]}
-          link="/explorer/testnet"
-          linkLabel="Explore shared context"
         />
         <ExplorerPreview />
       </section>
@@ -216,8 +212,6 @@ export function LandingPage() {
             title="Define the condition once. Know when it happens."
             body="Define the behavior that matters. Releeve watches Stellar continuously and delivers the execution context when it happens."
             points={["Targets: address, network, project, or tag", "Composable expressions with all/any match logic", "Email, Slack, Telegram, Discord, Sentry, PagerDuty, and signed webhooks"]}
-            link="/docs/monitoring"
-            linkLabel="Read monitoring guide"
           />
         </div>
       </section>
@@ -234,21 +228,20 @@ export function LandingPage() {
             </span></h2>
             <p>Every virtual network, contract, replay, and alert — scoped to your project, governed by permissions, and programmable through one API.</p>
             <div className="platform-actions">
-              <Link className="platform-button platform-button-primary" href="/signup">Talk to us <ArrowRight size={15} /></Link>
-              <Link className="platform-button platform-button-secondary" href="/docs">View docs</Link>
+              <Link className="platform-button platform-button-primary" href="/contact">Talk to us <ArrowRight size={15} /></Link>
             </div>
           </div>
           <div className="platform-cards">
-            <PlatformCard kicker="State" title="Virtual network API" desc="Fork real ledger state, apply controlled overrides, and replay Soroban invocations through one programmable surface." href="/docs/virtual-environments">
+            <PlatformCard kicker="State" title="Virtual network API" desc="Fork real ledger state, apply controlled overrides, and replay Soroban invocations through one programmable surface.">
               <div className="platform-visual"><VirtualNetworkApiScene /></div>
             </PlatformCard>
-            <PlatformCard kicker="Delivery" title="Webhooks" desc="Route signed operational events to your team and inspect every delivery attempt." href="/docs/monitoring">
+            <PlatformCard kicker="Delivery" title="Webhooks" desc="Route signed operational events to your team and inspect every delivery attempt.">
               <div className="platform-visual"><WebhookScene /></div>
             </PlatformCard>
-            <PlatformCard kicker="Lifecycle" title="Network controls" desc="Branch, follow live state, reset safely, and return to named rollback points without losing the original fork." href="/docs/virtual-environments">
+            <PlatformCard kicker="Lifecycle" title="Network controls" desc="Branch, follow live state, reset safely, and return to named rollback points without losing the original fork.">
               <div className="platform-visual"><EnvironmentsScene /></div>
             </PlatformCard>
-            <PlatformCard kicker="Access" title="Project tokens" desc="Issue scoped API credentials per organization for local tools, automation, and CI." href="/docs/api-reference">
+            <PlatformCard kicker="Access" title="Project tokens" desc="Issue scoped API credentials per organization for local tools, automation, and CI.">
               <div className="platform-visual"><AccessTokensScene /></div>
             </PlatformCard>
           </div>
@@ -277,8 +270,7 @@ export function LandingPage() {
           <h2>Production state should be a test input, not a surprise.</h2>
         </div>
         <div className="marketing-final-actions">
-          <Link className="marketing-button marketing-button-ink" href="/signup">Talk to us <ArrowRight size={15} /></Link>
-          <Link className="marketing-button marketing-button-signal-outline" href="/docs/quickstart">Read the quickstart</Link>
+          <Link className="marketing-button marketing-button-ink" href="/contact">Talk to us <ArrowRight size={15} /></Link>
         </div>
       </section>
     </>
@@ -455,28 +447,27 @@ function AlertScene() {
   );
 }
 
-function FeatureCopy({ index, title, body, points, link, linkLabel }: { index: string; title: string; body: string; points: string[]; link: string; linkLabel: string }) {
+function FeatureCopy({ index, title, body, points }: { index: string; title: string; body: string; points: string[] }) {
   return (
     <div className="feature-copy">
       <p className="marketing-section-index">{index}</p>
       <h2>{title}</h2>
       <p>{body}</p>
       <ul>{points.map((point) => <li key={point}><Check size={14} />{point}</li>)}</ul>
-      <Link href={link}>{linkLabel} <ArrowRight size={14} /></Link>
     </div>
   );
 }
 
-function PlatformCard({ kicker, title, desc, href, children }: { kicker: string; title: string; desc: string; href: string; children: React.ReactNode }) {
+function PlatformCard({ kicker, title, desc, children }: { kicker: string; title: string; desc: string; children: React.ReactNode }) {
   return (
-    <Link className="platform-card" href={href}>
+    <article className="platform-card">
       <div className="platform-card-head">
         <span className="platform-card-kicker">{kicker}</span>
-        <div className="platform-card-title"><h3>{title}</h3><ArrowRight className="platform-card-arrow" size={16} /></div>
+        <div className="platform-card-title"><h3>{title}</h3></div>
         <p>{desc}</p>
       </div>
       {children}
-    </Link>
+    </article>
   );
 }
 
