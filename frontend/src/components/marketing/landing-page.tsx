@@ -66,8 +66,7 @@ export function LandingPage() {
     <>
       <section className="marketing-hero marketing-frame">
         <div className="marketing-hero-copy">
-          <p className="marketing-eyebrow"><span /> Simulate Soroban against the real ledger.</p>
-          <h1>Simulation and Observability <mark>infrastructure</mark> on <mark>Stellar.</mark></h1>
+          <h1>Stellar Operations Platform</h1>
           <div className="marketing-hero-support">
             <p>Releeve give teams the ability to model and observe every onchain scenario and action against the conditions they will actually face in a live network, before real money is on the line.</p>
             <div className="marketing-hero-actions">
