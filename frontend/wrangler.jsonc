@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "releeve-site",
+  "compatibility_date": "2026-09-19",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "main": ".open-next/worker.js",
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "NEXT_PUBLIC_APP_URL": "https://releeve.xyz",
+    "NEXT_PUBLIC_BACKEND_URL": "https://api.releeve.xyz"
+  },
+  "routes": [
+    {
+      "pattern": "releeve.xyz/*",
+      "zone_name": "releeve.xyz"
+    }
+  ]
+}

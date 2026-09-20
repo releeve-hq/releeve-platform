@@ -1,0 +1,5 @@
+.open-next/
+.vinext/
+.wrangler/
+/dist/
+.dev.vars*

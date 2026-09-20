@@ -18,7 +18,12 @@ import { EntityIdenticon } from "@/components/explorer/entity-identicon";
 import type { ExplorerTxDetail, TxFundFlowEdge } from "@/lib/explorer-api";
 import { isContractAddress, truncateEntity } from "@/lib/explorer-routes";
 
-const elk = new ELK();
+let elk: InstanceType<typeof ELK> | undefined;
+
+function getElk(): InstanceType<typeof ELK> {
+  elk ??= new ELK();
+  return elk;
+}
 
 function entityKind(address: string) {
   if (["Mint", "Burn", "Network fee"].includes(address)) return "System";
@@ -54,7 +59,7 @@ function nodeFor(address: string): Node {
 }
 
 async function layout(nodes: Node[], edges: Edge[]) {
-  const graph = await elk.layout({
+  const graph = await getElk().layout({
     id: "root",
     layoutOptions: {
       "elk.algorithm": "layered",

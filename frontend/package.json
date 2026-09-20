@@ -13,30 +13,37 @@
     "tenderly:auth": "playwright codegen --browser=chromium --save-storage=.auth/tenderly.json https://dashboard.tenderly.co/",
     "tenderly:open": "playwright open --browser=chromium --load-storage=.auth/tenderly.json https://dashboard.tenderly.co/",
     "tenderly:chrome": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/open-chrome-remote.ps1",
-    "tenderly:cdp": "node ./scripts/connect-tenderly-cdp.mjs"
+    "tenderly:cdp": "node ./scripts/connect-tenderly-cdp.mjs",
+    "build:cloudflare": "opennextjs-cloudflare build",
+    "preview:cloudflare": "opennextjs-cloudflare build && wrangler dev --config wrangler.jsonc",
+    "deploy:cloudflare": "opennextjs-cloudflare build && wrangler deploy --config wrangler.jsonc",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.2",
     "elkjs": "^0.12.0",
     "framer-motion": "^12.43.0",
     "lucide-react": "^0.487.0",
-    "next": "^16.3.0",
+    "next": "16.3.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "recharts": "^2.15.3"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "1.20.6",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.1.4",
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^16.3.0",
+    "eslint-config-next": "16.3.3",
     "postcss": "^8.5.3",
     "tailwindcss": "^4.1.4",
     "tw-animate-css": "1.3.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "wrangler": "4.135.0"
   },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e",
+  "type": "module"
 }
