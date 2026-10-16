@@ -1592,7 +1592,7 @@ version = "0.1.0"
 dependencies = [
  "alerts",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.0",
  "chrono",
  "dotenvy",
  "futures",
@@ -2993,7 +2993,7 @@ name = "shared"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.0",
  "config",
  "serde",
  "serde_json",
